@@ -18,18 +18,34 @@ class CredentialMatch:
     context_line: str | None = None
 
 
-def find_aws_access_keys(text: str) -> list[CredentialMatch]:
-    """Scan text and return all AWS access key matches."""
+def find_aws_credentials(text: str) -> list[CredentialMatch]:
+    """Scan text and return all AWS credential matches."""
     matches = []
-    for m in AWS_ACCESS_KEY_PATTERN.finditer(text):
-        key_id = m.group(0)
-        hint = key_id[:4] + "****" + key_id[-4:]
-        matches.append(
-            CredentialMatch(
-                credential_type="aws_access_key",
-                access_key_id=key_id,
-                credential_hint=hint,
-                raw_match=key_id,
+    lines = text.splitlines()
+    for i, line in enumerate(lines):
+        for m in AWS_ACCESS_KEY_PATTERN.finditer(line):
+            key_id = m.group(0)
+            hint = f"{key_id[:4]}****{key_id[-4:]}"
+            
+            # Context for secret key search: current line + next line
+            search_context = line
+            if i + 1 < len(lines):
+                search_context += "\n" + lines[i+1]
+
+            secret_match = AWS_SECRET_KEY_PATTERN.search(search_context)
+            
+            full_match_context = key_id
+            if secret_match:
+                full_match_context += f" (secret found near line {i+1})"
+
+            matches.append(
+                CredentialMatch(
+                    credential_type="aws_access_key",
+                    access_key_id=key_id,
+                    credential_hint=hint,
+                    raw_match=full_match_context,
+                    line_number=i + 1,
+                    context_line=line.strip(),
+                )
             )
-        )
     return matches
