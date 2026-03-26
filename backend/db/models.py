@@ -1,15 +1,3 @@
-"""
-BreachTrace — SQLAlchemy ORM Models
-Designed by: Shashank
-Implemented by: Ritwik
-
-Four tables:
-  1. incident_records     — one row per detected credential leak
-  2. forensic_events      — one row per CloudTrail event tied to an incident
-  3. collection_status    — per-incident, per-platform collection tracking
-  4. experiment_runs      — research harness results (Track B)
-"""
-
 import uuid
 from datetime import datetime
 
