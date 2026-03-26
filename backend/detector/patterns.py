@@ -2,7 +2,7 @@ import re
 from dataclasses import dataclass
 
 # AWS Access Key ID: starts with AKIA, followed by 16 uppercase alphanumeric chars
-AWS_ACCESS_KEY_PATTERN = re.compile(r"AKIA[0-9A-Z]{16}")
+AWS_ACCESS_KEY_PATTERN = re.compile(r"(?<![A-Za-z0-9/])(AKIA[0-9A-Z]{16})\b")
 
 # AWS Secret Access Key: 40-char base64-like string that typically follows an access key
 AWS_SECRET_KEY_PATTERN = re.compile(r"(?<![A-Za-z0-9/+=])[A-Za-z0-9/+=]{40}(?![A-Za-z0-9/+=])")
