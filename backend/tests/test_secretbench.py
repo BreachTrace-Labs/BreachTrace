@@ -4,7 +4,7 @@
 import csv
 import os
 import pytest
-from detector.patterns import find_aws_access_keys
+from detector.patterns import find_aws_credentials
 
 DATASET_PATH = os.path.join(os.path.dirname(__file__), "../../data/secretbench_aws_200.csv")
 
@@ -20,7 +20,7 @@ def test_secretbench_precision_recall():
         for row in reader:
             snippet = row.get("snippet", "")
             ground_truth = row.get("ground_truth", "false").lower() == "true"
-            matches = find_aws_access_keys(snippet)
+            matches = find_aws_credentials(snippet)
             detected = len(matches) > 0
 
             if ground_truth and detected:
