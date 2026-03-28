@@ -13,18 +13,19 @@ SECRET_CONTEXT_KEYWORDS = ("secret", "aws_secret", "access_key")
 class CredentialMatch:
     credential_type: str   # e.g. 'aws_access_key'
     access_key_id: str     # The matched AKIA... key ID
-    credential_hint: str   # Masked: 'AKIA****<last4>'
+    credential_hint: str   # Masked: 'AKIA**<last4>'
     raw_match: str         # Full matched string
     line_number: int | None = None
     context_line: str | None = None
 
 
 def find_aws_credentials(text: str) -> list[CredentialMatch]:
-    """Scan text and return all AWS credential matches."""
     matches = []
     seen = set()
     lines = text.splitlines()
+
     for i, line in enumerate(lines):
+        # 1. Look for the AKIA key first (The anchor)
         for m in AWS_ACCESS_KEY_PATTERN.finditer(line):
             key_id = m.group(0)
             if key_id in seen:
@@ -33,17 +34,19 @@ def find_aws_credentials(text: str) -> list[CredentialMatch]:
 
             hint = f"{key_id[:4]}**{key_id[-4:]}"
 
-            context_lines = lines[max(0, i - 2): min(len(lines), i + 3)]
+            # 2. Extract context window (+/- 2 lines)
+            context_lines = lines[max(0, i-2): min(len(lines), i+3)]
             search_context = "\n".join(context_lines)
             context_lower = search_context.lower()
 
+            # 3. Fast-path: Only search for secret if context looks suspicious
             secret_found = False
-            if any(keyword in context_lower for keyword in SECRET_CONTEXT_KEYWORDS):
-                for _ in AWS_SECRET_KEY_PATTERN.finditer(search_context):
+            if any(k in context_lower for k in SECRET_CONTEXT_KEYWORDS):
+                # Using the stronger regex from your first version
+                if AWS_SECRET_KEY_PATTERN.search(search_context):
                     secret_found = True
-                    break
 
-            raw_match = f"{key_id} @ line {i + 1}"
+            raw_match = f"{key_id} @ line {i+1}"
             if secret_found:
                 raw_match += " (secret nearby)"
 
@@ -58,3 +61,4 @@ def find_aws_credentials(text: str) -> list[CredentialMatch]:
                 )
             )
     return matches
+
