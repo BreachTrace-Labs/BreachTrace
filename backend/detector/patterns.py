@@ -19,6 +19,11 @@ class CredentialMatch:
     context_line: str | None = None
 
 
+def mask_access_key_id(access_key_id: str) -> str:
+    """Return the masked credential hint used across incidents and tests."""
+    return f"{access_key_id[:4]}****{access_key_id[-4:]}"
+
+
 def find_aws_credentials(text: str) -> list[CredentialMatch]:
     matches = []
     seen = set()
@@ -32,7 +37,7 @@ def find_aws_credentials(text: str) -> list[CredentialMatch]:
                 continue
             seen.add(key_id)
 
-            hint = f"{key_id[:4]}**{key_id[-4:]}"
+            hint = mask_access_key_id(key_id)
 
             # 2. Extract context window (+/- 2 lines)
             context_lines = lines[max(0, i-2): min(len(lines), i+3)]
@@ -61,4 +66,3 @@ def find_aws_credentials(text: str) -> list[CredentialMatch]:
                 )
             )
     return matches
-
