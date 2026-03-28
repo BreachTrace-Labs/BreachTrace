@@ -1,5 +1,4 @@
 # AWS regex pattern unit tests
-# TODO (Yash/Day 1): write 20 tests — positive and negative cases.
 
 import pytest
 from backend.detector.patterns import find_aws_credentials
@@ -48,7 +47,7 @@ def test_find_aws_credentials_positive(text, expected_count, expected_key, expec
     for match in matches:
         if match.access_key_id == expected_key and match.line_number == expected_line:
             assert match.credential_type == "aws_access_key"
-            assert match.credential_hint == f"{expected_key[:4]}**{expected_key[-4:]}"
+            assert match.credential_hint == f"{expected_key[:4]}****{expected_key[-4:]}"
             assert match.raw_match.startswith(f"{expected_key} @ line {expected_line}")
             specific_match_found = True
             break
