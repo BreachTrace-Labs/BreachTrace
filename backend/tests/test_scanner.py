@@ -73,6 +73,20 @@ def test_scan_detects_key_with_secret_on_previous_added_line():
     assert matches[0].raw_match.endswith("(secret nearby)")
 
 
+def test_scan_detects_key_with_secret_two_lines_away():
+    diff_text = (
+        "@@ -0,0 +1,4 @@\n"
+        "+AWS_ACCESS_KEY_ID=AKIA1234567890ABCDEF\n"
+        "+comment=temporary\n"
+        "+AWS_SECRET_ACCESS_KEY=wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY\n"
+    )
+
+    matches = scan(diff_text)
+
+    assert len(matches) == 1
+    assert matches[0].raw_match.endswith("(secret nearby)")
+
+
 def test_scan_keeps_detection_without_secret_nearby():
     diff_text = (
         "@@ -0,0 +1 @@\n"

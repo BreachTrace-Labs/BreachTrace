@@ -4,9 +4,8 @@ from dataclasses import dataclass
 
 from backend.detector.patterns import (
     AWS_ACCESS_KEY_PATTERN,
-    AWS_SECRET_KEY_PATTERN,
-    SECRET_CONTEXT_KEYWORDS,
     CredentialMatch,
+    has_nearby_secret,
     mask_access_key_id,
 )
 
@@ -73,13 +72,7 @@ def _normalize_diff_lines(diff_text: str) -> list[_DiffLine]:
 
 
 def _has_nearby_secret(lines: list[_DiffLine], index: int) -> bool:
-    window = lines[max(0, index - 1): min(len(lines), index + 2)]
-    search_context = "\n".join(line.text for line in window)
-    context_lower = search_context.lower()
-
-    return any(keyword in context_lower for keyword in SECRET_CONTEXT_KEYWORDS) and bool(
-        AWS_SECRET_KEY_PATTERN.search(search_context)
-    )
+    return has_nearby_secret([line.text for line in lines], index)
 
 
 def scan(diff_text: str) -> list[CredentialMatch]:
