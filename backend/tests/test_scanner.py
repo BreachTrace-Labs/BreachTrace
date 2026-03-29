@@ -1,4 +1,4 @@
-from backend.detector.scanner import scan, scan_diff
+from detector.scanner import scan, scan_diff
 
 
 def test_scan_detects_key_in_added_line():

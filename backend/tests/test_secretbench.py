@@ -4,7 +4,7 @@
 import csv
 import os
 import pytest
-from backend.detector import scan
+from detector import scan
 
 DATASET_PATH = os.path.join(os.path.dirname(__file__), "../../data/secretbench_aws_200.csv")
 
