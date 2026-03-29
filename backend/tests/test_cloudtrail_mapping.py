@@ -42,7 +42,8 @@ def test_map_cloudtrail_event_maps_lookup_event_fields():
     assert event.resource_type == "AWS::S3::Object"
     assert event.success is True
     assert event.error_code is None
-    assert event.raw_data == raw_event
+    assert event.raw_data["EventTime"] == raw_event["EventTime"].isoformat()
+    assert event.raw_data["EventId"] == "evt-1"
 
 
 def test_map_cloudtrail_event_uses_none_for_missing_optional_fields():
@@ -161,6 +162,20 @@ def test_map_cloudtrail_event_ignores_invalid_nested_json():
         "EventTime": _event_time(),
         "EventName": "ListBuckets",
         "CloudTrailEvent": "{not-json",
+    }
+
+    event = _map_cloudtrail_event(raw_event)
+
+    assert event.success is True
+    assert event.source_ip is None
+    assert event.user_agent is None
+
+
+def test_map_cloudtrail_event_ignores_valid_non_dict_nested_json():
+    raw_event = {
+        "EventTime": _event_time(),
+        "EventName": "ListBuckets",
+        "CloudTrailEvent": json.dumps([1, 2, 3]),
     }
 
     event = _map_cloudtrail_event(raw_event)

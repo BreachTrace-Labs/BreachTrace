@@ -1,8 +1,19 @@
 import json
 from datetime import datetime
 
+import boto3
+
 from collectors.base import BaseCollector
 from normalizer.schema import ForensicEvent
+
+
+def _json_safe_raw_event(raw_event: dict) -> dict:
+    """Prepare the raw CloudTrail event for JSON/JSONB storage."""
+    serializable_event = dict(raw_event)
+    event_time = serializable_event.get("EventTime")
+    if isinstance(event_time, datetime):
+        serializable_event["EventTime"] = event_time.isoformat()
+    return serializable_event
 
 
 def _map_cloudtrail_event(raw_event: dict) -> ForensicEvent:
@@ -22,6 +33,7 @@ def _map_cloudtrail_event(raw_event: dict) -> ForensicEvent:
     error_code = raw_event.get("ErrorCode") or nested_event.get("errorCode")
 
     return ForensicEvent(
+        platform="aws",
         timestamp=raw_event["EventTime"],
         api_action=raw_event["EventName"],
         event_source=raw_event.get("EventSource") or nested_event.get("eventSource"),
@@ -31,7 +43,7 @@ def _map_cloudtrail_event(raw_event: dict) -> ForensicEvent:
         resource_type=first_resource.get("ResourceType"),
         success=error_code is None,
         error_code=error_code,
-        raw_data=raw_event,
+        raw_data=_json_safe_raw_event(raw_event),
     )
 
 
