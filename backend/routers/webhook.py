@@ -182,15 +182,17 @@ async def github_webhook(
                 repo_url,
             )
 
-            # Launch background revocation monitor
-            asyncio.create_task(
-                _monitor_revocation(
-                    incident.incident_id,
-                    match.access_key_id,
-                    config.EXPERIMENT_AWS_SECRET_ACCESS_KEY,
-                    SessionLocal,
+            # Launch revocation monitor ONLY for the experiment key — the secret
+            # for arbitrary real leaked keys is never available via the webhook path.
+            if match.access_key_id == config.EXPERIMENT_AWS_ACCESS_KEY_ID:
+                asyncio.create_task(
+                    _monitor_revocation(
+                        incident.incident_id,
+                        match.access_key_id,
+                        config.EXPERIMENT_AWS_SECRET_ACCESS_KEY,
+                        SessionLocal,
+                    )
                 )
-            )
 
     return {
         "status": "processed",
