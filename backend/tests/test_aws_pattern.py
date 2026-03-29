@@ -1,7 +1,7 @@
 # AWS regex pattern unit tests
 
 import pytest
-from backend.detector.patterns import find_aws_credentials
+from detector.patterns import find_aws_credentials
 
 # Extensive Positive Test Cases: (test_string, expected_count, expected_key, expected_line_number)
 POSITIVE_TEST_CASES = [

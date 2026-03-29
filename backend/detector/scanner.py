@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from backend.detector.patterns import (
+from detector.patterns import (
     AWS_ACCESS_KEY_PATTERN,
     CredentialMatch,
     has_nearby_secret,
