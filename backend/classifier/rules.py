@@ -2,7 +2,10 @@ from __future__ import annotations
 
 from collections import Counter
 
+from sqlalchemy.orm import Session
+
 from classifier.taxonomy_aws import AWS_API_TAXONOMY
+from db.models import ForensicEvent as ORMForensicEvent
 from db.models import IncidentRecord
 from normalizer.schema import ForensicEvent
 
@@ -135,7 +138,7 @@ def classify_events(events: list[ForensicEvent]) -> list[ForensicEvent]:
     return events
 
 
-def classify_all_events(incident_id: str, db) -> list:
+def classify_all_events(incident_id: str, db: Session) -> list[ORMForensicEvent]:
     """
     Load one incident's stored events, classify them in place, persist the
     classifier output, and return the updated ORM event rows.
