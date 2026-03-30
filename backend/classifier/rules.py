@@ -56,11 +56,10 @@ def _taxonomy_key_candidates(event: ForensicEvent) -> list[str]:
 
     if ":" in event.api_action:
         candidates.append(event.api_action)
-
-    service_prefix = _service_prefix_from_event_source(event.event_source)
-    if service_prefix:
-        candidates.append(f"{service_prefix}:{event.api_action}")
-
+    else:
+        service_prefix = _service_prefix_from_event_source(event.event_source)
+        if service_prefix:
+            candidates.append(f"{service_prefix}:{event.api_action}")
     suffix_matches = [
         key for key in AWS_API_TAXONOMY if key.endswith(f":{event.api_action}")
     ]
