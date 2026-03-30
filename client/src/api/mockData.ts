@@ -1,0 +1,403 @@
+import type { IncidentRecord, ForensicEvent } from '@/types'
+
+/* ─── shared events for incident 1 ────────────────────────────── */
+
+const INC1_EVENTS: ForensicEvent[] = [
+  {
+    event_id: 'ev-001',
+    platform: 'aws',
+    timestamp: '2026-03-17T14:24:03Z',
+    api_action: 'ListBuckets',
+    event_source: 's3.amazonaws.com',
+    source_ip: '45.33.32.156',
+    user_agent: 'aws-cli/2.15.0',
+    affected_resource: null,
+    resource_type: null,
+    success: true,
+    error_code: null,
+    raw_data: {},
+    impact_category: 'reconnaissance',
+    severity_weight: 1,
+  },
+  {
+    event_id: 'ev-002',
+    platform: 'aws',
+    timestamp: '2026-03-17T14:24:07Z',
+    api_action: 'ListObjects',
+    event_source: 's3.amazonaws.com',
+    source_ip: '45.33.32.156',
+    user_agent: 'aws-cli/2.15.0',
+    affected_resource: 'production-backups',
+    resource_type: 'bucket',
+    success: true,
+    error_code: null,
+    raw_data: {},
+    impact_category: 'reconnaissance',
+    severity_weight: 1,
+  },
+  {
+    event_id: 'ev-003',
+    platform: 'aws',
+    timestamp: '2026-03-17T14:24:31Z',
+    api_action: 'GetObject',
+    event_source: 's3.amazonaws.com',
+    source_ip: '45.33.32.156',
+    user_agent: 'python-requests/2.31.0',
+    affected_resource: 'production-backups/users_export_2026.csv',
+    resource_type: 'bucket',
+    success: true,
+    error_code: null,
+    raw_data: {},
+    impact_category: 'data_access',
+    severity_weight: 2,
+  },
+  {
+    event_id: 'ev-004',
+    platform: 'aws',
+    timestamp: '2026-03-17T14:25:44Z',
+    api_action: 'RunInstances',
+    event_source: 'ec2.amazonaws.com',
+    source_ip: '45.33.32.156',
+    user_agent: 'Boto3/1.34.0',
+    affected_resource: 'i-0abc12345def',
+    resource_type: 'instance',
+    success: true,
+    error_code: null,
+    raw_data: {},
+    impact_category: 'resource_abuse',
+    severity_weight: 3,
+  },
+  {
+    event_id: 'ev-005',
+    platform: 'aws',
+    timestamp: '2026-03-17T14:25:44Z',
+    api_action: 'RunInstances',
+    event_source: 'ec2.amazonaws.com',
+    source_ip: '45.33.32.156',
+    user_agent: 'Boto3/1.34.0',
+    affected_resource: 'i-0def67890abc',
+    resource_type: 'instance',
+    success: true,
+    error_code: null,
+    raw_data: {},
+    impact_category: 'resource_abuse',
+    severity_weight: 3,
+  },
+  {
+    event_id: 'ev-006',
+    platform: 'aws',
+    timestamp: '2026-03-17T14:31:22Z',
+    api_action: 'CreateAccessKey',
+    event_source: 'iam.amazonaws.com',
+    source_ip: '45.33.32.156',
+    user_agent: 'Boto3/1.34.0',
+    affected_resource: 'AKIAXYZ9999NEWKEY01',
+    resource_type: 'key',
+    success: true,
+    error_code: null,
+    raw_data: {},
+    impact_category: 'privilege_escalation',
+    severity_weight: 4,
+  },
+]
+
+/* ─── shared events for incident 2 ────────────────────────────── */
+
+const INC2_EVENTS: ForensicEvent[] = [
+  {
+    event_id: 'ev-101',
+    platform: 'aws',
+    timestamp: '2026-03-18T09:12:04Z',
+    api_action: 'GetCallerIdentity',
+    event_source: 'sts.amazonaws.com',
+    source_ip: '192.168.1.42',
+    user_agent: 'Boto3/1.34.0',
+    affected_resource: null,
+    resource_type: null,
+    success: true,
+    error_code: null,
+    raw_data: {},
+    impact_category: 'reconnaissance',
+    severity_weight: 1,
+  },
+  {
+    event_id: 'ev-102',
+    platform: 'aws',
+    timestamp: '2026-03-18T09:12:19Z',
+    api_action: 'DescribeInstances',
+    event_source: 'ec2.amazonaws.com',
+    source_ip: '192.168.1.42',
+    user_agent: 'Boto3/1.34.0',
+    affected_resource: null,
+    resource_type: 'instance',
+    success: true,
+    error_code: null,
+    raw_data: {},
+    impact_category: 'reconnaissance',
+    severity_weight: 1,
+  },
+]
+
+/* ─── shared events for incident 3 ────────────────────────────── */
+
+const INC3_EVENTS: ForensicEvent[] = [
+  {
+    event_id: 'ev-201',
+    platform: 'aws',
+    timestamp: '2026-03-19T22:01:10Z',
+    api_action: 'ListBuckets',
+    event_source: 's3.amazonaws.com',
+    source_ip: '185.220.101.7',
+    user_agent: 'curl/7.88.1',
+    affected_resource: null,
+    resource_type: null,
+    success: true,
+    error_code: null,
+    raw_data: {},
+    impact_category: 'reconnaissance',
+    severity_weight: 1,
+  },
+  {
+    event_id: 'ev-202',
+    platform: 'aws',
+    timestamp: '2026-03-19T22:01:34Z',
+    api_action: 'GetObject',
+    event_source: 's3.amazonaws.com',
+    source_ip: '185.220.101.7',
+    user_agent: 'curl/7.88.1',
+    affected_resource: 'private-assets/db_backup_2026-03-19.sql.gz',
+    resource_type: 'bucket',
+    success: true,
+    error_code: null,
+    raw_data: {},
+    impact_category: 'exfiltration',
+    severity_weight: 4,
+  },
+  {
+    event_id: 'ev-203',
+    platform: 'aws',
+    timestamp: '2026-03-19T22:02:01Z',
+    api_action: 'GetObject',
+    event_source: 's3.amazonaws.com',
+    source_ip: '185.220.101.7',
+    user_agent: 'curl/7.88.1',
+    affected_resource: 'private-assets/env_prod.tar.gz',
+    resource_type: 'bucket',
+    success: true,
+    error_code: null,
+    raw_data: {},
+    impact_category: 'exfiltration',
+    severity_weight: 4,
+  },
+  {
+    event_id: 'ev-204',
+    platform: 'aws',
+    timestamp: '2026-03-19T22:02:44Z',
+    api_action: 'AttachUserPolicy',
+    event_source: 'iam.amazonaws.com',
+    source_ip: '185.220.101.7',
+    user_agent: 'curl/7.88.1',
+    affected_resource: 'arn:aws:iam::123456789012:policy/AdministratorAccess',
+    resource_type: 'key',
+    success: true,
+    error_code: null,
+    raw_data: {},
+    impact_category: 'privilege_escalation',
+    severity_weight: 4,
+  },
+]
+
+/* ─── incidents ───────────────────────────────────────────────── */
+
+export const MOCK_INCIDENTS: IncidentRecord[] = [
+  {
+    incident_id: 'inc-001',
+    credential_type: 'AWS_ACCESS_KEY',
+    credential_hint: 'AKIA***XYZ',
+    access_key_id: 'AKIAIOSFODNN7XYZ',
+    repo_url: 'https://github.com/dev-team/infrastructure',
+    commit_hash: 'a3f8e7d9b2c1045f6e8a9b0c1d2e3f4a5b6c7d8e',
+    exposure_start: '2026-03-17T14:23:41Z',
+    exposure_end: '2026-03-17T14:46:12Z',
+    status: 'complete',
+    events: INC1_EVENTS,
+    overall_severity: 'CRITICAL',
+    report_text: `An AWS access key was committed to a public repository and remained exposed for 22 minutes and 31 seconds before rotation.\n\nDuring this window, an automated scanner from a DigitalOcean-hosted IP (45.33.32.156) performed reconnaissance against S3 and EC2, downloaded a 2.3 GB user export file, spun up two EC2 instances in us-east-1, and created a new IAM access key — establishing persistent access even after the original key was rotated.\n\nThe creation of a secondary IAM key is the most severe finding. The attacker may retain access to your account even after you rotated the original credential. This requires immediate investigation.`,
+    remediation_steps: [
+      'Disable new IAM key AKIAXYZ9999NEWKEY01 immediately via AWS Console → IAM → Users',
+      'Terminate EC2 instances i-0abc12345def and i-0def67890abc',
+      'Assess contents of users_export_2026.csv — GDPR notification likely required if PII was present',
+      'Review all CloudTrail events from IP 45.33.32.156 for the past 7 days',
+      'Enable MFA on root account and all IAM users',
+      'Rotate all credentials in the affected repository',
+      'Run git-secrets or trufflehog across full commit history',
+    ],
+    gdpr_flag: true,
+    estimated_financial_impact: 'EC2 instances: $0.02/hr × 2 (running since exposure). Data transfer: ~$0.21 (2.3 GB egress). Total accruing: ~$0.25+',
+  },
+  {
+    incident_id: 'inc-002',
+    credential_type: 'AWS_ACCESS_KEY',
+    credential_hint: 'AKIA***ABC',
+    access_key_id: 'AKIAIOSFODNN7ABC',
+    repo_url: 'https://github.com/yash-dev/ml-project',
+    commit_hash: 'b9c3d2e1f0a8b7c6d5e4f3a2b1c0d9e8f7a6b5c4',
+    exposure_start: '2026-03-18T09:11:55Z',
+    exposure_end: '2026-03-18T09:19:30Z',
+    status: 'complete',
+    events: INC2_EVENTS,
+    overall_severity: 'LOW',
+    report_text: `An AWS access key was accidentally committed to a machine learning project repository. The key was exposed for 7 minutes and 35 seconds.\n\nOnly two reconnaissance API calls were observed — identity verification and instance enumeration — both from a local IP, suggesting the developer themselves tested the key before realising it was committed. No data was accessed and no resources were created or modified.\n\nThis is a low-severity exposure. Rotate the key as a precaution and add pre-commit hooks to prevent future leaks.`,
+    remediation_steps: [
+      'Rotate the exposed AWS access key immediately',
+      'Add .env to .gitignore and verify it is excluded from future commits',
+      'Install git-secrets: brew install git-secrets && git secrets --install',
+      'Review commit history for any other accidentally committed credentials',
+    ],
+    gdpr_flag: false,
+    estimated_financial_impact: null,
+  },
+  {
+    incident_id: 'inc-003',
+    credential_type: 'AWS_ACCESS_KEY',
+    credential_hint: 'AKIA***QRS',
+    access_key_id: 'AKIAIOSFODNN7QRS',
+    repo_url: 'https://github.com/breachtrace-demo/web-app',
+    commit_hash: 'c1d2e3f4a5b6c7d8e9f0a1b2c3d4e5f6a7b8c9d0',
+    exposure_start: '2026-03-19T22:00:58Z',
+    exposure_end: '2026-03-19T22:05:13Z',
+    status: 'complete',
+    events: INC3_EVENTS,
+    overall_severity: 'CRITICAL',
+    report_text: `A high-value AWS access key was exposed in a public repository for 4 minutes and 15 seconds. An actor operating from a known Tor exit node (185.220.101.7) accessed the key within 72 seconds of exposure.\n\nTwo large files totaling approximately 800 MB were exfiltrated from a private S3 bucket, including what appears to be a full database backup and a production environment configuration archive. The actor then escalated privileges by attaching AdministratorAccess policy to a user — confirming this was a targeted, scripted attack.\n\nAssume full account compromise. Begin incident response procedures immediately.`,
+    remediation_steps: [
+      'Treat this as a full account compromise — begin formal incident response',
+      'Revoke all active IAM credentials immediately, including root access keys',
+      'Review and detach all IAM policies attached during exposure window',
+      'Assess db_backup_2026-03-19.sql.gz contents — mandatory GDPR breach notification within 72 hours if personal data was exposed',
+      'Review env_prod.tar.gz for secrets — rotate every credential it may contain',
+      'Enable AWS GuardDuty if not already active',
+      'Contact AWS Support to review for additional activity not visible in CloudTrail',
+      'File GDPR / data breach notification with your supervisory authority',
+    ],
+    gdpr_flag: true,
+    estimated_financial_impact: 'Data transfer: ~$0.08 (800 MB egress). Potential regulatory fines: €10M–€20M under GDPR Article 83(5) if personal data confirmed.',
+  },
+  {
+    incident_id: 'inc-004',
+    credential_type: 'AWS_ACCESS_KEY',
+    credential_hint: 'AKIA***MNO',
+    access_key_id: 'AKIAIOSFODNN7MNO',
+    repo_url: 'https://github.com/shashank-r/backend-api',
+    commit_hash: 'd2e3f4a5b6c7d8e9f0a1b2c3d4e5f6a7b8c9d0e1',
+    exposure_start: '2026-03-29T07:44:12Z',
+    exposure_end: null,
+    status: 'collecting',
+    events: [],
+    overall_severity: null,
+    report_text: null,
+    remediation_steps: [],
+    gdpr_flag: false,
+    estimated_financial_impact: null,
+  },
+]
+
+/* ─── research experiments ─────────────────────────────────────── */
+
+export interface ExperimentRun {
+  run_id: string
+  access_key_id: string
+  detection_time_s: number | null
+  report_time_s: number | null
+  api_calls: string[]
+  expected_severity: string
+  actual_severity: string | null
+  status: string
+  created_at: string
+}
+
+function makeRun(
+  i: number,
+  key: string,
+  detMs: number,
+  repMs: number,
+  calls: string[],
+  expSev: string,
+  actSev: string
+): ExperimentRun {
+  return {
+    run_id: `run-${String(i).padStart(3, '0')}`,
+    access_key_id: `AKIA${key}`,
+    detection_time_s: detMs,
+    report_time_s: repMs,
+    api_calls: calls,
+    expected_severity: expSev,
+    actual_severity: actSev,
+    status: 'complete',
+    created_at: `2026-03-29T${String(8 + Math.floor(i / 4)).padStart(2, '0')}:${String((i * 7) % 60).padStart(2, '0')}:00Z`,
+  }
+}
+
+export const MOCK_EXPERIMENT_RUNS: ExperimentRun[] = [
+  // Group A — ListBuckets + DescribeInstances + GetCallerIdentity → LOW
+  makeRun(1, 'IOSFODNN7A001', 12.3, 28.1, ['ListBuckets', 'DescribeInstances', 'GetCallerIdentity'], 'LOW', 'LOW'),
+  makeRun(2, 'IOSFODNN7A002', 14.7, 31.4, ['ListBuckets', 'DescribeInstances', 'GetCallerIdentity'], 'LOW', 'LOW'),
+  makeRun(3, 'IOSFODNN7A003', 11.8, 29.7, ['ListBuckets', 'DescribeInstances', 'GetCallerIdentity'], 'LOW', 'LOW'),
+  makeRun(4, 'IOSFODNN7A004', 16.2, 34.8, ['ListBuckets', 'DescribeInstances', 'GetCallerIdentity'], 'LOW', 'LOW'),
+  makeRun(5, 'IOSFODNN7A005', 13.1, 27.9, ['ListBuckets', 'DescribeInstances', 'GetCallerIdentity'], 'LOW', 'LOW'),
+  makeRun(6, 'IOSFODNN7A006', 15.4, 33.2, ['ListBuckets', 'DescribeInstances', 'GetCallerIdentity'], 'LOW', 'LOW'),
+  makeRun(7, 'IOSFODNN7A007', 10.9, 26.5, ['ListBuckets', 'DescribeInstances', 'GetCallerIdentity'], 'LOW', 'LOW'),
+  makeRun(8, 'IOSFODNN7A008', 18.3, 38.1, ['ListBuckets', 'DescribeInstances', 'GetCallerIdentity'], 'LOW', 'LOW'),
+  makeRun(9, 'IOSFODNN7A009', 12.7, 30.3, ['ListBuckets', 'DescribeInstances', 'GetCallerIdentity'], 'LOW', 'LOW'),
+  makeRun(10, 'IOSFODNN7A010', 14.1, 31.8, ['ListBuckets', 'DescribeInstances', 'GetCallerIdentity'], 'LOW', 'LOW'),
+  makeRun(11, 'IOSFODNN7A011', 13.5, 28.9, ['ListBuckets', 'DescribeInstances', 'GetCallerIdentity'], 'LOW', 'LOW'),
+  makeRun(12, 'IOSFODNN7A012', 15.9, 35.7, ['ListBuckets', 'DescribeInstances', 'GetCallerIdentity'], 'LOW', 'LOW'),
+
+  // Group B — GetObject + RunInstances → HIGH
+  makeRun(13, 'IOSFODNN7B001', 11.2, 42.6, ['GetObject', 'RunInstances'], 'HIGH', 'HIGH'),
+  makeRun(14, 'IOSFODNN7B002', 19.8, 51.3, ['GetObject', 'RunInstances'], 'HIGH', 'HIGH'),
+  makeRun(15, 'IOSFODNN7B003', 13.4, 44.9, ['GetObject', 'RunInstances'], 'HIGH', 'HIGH'),
+  makeRun(16, 'IOSFODNN7B004', 17.6, 48.2, ['GetObject', 'RunInstances'], 'HIGH', 'HIGH'),
+  makeRun(17, 'IOSFODNN7B005', 12.0, 40.7, ['GetObject', 'RunInstances'], 'HIGH', 'HIGH'),
+  makeRun(18, 'IOSFODNN7B006', 21.3, 54.1, ['GetObject', 'RunInstances'], 'HIGH', 'HIGH'),
+  makeRun(19, 'IOSFODNN7B007', 14.8, 43.5, ['GetObject', 'RunInstances'], 'HIGH', 'HIGH'),
+  makeRun(20, 'IOSFODNN7B008', 16.5, 47.0, ['GetObject', 'RunInstances'], 'HIGH', 'MEDIUM'),  // misclassification
+  makeRun(21, 'IOSFODNN7B009', 11.9, 41.3, ['GetObject', 'RunInstances'], 'HIGH', 'HIGH'),
+  makeRun(22, 'IOSFODNN7B010', 18.2, 49.8, ['GetObject', 'RunInstances'], 'HIGH', 'HIGH'),
+  makeRun(23, 'IOSFODNN7B011', 13.7, 45.6, ['GetObject', 'RunInstances'], 'HIGH', 'HIGH'),
+  makeRun(24, 'IOSFODNN7B012', 20.1, 52.9, ['GetObject', 'RunInstances'], 'HIGH', 'HIGH'),
+  makeRun(25, 'IOSFODNN7B013', 15.3, 46.4, ['GetObject', 'RunInstances'], 'HIGH', 'HIGH'),
+
+  // Group C — GetCallerIdentity only → LOW
+  makeRun(26, 'IOSFODNN7C001', 9.8, 22.3, ['GetCallerIdentity'], 'LOW', 'LOW'),
+  makeRun(27, 'IOSFODNN7C002', 10.2, 24.1, ['GetCallerIdentity'], 'LOW', 'LOW'),
+  makeRun(28, 'IOSFODNN7C003', 11.5, 25.8, ['GetCallerIdentity'], 'LOW', 'LOW'),
+  makeRun(29, 'IOSFODNN7C004', 8.9, 21.7, ['GetCallerIdentity'], 'LOW', 'LOW'),
+  makeRun(30, 'IOSFODNN7C005', 12.1, 26.4, ['GetCallerIdentity'], 'LOW', 'LOW'),
+  makeRun(31, 'IOSFODNN7C006', 9.4, 23.0, ['GetCallerIdentity'], 'LOW', 'LOW'),
+  makeRun(32, 'IOSFODNN7C007', 10.8, 24.9, ['GetCallerIdentity'], 'LOW', 'LOW'),
+  makeRun(33, 'IOSFODNN7C008', 11.3, 25.2, ['GetCallerIdentity'], 'LOW', 'LOW'),
+  makeRun(34, 'IOSFODNN7C009', 9.1, 22.8, ['GetCallerIdentity'], 'LOW', 'LOW'),
+  makeRun(35, 'IOSFODNN7C010', 10.5, 23.6, ['GetCallerIdentity'], 'LOW', 'LOW'),
+]
+
+/* ─── derived stats ─────────────────────────────────────────────── */
+
+const allDet = MOCK_EXPERIMENT_RUNS.map((r) => r.detection_time_s ?? 0)
+const allRep = MOCK_EXPERIMENT_RUNS.map((r) => r.report_time_s ?? 0)
+const avg = (arr: number[]) => arr.reduce((s, v) => s + v, 0) / arr.length
+
+const sevDist = MOCK_EXPERIMENT_RUNS.reduce<Record<string, number>>((acc, r) => {
+  const s = r.actual_severity ?? 'unknown'
+  acc[s] = (acc[s] ?? 0) + 1
+  return acc
+}, {})
+
+export const MOCK_STATS = {
+  total_runs: MOCK_EXPERIMENT_RUNS.length,
+  avg_detection_time_s: avg(allDet),
+  avg_report_time_s: avg(allRep),
+  severity_distribution: sevDist,
+  detection_target_s: 30,
+  report_target_s: 60,
+}
