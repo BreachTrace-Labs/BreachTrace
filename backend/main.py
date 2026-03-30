@@ -5,6 +5,8 @@ import config
 
 config.validate_config()
 
+from routers import incidents, simulate, webhook  # noqa: E402 — must come after validate_config
+
 app = FastAPI(
     title="BreachTrace",
     description="Universal Credential Forensics Platform",
@@ -14,11 +16,22 @@ app = FastAPI(
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    allow_credentials=True,
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
+# ---------------------------------------------------------------------------
+# Routers
+# ---------------------------------------------------------------------------
+app.include_router(webhook.router)
+app.include_router(incidents.router)
+app.include_router(simulate.router)
+
+
+# ---------------------------------------------------------------------------
+# Root + Health
+# ---------------------------------------------------------------------------
 
 @app.get("/")
 def health_check():
@@ -28,3 +41,4 @@ def health_check():
 @app.get("/health")
 def health():
     return {"status": "ok"}
+
