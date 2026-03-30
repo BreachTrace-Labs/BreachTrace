@@ -149,10 +149,13 @@ def classify_all_events(incident_id: str, db: Session) -> list[ORMForensicEvent]
 
     events = incident.events
     if not events:
-        return []
+        return events
 
     classify_events(events)
     db.commit()
+    # Refresh events so that returned ORM instances are not expired after commit.
+    for event in events:
+        db.refresh(event)
 
     return events
 
