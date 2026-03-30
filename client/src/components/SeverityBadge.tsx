@@ -1,22 +1,25 @@
 import type { IncidentRecord } from '../types'
+import { Badge } from '@/components/ui/badge'
+import type { BadgeProps } from '@/components/ui/badge'
 
 interface Props {
   severity: IncidentRecord['overall_severity']
+  className?: string
 }
 
-const COLOUR: Record<string, string> = {
-  LOW: 'bg-green-100 text-green-800',
-  MEDIUM: 'bg-yellow-100 text-yellow-800',
-  HIGH: 'bg-orange-100 text-orange-800',
-  CRITICAL: 'bg-red-100 text-red-800',
+const VARIANT_MAP: Record<string, BadgeProps['variant']> = {
+  LOW: 'low',
+  MEDIUM: 'medium',
+  HIGH: 'high',
+  CRITICAL: 'critical',
 }
 
-const SeverityBadge: React.FC<Props> = ({ severity }) => {
+const SeverityBadge: React.FC<Props> = ({ severity, className }) => {
   if (!severity) return null
   return (
-    <span className={`inline-block px-2 py-0.5 rounded text-sm font-medium ${COLOUR[severity] ?? ''}`}>
+    <Badge variant={VARIANT_MAP[severity] ?? 'outline'} className={className}>
       {severity}
-    </span>
+    </Badge>
   )
 }
 
