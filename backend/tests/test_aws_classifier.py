@@ -2,7 +2,9 @@ from datetime import datetime, timezone
 
 import pytest
 
-from classifier.rules import classify_event, classify_events
+from classifier.rules import classify_all_events, classify_event, classify_events
+from db.models import IncidentRecord as ORMIncidentRecord
+from db.models import ForensicEvent as ORMForensicEvent
 from normalizer.schema import ForensicEvent
 
 
@@ -214,3 +216,103 @@ def test_bulk_escalation_does_not_apply_when_source_ip_is_missing():
 
     assert all(event.impact_category == "data_access" for event in events)
     assert all(event.severity_weight == 3 for event in events)
+
+
+class _FakeDB:
+    def __init__(self, incident):
+        self._incident = incident
+        self.commits = 0
+
+    def get(self, model, incident_id):
+        if self._incident and incident_id == self._incident.incident_id:
+            return self._incident
+        return None
+
+    def commit(self):
+        self.commits += 1
+
+
+def _make_orm_event(
+    api_action: str,
+    *,
+    event_source: str = "s3.amazonaws.com",
+    source_ip: str | None = "1.2.3.4",
+) -> ORMForensicEvent:
+    return ORMForensicEvent(
+        event_id=f"{api_action}-{source_ip or 'none'}",
+        incident_id="incident-1",
+        platform="aws",
+        timestamp=datetime(2026, 3, 30, 12, 0, tzinfo=timezone.utc),
+        api_action=api_action,
+        event_source=event_source,
+        source_ip=source_ip,
+        success=True,
+        raw_data={"eventName": api_action, "eventSource": event_source},
+    )
+
+
+def _make_incident_with_events(events: list[ORMForensicEvent]) -> ORMIncidentRecord:
+    incident = ORMIncidentRecord(
+        incident_id="incident-1",
+        credential_type="aws_access_key",
+        credential_hint="AKIA****MPLE",
+        access_key_id="AKIAIOSFODNN7EXAMPLE",
+        repo_url="https://example.com/repo",
+        commit_hash="abc123",
+        exposure_start=datetime(2026, 3, 30, 12, 0, tzinfo=timezone.utc),
+        status="classifying",
+    )
+    incident.events = events
+    return incident
+
+
+def test_classify_all_events_updates_orm_events_and_commits():
+    incident = _make_incident_with_events(
+        [
+            _make_orm_event("ListBuckets"),
+            _make_orm_event("GetObject"),
+        ]
+    )
+    db = _FakeDB(incident)
+
+    events = classify_all_events(incident.incident_id, db)
+
+    assert events is incident.events
+    assert db.commits == 1
+    assert incident.events[0].impact_category == "reconnaissance"
+    assert incident.events[0].severity_weight == 1
+    assert incident.events[1].impact_category == "data_access"
+    assert incident.events[1].severity_weight == 3
+
+
+def test_classify_all_events_applies_bulk_exfiltration_rule_to_orm_events():
+    incident = _make_incident_with_events(
+        [
+            _make_orm_event("GetObject", source_ip="9.9.9.9")
+            for _ in range(5)
+        ]
+    )
+    db = _FakeDB(incident)
+
+    classify_all_events(incident.incident_id, db)
+
+    assert db.commits == 1
+    assert all(event.impact_category == "exfiltration" for event in incident.events)
+    assert all(event.severity_weight == 4 for event in incident.events)
+
+
+def test_classify_all_events_returns_empty_list_without_commit_when_incident_has_no_events():
+    incident = _make_incident_with_events([])
+    db = _FakeDB(incident)
+
+    events = classify_all_events(incident.incident_id, db)
+
+    assert events == []
+    assert db.commits == 0
+
+
+def test_classify_all_events_raises_for_missing_incident():
+    db = _FakeDB(None)
+
+    with pytest.raises(ValueError, match="Incident not found: missing-incident"):
+        classify_all_events("missing-incident", db)
