@@ -2,7 +2,11 @@ from __future__ import annotations
 
 from collections import Counter
 
+from sqlalchemy.orm import Session
+
 from classifier.taxonomy_aws import AWS_API_TAXONOMY
+from db.models import ForensicEvent as ORMForensicEvent
+from db.models import IncidentRecord
 from normalizer.schema import ForensicEvent
 
 RECONNAISSANCE = "reconnaissance"
@@ -130,6 +134,28 @@ def classify_events(events: list[ForensicEvent]) -> list[ForensicEvent]:
         ):
             event.impact_category = DATA_EXFILTRATION
             event.severity_weight = 4
+
+    return events
+
+
+def classify_all_events(incident_id: str, db: Session) -> list[ORMForensicEvent]:
+    """
+    Load one incident's stored events, classify them in place, persist the
+    classifier output, and return the updated ORM event rows.
+    """
+    incident = db.get(IncidentRecord, incident_id)
+    if incident is None:
+        raise ValueError(f"Incident not found: {incident_id}")
+
+    events = incident.events
+    if not events:
+        return events
+
+    classify_events(events)
+    db.commit()
+    # Refresh events so that returned ORM instances are not expired after commit.
+    for event in events:
+        db.refresh(event)
 
     return events
 
