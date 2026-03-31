@@ -12,7 +12,7 @@ Severity Rules (in order of precedence):
 •⁠  ⁠Otherwise: map max_weight (4→Critical, 3→High, 2→Medium, 1→Low, 0→Low)
 """
 
-from backend.normalizer.schema import ForensicEvent
+from normalizer.schema import ForensicEvent
 
 # Map severity weights to human-readable labels
 _WEIGHT_TO_LABEL = {
