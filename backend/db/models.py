@@ -11,7 +11,6 @@ from sqlalchemy import (
     Integer,
     Text,
     VARCHAR,
-    Enum,
 )
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import declarative_base, relationship
