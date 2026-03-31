@@ -47,19 +47,23 @@ def record_exposure_start(commit_timestamp: str) -> datetime:
 
 def is_key_revoked(
     access_key_id: str,
+    secret_access_key: str | None = None,
     *,
     admin_credentials: dict | None = None
 ) -> bool:
     """
-    Check whether an AWS access key is revoked.
+    Check whether an AWS access key is revoked via STS GetCallerIdentity.
 
-    NOTE:
-    - Uses configured/admin credentials to probe AWS STS.
-    - Does NOT directly authenticate with leaked key (by design).
+    When *secret_access_key* is provided the function authenticates as the
+    leaked key directly — the most reliable way to detect revocation.
+    Falls back to admin / configured credentials when the secret is unknown.
     """
     try:
-        # Use admin or fallback credentials
-        if admin_credentials:
+        # Prefer leaked-key credentials when available
+        if secret_access_key:
+            access_key = access_key_id
+            secret_key = secret_access_key
+        elif admin_credentials:
             access_key = admin_credentials.get("access_key_id")
             secret_key = admin_credentials.get("secret_access_key")
         else:
