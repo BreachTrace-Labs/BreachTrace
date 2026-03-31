@@ -231,6 +231,9 @@ class _FakeDB:
     def commit(self):
         self.commits += 1
 
+    def refresh(self, obj):
+        pass  # no-op for testing
+
 
 def _make_orm_event(
     api_action: str,
