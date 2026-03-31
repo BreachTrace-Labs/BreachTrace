@@ -17,6 +17,8 @@ const SEV_COLOR: Record<number, string> = {
 const ForensicTimeline: React.FC<Props> = ({ events }) => {
   const svgRef = useRef<SVGSVGElement | null>(null)
   const wrapperRef = useRef<HTMLDivElement | null>(null)
+  // Stable ref for the tooltip div — created once on mount, avoids accumulation on re-render
+  const tooltipRef = useRef<HTMLDivElement | null>(null)
 
   const data = useMemo(() => {
     return events
@@ -29,12 +31,36 @@ const ForensicTimeline: React.FC<Props> = ({ events }) => {
       .sort((a, b) => a.ts.getTime() - b.ts.getTime())
   }, [events])
 
+  // Create the tooltip div once on mount; clean it up on unmount.
+  useEffect(() => {
+    if (!wrapperRef.current) return
+    const div = document.createElement('div')
+    Object.assign(div.style, {
+      position: 'absolute',
+      pointerEvents: 'none',
+      padding: '8px 10px',
+      background: 'var(--color-card)',
+      border: '1px solid var(--color-border)',
+      borderRadius: '6px',
+      boxShadow: '0 10px 30px rgba(0,0,0,0.15)',
+      fontSize: '11px',
+      color: 'var(--color-foreground)',
+      opacity: '0',
+    })
+    wrapperRef.current.appendChild(div)
+    tooltipRef.current = div
+    return () => {
+      div.remove()
+      tooltipRef.current = null
+    }
+  }, [])
+
   useEffect(() => {
     const svg = d3.select(svgRef.current)
-    const container = d3.select(wrapperRef.current)
     svg.selectAll('*').remove()
     if (data.length === 0) return
 
+    const container = d3.select(wrapperRef.current)
     const width = container.node()?.clientWidth || 760
     const height = 260
     const margin = { top: 24, right: 20, bottom: 32, left: 120 }
@@ -82,19 +108,7 @@ const ForensicTimeline: React.FC<Props> = ({ events }) => {
 
     g.selectAll('.axis line, .axis path').style('stroke', 'var(--color-border)')
 
-    const tooltip = d3
-      .select(wrapperRef.current)
-      .append('div')
-      .style('position', 'absolute')
-      .style('pointer-events', 'none')
-      .style('padding', '8px 10px')
-      .style('background', 'var(--color-card)')
-      .style('border', '1px solid var(--color-border)')
-      .style('border-radius', '6px')
-      .style('box-shadow', '0 10px 30px rgba(0,0,0,0.15)')
-      .style('font-size', '11px')
-      .style('color', 'var(--color-foreground)')
-      .style('opacity', 0)
+    const tooltip = d3.select(tooltipRef.current)
 
     g.selectAll('circle')
       .data(data)
@@ -114,14 +128,21 @@ const ForensicTimeline: React.FC<Props> = ({ events }) => {
           minute: '2-digit',
           second: '2-digit',
         })
-        tooltip
-          .style('opacity', 1)
-          .html(
-            `<div style="font-weight:600">${d.api_action}</div>
-             <div>${time} • ${d.source_ip || 'unknown IP'}</div>
-             <div>${d.affected_resource || 'no resource recorded'}</div>
-             <div style="color:var(--color-muted-foreground)">${d.impact_category || 'unclassified'}</div>`
-          )
+        // Build tooltip content using safe DOM text nodes — no innerHTML / html()
+        const node = tooltipRef.current!
+        node.textContent = ''
+        const b = document.createElement('div')
+        b.style.fontWeight = '600'
+        b.textContent = d.api_action
+        const l2 = document.createElement('div')
+        l2.textContent = `${time} \u2022 ${d.source_ip ?? 'unknown IP'}`
+        const l3 = document.createElement('div')
+        l3.textContent = d.affected_resource ?? 'no resource recorded'
+        const l4 = document.createElement('div')
+        l4.style.color = 'var(--color-muted-foreground)'
+        l4.textContent = d.impact_category ?? 'unclassified'
+        node.append(b, l2, l3, l4)
+        tooltip.style('opacity', 1)
       })
       .on('mousemove', function (event) {
         const [mx, my] = d3.pointer(event, wrapperRef.current)
@@ -132,7 +153,6 @@ const ForensicTimeline: React.FC<Props> = ({ events }) => {
       })
 
     return () => {
-      tooltip.remove()
       svg.selectAll('*').remove()
     }
   }, [data])
