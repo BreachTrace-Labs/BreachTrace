@@ -8,8 +8,8 @@ from datetime import datetime, timezone
 
 import pytest
 
-from backend.normalizer.schema import ForensicEvent
-from backend.scorer.severity import (
+from normalizer.schema import ForensicEvent
+from scorer.severity import (
     score_incident,
     compute_financial_impact,
     check_gdpr_flag,

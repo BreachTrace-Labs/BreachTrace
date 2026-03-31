@@ -2,14 +2,14 @@
 Incident severity scoring and financial impact estimation.
 
 This module provides three main functions:
-1.⁠ ⁠score_incident() - Returns 'Low', 'Medium', 'High', or 'Critical'
-2.⁠ ⁠compute_financial_impact() - Estimates cost impact from resource abuse
-3.⁠ ⁠check_gdpr_flag() - Detects PII/personal data exposure
+1. score_incident() - Returns 'Low', 'Medium', 'High', or 'Critical'
+2. compute_financial_impact() - Estimates cost impact from resource abuse
+3. check_gdpr_flag() - Detects PII/personal data exposure
 
 Severity Rules (in order of precedence):
-•⁠  ⁠If any of {privilege_escalation, exfiltration, code_compromise} → Critical
-•⁠  ⁠If financial_abuse + max_weight >= 3 → Critical; else if financial_abuse → High
-•⁠  ⁠Otherwise: map max_weight (4→Critical, 3→High, 2→Medium, 1→Low, 0→Low)
+- If any of {privilege_escalation, exfiltration, code_compromise} -> Critical
+- If financial_abuse + max_weight >= 3 -> Critical; else if financial_abuse -> High
+- Otherwise: map max_weight (4->Critical, 3->High, 2->Medium, 1->Low, 0->Low)
 """
 
 from normalizer.schema import ForensicEvent
