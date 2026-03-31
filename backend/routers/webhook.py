@@ -17,7 +17,7 @@ import json
 import logging
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
 from github import Github, GithubException
 from sqlalchemy.orm import Session
 
@@ -25,6 +25,7 @@ import config
 from db.crud import create_incident, set_exposure_end
 from db.database import SessionLocal, get_db
 from detector.scanner import scan
+from pipeline import run_collection_pipeline
 from window.calculator import is_key_revoked, record_exposure_start
 
 logger = logging.getLogger(__name__)
@@ -115,6 +116,7 @@ async def _monitor_revocation(
 @router.post("/github", status_code=202)
 async def github_webhook(
     request: Request,
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
 ):
     """
@@ -180,6 +182,16 @@ async def github_webhook(
                 incident.incident_id,
                 match.credential_hint,
                 repo_url,
+            )
+
+            # Fire CloudTrail collection in the background — does NOT block the
+            # webhook response.  The pipeline stores events to DB and advances
+            # the incident status to 'classifying'.
+            background_tasks.add_task(
+                run_collection_pipeline,
+                incident.incident_id,
+                match.access_key_id,
+                exposure_start,
             )
 
             # Launch revocation monitor ONLY for the experiment key — the secret
