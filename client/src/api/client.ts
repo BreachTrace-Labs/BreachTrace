@@ -61,7 +61,11 @@ const mockClient = {
     }
     throw { response: { status: 404, data: { detail: `No mock for ${url}` } } }
   },
-} as Pick<ReturnType<typeof axios.create>, 'get'>
+  // Stub — POST is not used while VITE_USE_MOCK=true; throws clearly instead of silently failing
+  post: async (_url: string, _body?: unknown) => {
+    throw new Error(`POST ${_url} is not implemented in the mock client`)
+  },
+} as Pick<ReturnType<typeof axios.create>, 'get' | 'post'>
 
 /* ─── real client ─────────────────────────────────────────────── */
 
@@ -75,6 +79,9 @@ const realClient = axios.create({
 
 /* ─── export whichever is active ─────────────────────────────── */
 
+// Set VITE_USE_MOCK=true in .env.local (or Vite dev server config) to run
+// the UI without a live backend. The mock client returns data from mockData.ts
+// and has artificial 600 ms latency to simulate real network round-trips.
 const USE_MOCK = import.meta.env.VITE_USE_MOCK === 'true'
 
 const client = USE_MOCK ? mockClient : realClient
