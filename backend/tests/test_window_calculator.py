@@ -9,7 +9,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 from botocore.exceptions import ClientError
 
-from backend.window.calculator import (
+from window.calculator import (
     EXPOSURE_WINDOW_TIMEOUT_SECONDS,
     REVOCATION_CHECK_INTERVAL_SECONDS,
     record_exposure_start,
@@ -57,8 +57,8 @@ class TestIsKeyRevoked:
             "GetCallerIdentity",
         )
 
-    @patch("backend.window.calculator.boto3.client")
-    @patch("backend.window.calculator.config")
+    @patch("window.calculator.boto3.client")
+    @patch("window.calculator.config")
     def test_active_key(self, mock_config, mock_client):
         mock_config.AWS_ACCESS_KEY_ID = "test_key"
         mock_config.AWS_SECRET_ACCESS_KEY = "test_secret"
@@ -70,8 +70,8 @@ class TestIsKeyRevoked:
 
         assert is_key_revoked("key") is False
 
-    @patch("backend.window.calculator.boto3.client")
-    @patch("backend.window.calculator.config")
+    @patch("window.calculator.boto3.client")
+    @patch("window.calculator.config")
     def test_revoked_key(self, mock_config, mock_client):
         mock_config.AWS_ACCESS_KEY_ID = "test_key"
         mock_config.AWS_SECRET_ACCESS_KEY = "test_secret"
@@ -83,8 +83,8 @@ class TestIsKeyRevoked:
 
         assert is_key_revoked("key") is True
 
-    @patch("backend.window.calculator.boto3.client")
-    @patch("backend.window.calculator.config")
+    @patch("window.calculator.boto3.client")
+    @patch("window.calculator.config")
     def test_expired_token(self, mock_config, mock_client):
         mock_config.AWS_ACCESS_KEY_ID = "test_key"
         mock_config.AWS_SECRET_ACCESS_KEY = "test_secret"
@@ -96,8 +96,8 @@ class TestIsKeyRevoked:
 
         assert is_key_revoked("key") is True
 
-    @patch("backend.window.calculator.boto3.client")
-    @patch("backend.window.calculator.config")
+    @patch("window.calculator.boto3.client")
+    @patch("window.calculator.config")
     def test_other_error(self, mock_config, mock_client):
         mock_config.AWS_ACCESS_KEY_ID = "test_key"
         mock_config.AWS_SECRET_ACCESS_KEY = "test_secret"
@@ -109,8 +109,8 @@ class TestIsKeyRevoked:
 
         assert is_key_revoked("key") is False
 
-    @patch("backend.window.calculator.boto3.client")
-    @patch("backend.window.calculator.config")
+    @patch("window.calculator.boto3.client")
+    @patch("window.calculator.config")
     def test_runtime_error(self, mock_config, mock_client):
         mock_config.AWS_ACCESS_KEY_ID = "test_key"
         mock_config.AWS_SECRET_ACCESS_KEY = "test_secret"
@@ -122,8 +122,8 @@ class TestIsKeyRevoked:
 
         assert is_key_revoked("key") is False
 
-    @patch("backend.window.calculator.boto3.client")
-    @patch("backend.window.calculator.config")
+    @patch("window.calculator.boto3.client")
+    @patch("window.calculator.config")
     def test_custom_credentials(self, mock_config, mock_client):
         mock_config.AWS_REGION = "us-east-1"
         
@@ -180,8 +180,8 @@ class TestMonitorExposureWindow:
     async def test_revocation_stops_monitor(self):
         mock_db = MagicMock()
 
-        with patch("backend.window.calculator.is_key_revoked", return_value=True), \
-             patch("backend.window.calculator.close_exposure_window") as mock_close:
+        with patch("window.calculator.is_key_revoked", return_value=True), \
+             patch("window.calculator.close_exposure_window") as mock_close:
 
             await monitor_exposure_window("id", "key", mock_db)
 
@@ -191,10 +191,10 @@ class TestMonitorExposureWindow:
     async def test_timeout_stops_monitor(self):
         mock_db = MagicMock()
 
-        with patch("backend.window.calculator.is_key_revoked", return_value=False), \
-             patch("backend.window.calculator.close_exposure_window") as mock_close, \
-             patch("backend.window.calculator.asyncio.sleep", return_value=None), \
-             patch("backend.window.calculator.EXPOSURE_WINDOW_TIMEOUT_SECONDS", 0):
+        with patch("window.calculator.is_key_revoked", return_value=False), \
+             patch("window.calculator.close_exposure_window") as mock_close, \
+             patch("window.calculator.asyncio.sleep", return_value=None), \
+             patch("window.calculator.EXPOSURE_WINDOW_TIMEOUT_SECONDS", 0):
 
             await monitor_exposure_window("id", "key", mock_db)
 
@@ -222,7 +222,7 @@ class TestMonitorManagement:
     def test_start_monitor(self):
         mock_db = MagicMock()
 
-        with patch("backend.window.calculator.asyncio.create_task") as mock_create:
+        with patch("window.calculator.asyncio.create_task") as mock_create:
             mock_create.return_value = MagicMock()
 
             start_window_monitor("id", "key", mock_db)
@@ -234,7 +234,7 @@ class TestMonitorManagement:
         mock_db = MagicMock()
         mock_task = MagicMock()
 
-        with patch("backend.window.calculator.asyncio.create_task", return_value=mock_task):
+        with patch("window.calculator.asyncio.create_task", return_value=mock_task):
             start_window_monitor("id", "key", mock_db)
             start_window_monitor("id", "key", mock_db)
 
