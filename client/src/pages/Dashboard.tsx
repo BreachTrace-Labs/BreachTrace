@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
   AlertTriangle,
@@ -33,9 +33,9 @@ function fmtTime(ts: string) {
   })
 }
 
-function duration(start: string, end: string | null) {
+function duration(start: string, end: string | null, now: number) {
   const s = new Date(start).getTime()
-  const e = end ? new Date(end).getTime() : Date.now()
+  const e = end ? new Date(end).getTime() : now
   const diff = Math.floor((e - s) / 1000)
   const m = Math.floor(diff / 60)
   const sec = diff % 60
@@ -107,7 +107,17 @@ const Dashboard: React.FC = () => {
   const [incidents, setIncidents] = useState<IncidentRecord[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [now, setNow] = useState(Date.now())
+  const tickerRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const navigate = useNavigate()
+
+  // Tick every second so active-incident durations update live
+  useEffect(() => {
+    tickerRef.current = setInterval(() => setNow(Date.now()), 1000)
+    return () => {
+      if (tickerRef.current !== null) clearInterval(tickerRef.current)
+    }
+  }, [])
 
   const fetchIncidents = async () => {
     setLoading(true)
@@ -282,7 +292,7 @@ const Dashboard: React.FC = () => {
                     </TableCell>
                     <TableCell>
                       <span className="text-xs font-mono">
-                        {duration(inc.exposure_start, inc.exposure_end)}
+                        {duration(inc.exposure_start, inc.exposure_end, now)}
                       </span>
                     </TableCell>
                     <TableCell>

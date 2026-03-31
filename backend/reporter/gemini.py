@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Iterable
 
 import google.generativeai as genai
@@ -9,8 +10,18 @@ import google.generativeai as genai
 import config
 from normalizer.schema import ForensicEvent
 
-genai.configure(api_key=config.GEMINI_API_KEY)
-_model = genai.GenerativeModel("gemini-2.5-flash")
+logger = logging.getLogger(__name__)
+
+_model: genai.GenerativeModel | None = None
+
+
+def _get_model() -> genai.GenerativeModel:
+    """Return the Gemini model, initialising it on first use."""
+    global _model
+    if _model is None:
+        genai.configure(api_key=config.GEMINI_API_KEY)
+        _model = genai.GenerativeModel("gemini-2.5-flash")
+    return _model
 
 
 def _format_event_line(event: ForensicEvent) -> str:
@@ -88,12 +99,13 @@ def generate_report(
         )
 
     try:
-        response = _model.generate_content(prompt)
+        response = _get_model().generate_content(prompt)
         text = getattr(response, "text", None) or "".join(getattr(response, "candidates", []))
         if text:
             return text.strip()
     except Exception:
         # Best-effort resilience — never block the pipeline on LLM failure.
+        logger.exception("Gemini generation failed")
         pass
 
     # Fallback if Gemini is unavailable
