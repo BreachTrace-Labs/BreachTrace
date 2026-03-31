@@ -2,7 +2,9 @@
 GET /incidents
 GET /incidents/stats
 GET /incidents/{incident_id}
------------------------------
+GET /incidents/{incident_id}/timeline
+PATCH /incidents/{incident_id}
+------------------------------
 Returns stored incidents and their forensic events.
 """
 from __future__ import annotations
@@ -22,6 +24,13 @@ from db.models import ExperimentRun
 router = APIRouter(prefix="/incidents", tags=["incidents"])
 
 _SEVERITY_LABELS: dict[int, str] = {1: "LOW", 2: "MEDIUM", 3: "HIGH", 4: "CRITICAL"}
+
+# Reverse mapping: string labels → DB integer (case-insensitive on lookup)
+_SEVERITY_STR_TO_INT: dict[str, int] = {
+    "low": 1, "medium": 2, "high": 3, "critical": 4,
+    "LOW": 1, "MEDIUM": 2, "HIGH": 3, "CRITICAL": 4,
+    "Low": 1, "Medium": 2, "High": 3, "Critical": 4,
+}
 
 
 # ---------------------------------------------------------------------------
@@ -128,4 +137,88 @@ def get_incident_detail(
     incident = get_incident(db, incident_id)
     if incident is None:
         raise HTTPException(status_code=404, detail="Incident not found")
+    return incident
+
+
+# ---------------------------------------------------------------------------
+# Timeline endpoint
+# ---------------------------------------------------------------------------
+
+@router.get("/{incident_id}/timeline", response_model=list[ForensicEventOut])
+def get_incident_timeline(
+    incident_id: str,
+    db: Session = Depends(get_db),
+):
+    """
+    Return forensic events for an incident sorted by timestamp.
+
+    Events include ``impact_category`` and ``severity_weight`` once the
+    pipeline has reached the *classifying* stage or beyond.
+    """
+    incident = get_incident(db, incident_id)
+    if incident is None:
+        raise HTTPException(status_code=404, detail="Incident not found")
+    # The relationship has ``order_by=ForensicEvent.timestamp`` so the list is
+    # already chronologically sorted.
+    return incident.events
+
+
+# ---------------------------------------------------------------------------
+# PATCH endpoint
+# ---------------------------------------------------------------------------
+
+class IncidentPatch(BaseModel):
+    """Subset of IncidentRecord fields that can be updated after creation."""
+
+    report_text: Optional[str] = None
+    remediation_steps: Optional[list[str]] = None
+    gdpr_flag: Optional[bool] = None
+    financial_impact: Optional[str] = None
+    # Accept "Low" / "Medium" / "High" / "Critical" (any casing)
+    overall_severity: Optional[str] = None
+
+
+@router.patch("/{incident_id}", response_model=IncidentDetailOut)
+def patch_incident(
+    incident_id: str,
+    body: IncidentPatch,
+    db: Session = Depends(get_db),
+):
+    """
+    Partially update an incident record.
+
+    Used by the pipeline (via direct DB access) and by tests / manual
+    intervention.  Only supplied fields are changed; omitted fields are left
+    as-is.
+    """
+    incident = get_incident(db, incident_id)
+    if incident is None:
+        raise HTTPException(status_code=404, detail="Incident not found")
+
+    if body.report_text is not None:
+        incident.report_text = body.report_text
+
+    if body.remediation_steps is not None:
+        incident.remediation_steps = body.remediation_steps
+
+    if body.gdpr_flag is not None:
+        incident.gdpr_flag = body.gdpr_flag
+
+    if body.financial_impact is not None:
+        incident.financial_impact = body.financial_impact
+
+    if body.overall_severity is not None:
+        severity_int = _SEVERITY_STR_TO_INT.get(body.overall_severity)
+        if severity_int is None:
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    f"Invalid overall_severity '{body.overall_severity}'. "
+                    "Must be one of: Low, Medium, High, Critical."
+                ),
+            )
+        incident.overall_severity = severity_int
+
+    db.commit()
+    db.refresh(incident)
     return incident
