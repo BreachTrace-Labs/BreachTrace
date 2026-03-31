@@ -144,7 +144,11 @@ def test_run_experiment_uses_config_defaults_and_orchestrates_steps(monkeypatch)
     monkeypatch.setattr(
         harness,
         "simulate_attacker_activity",
-        lambda access_key_id, secret_key: ["ListBuckets", "DescribeInstances", "GetCallerIdentity"],
+        lambda access_key_id, secret_key, experiment_group="A": [
+            "ListBuckets",
+            "DescribeInstances",
+            "GetCallerIdentity",
+        ],
     )
     monkeypatch.setattr(
         harness,
@@ -160,7 +164,8 @@ def test_run_experiment_uses_config_defaults_and_orchestrates_steps(monkeypatch)
 
     result = harness.run_experiment(
         14,
-        sleep_before_cleanup_s=2,
+        wait_before_activity_s=0,
+        wait_after_activity_s=2,
         revoke_after_run=True,
     )
 
@@ -181,3 +186,138 @@ def test_run_experiment_raises_when_credentials_missing(monkeypatch):
 
     with pytest.raises(ValueError, match="Experiment AWS credentials are required"):
         harness.run_experiment(1)
+
+
+def test_find_incident_for_run_matches_repo_hint_and_start_time(monkeypatch):
+    monkeypatch.setattr(
+        harness,
+        "_api_get_json",
+        lambda api_base_url, path, params=None: [
+            {
+                "incident_id": "old",
+                "repo_url": "https://github.com/example/repo",
+                "credential_hint": "AKIA****CDEF",
+                "exposure_start": "2026-03-31T09:59:59+00:00",
+                "created_at": "2026-03-31T10:00:05+00:00",
+            },
+            {
+                "incident_id": "match",
+                "repo_url": "https://github.com/example/repo",
+                "credential_hint": "AKIA****CDEF",
+                "exposure_start": "2026-03-31T10:00:00+00:00",
+                "created_at": "2026-03-31T10:00:07+00:00",
+            },
+        ],
+    )
+
+    incident = harness.find_incident_for_run(
+        "http://localhost:8000",
+        repo_url="https://github.com/example/repo",
+        access_key_id="AKIA1234567890ABCDEF",
+        exposure_start=harness.datetime(2026, 3, 31, 10, 0, tzinfo=harness.timezone.utc),
+    )
+
+    assert incident["incident_id"] == "match"
+
+
+def test_poll_incident_until_complete_returns_finished_incident(monkeypatch):
+    calls = {"count": 0}
+
+    def fake_get(api_base_url, path, params=None):
+        calls["count"] += 1
+        if calls["count"] == 1:
+            return {"incident_id": "incident-1", "status": "classifying"}
+        return {"incident_id": "incident-1", "status": "complete", "events": []}
+
+    monkeypatch.setattr(harness, "_api_get_json", fake_get)
+    monkeypatch.setattr(harness.time, "sleep", lambda seconds: None)
+
+    incident = harness.poll_incident_until_complete(
+        "http://localhost:8000",
+        "incident-1",
+        poll_interval_s=0,
+        timeout_s=1,
+    )
+
+    assert incident["status"] == "complete"
+    assert calls["count"] == 2
+
+
+def test_run_experiment_waits_for_incident_when_requested(monkeypatch):
+    monkeypatch.setattr(harness.config, "EXPERIMENT_AWS_ACCESS_KEY_ID", "AKIADEFAULT123456789")
+    monkeypatch.setattr(harness.config, "EXPERIMENT_AWS_SECRET_ACCESS_KEY", "default-secret")
+
+    monkeypatch.setattr(
+        harness,
+        "push_fake_credential",
+        lambda access_key_id, secret_key, path="config.env": {
+            "repo": "https://github.com/example/repo",
+            "path": path,
+            "action": "created",
+            "commit_sha": "commit-1",
+        },
+    )
+    monkeypatch.setattr(
+        harness,
+        "simulate_attacker_activity",
+        lambda access_key_id, secret_key, experiment_group="A": ["GetCallerIdentity"],
+    )
+    monkeypatch.setattr(
+        harness,
+        "wait_for_incident",
+        lambda *args, **kwargs: {
+            "incident_id": "incident-1",
+            "created_at": "2026-03-31T10:00:05+00:00",
+        },
+    )
+    monkeypatch.setattr(
+        harness,
+        "poll_incident_until_complete",
+        lambda *args, **kwargs: {
+            "incident_id": "incident-1",
+            "status": "complete",
+            "overall_severity": 1,
+            "events": [{"impact_category": "reconnaissance"}],
+        },
+    )
+    monkeypatch.setattr(
+        harness,
+        "delete_credential_from_repo",
+        lambda path="config.env": {"step": "cleanup", "path": path},
+    )
+    monkeypatch.setattr(harness.time, "sleep", lambda seconds: None)
+
+    class _FrozenDateTime:
+        moments = iter(
+            [
+                harness.datetime(2026, 3, 31, 10, 0, 0, tzinfo=harness.timezone.utc),
+                harness.datetime(2026, 3, 31, 10, 1, 0, tzinfo=harness.timezone.utc),
+                harness.datetime(2026, 3, 31, 10, 2, 0, tzinfo=harness.timezone.utc),
+            ]
+        )
+
+        @classmethod
+        def now(cls, tz=None):
+            return next(cls.moments)
+
+        @classmethod
+        def fromisoformat(cls, value):
+            from datetime import datetime as _real_datetime
+
+            return _real_datetime.fromisoformat(value)
+
+    monkeypatch.setattr(harness, "datetime", _FrozenDateTime)
+
+    result = harness.run_experiment(
+        1,
+        api_base_url="http://localhost:8000",
+        wait_before_activity_s=0,
+        wait_after_activity_s=0,
+        wait_for_completion=True,
+    )
+
+    assert result["incident_id"] == "incident-1"
+    assert result["detection_time_s"] == 5.0
+    assert result["report_time_s"] == 120.0
+    assert result["impact_categories"] == ["reconnaissance"]
+    assert result["overall_severity"] == 1
