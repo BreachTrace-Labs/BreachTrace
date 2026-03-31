@@ -16,8 +16,8 @@ import boto3
 from botocore.exceptions import ClientError
 from sqlalchemy.orm import Session
 
-from backend import config
-from backend.db.models import IncidentRecord
+import config
+from db.models import IncidentRecord
 
 logger = logging.getLogger(__name__)  
 
