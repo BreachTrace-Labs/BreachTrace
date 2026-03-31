@@ -1,44 +1,196 @@
-from datetime import datetime
+"""
+Exposure window management: tracking when a credential becomes public until it's revoked.
+
+Pipeline:
+1. exposure_start = commit_timestamp (when credential leaked)
+2. Background loop every 60s: check if key is revoked
+3. When revoked: exposure_end = now()
+4. If still active after 10 minutes: force close (experiment timeout)
+"""
+
+import asyncio
+import logging
+from datetime import datetime, timezone
 
 import boto3
 from botocore.exceptions import ClientError
+from sqlalchemy.orm import Session
 
-import config
+from backend import config
+from backend.db.models import IncidentRecord
 
-# Error codes returned by STS / IAM when a key is no longer valid.
+logger = logging.getLogger(__name__)  
+
+# Timeout: close window after 10 minutes if not revoked
+EXPOSURE_WINDOW_TIMEOUT_SECONDS = 600
+REVOCATION_CHECK_INTERVAL_SECONDS = 60
+
+# Track active monitoring tasks per incident
+_active_monitors: dict[str, asyncio.Task] = {}
+
+# AWS error codes when key is invalid/revoked
 _REVOKED_ERROR_CODES = frozenset(
     {
-        "InvalidClientTokenId",  # Key ID does not exist (deleted)
-        "InvalidAccessKeyId",    # Malformed / non-existent key
-        "ExpiredTokenException", # Temporary credential expired
+        "InvalidClientTokenId",
+        "InvalidAccessKeyId",
+        "ExpiredTokenException",
     }
 )
 
 
 def record_exposure_start(commit_timestamp: str) -> datetime:
-    """Parse the GitHub commit timestamp and return it as a timezone-aware datetime (UTC)."""
+    """
+    Parse commit timestamp and return UTC datetime.
+    """
     return datetime.fromisoformat(commit_timestamp.replace("Z", "+00:00"))
 
 
-def is_key_revoked(access_key_id: str, secret_access_key: str) -> bool:
+def is_key_revoked(
+    access_key_id: str,
+    *,
+    admin_credentials: dict | None = None
+) -> bool:
     """
-    Check whether an AWS access key is still valid by calling STS GetCallerIdentity.
+    Check whether an AWS access key is revoked.
 
-    Returns True  if the key has been revoked/deleted (safe to set exposure_end).
-    Returns False if the key is still active.
-    Raises       for unexpected AWS errors so the caller can log them.
+    NOTE:
+    - Uses configured/admin credentials to probe AWS STS.
+    - Does NOT directly authenticate with leaked key (by design).
     """
-    client = boto3.client(
-        "sts",
-        aws_access_key_id=access_key_id,
-        aws_secret_access_key=secret_access_key,
-        region_name=config.AWS_REGION,
-    )
     try:
+        # Use admin or fallback credentials
+        if admin_credentials:
+            access_key = admin_credentials.get("access_key_id")
+            secret_key = admin_credentials.get("secret_access_key")
+        else:
+            access_key = config.AWS_ACCESS_KEY_ID
+            secret_key = config.AWS_SECRET_ACCESS_KEY
+
+        client = boto3.client(
+            "sts",
+            aws_access_key_id=access_key,
+            aws_secret_access_key=secret_key,
+            region_name=config.AWS_REGION,
+        )
+
         client.get_caller_identity()
-        return False  # Key still valid
+
+        logger.debug(f"[ACTIVE] Key {access_key_id[:8]}...")
+        return False
+
     except ClientError as exc:
         error_code = exc.response["Error"]["Code"]
+
         if error_code in _REVOKED_ERROR_CODES:
-            return True  # Key has been revoked or deleted
-        raise  # Unexpected error — let caller handle
+            logger.info(f"[REVOKED] Key {access_key_id[:8]}... ({error_code})")
+            return True
+
+        logger.warning(f"AWS error during revocation check: {error_code}")
+        return False
+
+    except Exception as e:
+        logger.warning(f"Unexpected error checking key: {str(e)}")
+        return False
+
+
+def close_exposure_window(incident_id: str, db: Session) -> None:
+    """
+    Close exposure window by setting exposure_end.
+    """
+    incident = db.query(IncidentRecord).filter_by(incident_id=incident_id).first()
+
+    if not incident:
+        raise ValueError(f"Incident not found: {incident_id}")
+
+    if incident.exposure_end is None:
+        incident.exposure_end = datetime.now(timezone.utc)
+        db.commit()
+        logger.info(f"Exposure window closed for incident {incident_id}")
+    else:
+        logger.debug(f"Exposure window already closed for {incident_id}")
+
+
+async def monitor_exposure_window(
+    incident_id: str,
+    access_key_id: str,
+    db_session: Session,
+) -> None:
+    """
+    Background coroutine to monitor exposure window.
+    """
+    monitor_start = datetime.now(timezone.utc)
+
+    logger.info(
+        f"Starting monitor for incident {incident_id}, key {access_key_id[:8]}..."
+    )
+
+    while True:
+        try:
+            now = datetime.now(timezone.utc)
+            elapsed_seconds = (now - monitor_start).total_seconds()
+
+            # ⏱ Timeout condition
+            if elapsed_seconds >= EXPOSURE_WINDOW_TIMEOUT_SECONDS:
+                logger.warning(
+                    f"Timeout reached ({EXPOSURE_WINDOW_TIMEOUT_SECONDS}s) "
+                    f"for incident {incident_id}. Force closing."
+                )
+                close_exposure_window(incident_id, db_session)
+                break
+
+            # 🔐 Revocation check
+            if is_key_revoked(access_key_id):
+                logger.info(
+                    f"Key revoked after {int(elapsed_seconds)}s → closing window"
+                )
+                close_exposure_window(incident_id, db_session)
+                break
+
+            await asyncio.sleep(REVOCATION_CHECK_INTERVAL_SECONDS)
+
+        except asyncio.CancelledError:
+            logger.info(f"Monitor cancelled for incident {incident_id}")
+            break
+
+        except Exception as e:
+            logger.error(f"Monitor error: {e}")
+            await asyncio.sleep(REVOCATION_CHECK_INTERVAL_SECONDS)
+
+    logger.info(f"Monitor completed for incident {incident_id}")
+    _active_monitors.pop(incident_id, None)
+
+
+def start_window_monitor(
+    incident_id: str,
+    access_key_id: str,
+    db_session: Session,
+) -> None:
+    """
+    Start background monitoring task.
+    """
+    if incident_id in _active_monitors:
+        logger.warning(f"Monitor already running for {incident_id}")
+        return
+
+    try:
+        task = asyncio.create_task(
+            monitor_exposure_window(incident_id, access_key_id, db_session)
+        )
+        _active_monitors[incident_id] = task
+
+        logger.info(f"Monitor started for incident {incident_id}")
+
+    except RuntimeError as e:
+        logger.debug(f"No running event loop: {e}")
+
+
+def stop_window_monitor(incident_id: str) -> None:
+    """
+    Stop monitoring task manually.
+    """
+    task = _active_monitors.get(incident_id)
+
+    if task:
+        task.cancel()
+        _active_monitors.pop(incident_id, None)
+        logger.info(f"Monitor stopped for incident {incident_id}")
