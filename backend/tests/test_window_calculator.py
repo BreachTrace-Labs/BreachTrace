@@ -204,18 +204,19 @@ class TestMonitorExposureWindow:
     async def test_monitor_cancel(self):
         mock_db = MagicMock()
 
-        task = asyncio.create_task(
-            monitor_exposure_window("id", "key", mock_db)
-        )
+        with patch("backend.window.calculator.is_key_revoked", return_value=False), \
+             patch("backend.window.calculator.asyncio.sleep", return_value=None):
 
-        task.cancel()
+            task = asyncio.create_task(
+                monitor_exposure_window("id", "key", mock_db)
+            )
 
-        try:
-            await task
-        except asyncio.CancelledError:
-            pass
+            task.cancel()
 
-
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
 class TestMonitorManagement:
 
     def test_start_monitor(self):
