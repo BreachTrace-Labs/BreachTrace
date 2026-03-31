@@ -14,13 +14,14 @@ import logging
 from datetime import datetime, timezone
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from db.crud import create_incident, set_exposure_end
 from db.database import SessionLocal, get_db
 from detector.scanner import scan
+from pipeline import run_collection_pipeline
 from window.calculator import is_key_revoked
 
 logger = logging.getLogger(__name__)
@@ -84,6 +85,7 @@ async def _monitor_revocation(
 @router.post("/simulate", status_code=202)
 async def simulate(
     body: SimulateRequest,
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
 ):
     """
@@ -119,6 +121,14 @@ async def simulate(
             exposure_start=exposure_start,
         )
         logger.info("Simulated incident created: %s", incident.incident_id)
+
+        # Fire CloudTrail collection in the background.
+        background_tasks.add_task(
+            run_collection_pipeline,
+            incident.incident_id,
+            match.access_key_id,
+            exposure_start,
+        )
 
         # Start revocation monitor if credentials provided
         if body.secret_access_key:
