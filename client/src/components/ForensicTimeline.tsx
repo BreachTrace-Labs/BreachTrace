@@ -121,7 +121,7 @@ const ForensicTimeline: React.FC<Props> = ({ events }) => {
       .attr('stroke', 'var(--color-background)')
       .attr('stroke-width', 1.2)
       .style('cursor', 'pointer')
-      .on('mouseenter', function (event, d) {
+      .on('mouseenter', function (_event, d) {
         const time = d.ts.toLocaleString('en-US', {
           hour12: false,
           hour: '2-digit',
