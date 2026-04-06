@@ -161,6 +161,15 @@ const IncidentDetail: React.FC = () => {
       }
     }
     load()
+
+    // Auto-poll every 3 seconds to show live pipeline progression
+    const poll = setInterval(() => {
+      client
+        .get<IncidentRecord>(`/incidents/${id}`)
+        .then(({ data }) => setIncident(data))
+        .catch(() => {})
+    }, 3000)
+    return () => clearInterval(poll)
   }, [id])
 
   if (loading) {

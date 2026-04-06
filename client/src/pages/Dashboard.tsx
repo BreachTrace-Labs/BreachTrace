@@ -134,6 +134,17 @@ const Dashboard: React.FC = () => {
 
   useEffect(() => { fetchIncidents() }, [])
 
+  // Auto-poll every 3 seconds so live pipeline progress is visible
+  useEffect(() => {
+    const poll = setInterval(() => {
+      client
+        .get<IncidentRecord[]>('/incidents')
+        .then(({ data }) => setIncidents(data))
+        .catch(() => {})
+    }, 3000)
+    return () => clearInterval(poll)
+  }, [])
+
   /* derive stats */
   const critical = incidents.filter((i) => i.overall_severity === 'CRITICAL').length
   const active = incidents.filter((i) => i.status !== 'complete').length
