@@ -413,8 +413,8 @@ aws iam list-policies --scope Local
 # These will be classified as category: data_access, severity: MEDIUM (yellow dots)
 aws s3 ls
 aws ec2 describe-instances --region us-east-1
-aws ec2 describe-security-groups --region us-east-1
-aws ec2 describe-vpcs --region us-east-1
+aws ec2 describe-security-groups --region ap-south-1
+aws ec2 describe-vpcs --region ap-south-1
 
 # ── BULK S3 ACCESS (triggers exfiltration detection) ─────────────────────────
 # The classifier escalates same action called 5+ times from same IP to exfiltration

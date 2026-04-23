@@ -12,8 +12,8 @@ import requests
 from datetime import datetime, timezone, timedelta
 
 # ── Credentials from .env ──────────────────────────────────────────────────────
-KEY_ID     = "AKIAIOSFODNN7EXAMPLE"
-SECRET_KEY = "testExpSecretKey"
+KEY_ID     = "AKIAUDOTYKQPCWNJ4GXV"
+SECRET_KEY = "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"
 # ──────────────────────────────────────────────────────────────────────────────
 
 # exposure_start 25 minutes ago so any real CloudTrail events fall inside the window

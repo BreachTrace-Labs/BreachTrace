@@ -18,7 +18,7 @@ from __future__ import annotations
 import logging
 import re
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from sqlalchemy.orm import Session
 
@@ -35,6 +35,11 @@ from reporter.gemini import generate_report
 from scorer.severity import check_gdpr_flag, compute_financial_impact, score_incident
 
 logger = logging.getLogger(__name__)
+
+# How far before the commit timestamp to look in CloudTrail.
+# 120 minutes covers the demo flow (API calls made up to ~1h before pushing)
+# and real incidents where the key was in use before it was detected in a commit.
+_COLLECTION_LOOKBACK_MINUTES = 120
 
 # Map human-readable severity labels → DB integer (1–4)
 _SEVERITY_TO_INT: dict[str, int] = {
@@ -106,12 +111,17 @@ def run_collection_pipeline(incident_id: str, access_key_id: str, exposure_start
         )
 
         # ── STAGE 1: Collect CloudTrail events ────────────────────────────
+        # Extend the window 30 minutes back from the commit timestamp so that
+        # API calls made just before the commit (pre-exposure reconnaissance,
+        # or demo-seeded activity) are included.
+        collection_start = exposure_start - timedelta(minutes=_COLLECTION_LOOKBACK_MINUTES)
+
         t0 = time.monotonic()
         collector = AWSCloudTrailCollector()
         try:
             events = collector.collect(
                 credential=access_key_id,
-                start_time=exposure_start,
+                start_time=collection_start,
                 end_time=exposure_end,
             )
         except Exception:
