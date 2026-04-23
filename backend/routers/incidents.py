@@ -110,14 +110,17 @@ def list_all_incidents(
 @router.get("/stats")
 def get_incident_stats(db: Session = Depends(get_db)):
     """Aggregate statistics over all experiment runs for the Research page."""
-    runs = db.query(ExperimentRun).all()
+    try:
+        runs = db.query(ExperimentRun).all()
+    except Exception:
+        runs = []
     total = len(runs)
     detection_times = [r.detection_time_s for r in runs if r.detection_time_s is not None]
     report_times = [r.report_time_s for r in runs if r.report_time_s is not None]
     sev_dist: Counter[str] = Counter()
     for r in runs:
         if r.overall_severity:
-            sev_dist[r.overall_severity.upper()] += 1
+            sev_dist[str(r.overall_severity).upper()] += 1
     return {
         "total_runs": total,
         "avg_detection_time_s": sum(detection_times) / len(detection_times) if detection_times else None,

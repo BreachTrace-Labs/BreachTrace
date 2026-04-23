@@ -7,6 +7,7 @@ import SeverityBadge from '@/components/SeverityBadge'
 import ForensicTimeline from '@/components/ForensicTimeline'
 import BlastRadiusSummary from '@/components/BlastRadiusSummary'
 import AffectedResources from '@/components/AffectedResources'
+import SourceIPs from '@/components/SourceIPs'
 import RemediationChecklist from '@/components/RemediationChecklist'
 import { Button } from '@/components/ui/button'
 import { Separator } from '@/components/ui/separator'
@@ -344,6 +345,7 @@ const IncidentDetail: React.FC = () => {
         {/* Right column */}
         <div className="space-y-6">
           <BlastRadiusSummary incident={incident} />
+          <SourceIPs events={incident.events} />
           <AffectedResources events={incident.events} />
           <RemediationChecklist steps={incident.remediation_steps} />
         </div>

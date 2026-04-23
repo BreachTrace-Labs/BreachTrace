@@ -1,5 +1,8 @@
+import logging
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+
+logging.basicConfig(level=logging.INFO, format="%(levelname)s:\t  %(name)s - %(message)s")
 
 import config
 
