@@ -62,7 +62,24 @@ const mockClient = {
     throw { response: { status: 404, data: { detail: `No mock for ${url}` } } }
   },
   // Stub — POST is not used while VITE_USE_MOCK=true; throws clearly instead of silently failing
-  post: async (_url: string, _body?: unknown) => {
+  post: async (_url: string) => {
+    const refreshMatch = _url.match(/^\/incidents\/([^/]+)\/refresh$/)
+    if (refreshMatch) {
+      await sleep(MOCK_DELAY_MS)
+      const id = refreshMatch[1]
+      const inc = MOCK_INCIDENTS.find((i) => i.incident_id === id)
+      if (!inc) throw { response: { status: 404 } }
+      inc.status = 'collecting'
+      inc.events = []
+      inc.report_text = null
+      return {
+        data: {
+          incident_id: id,
+          status: 'collecting',
+          message: 'Forensics refresh started. CloudTrail can take up to 15 minutes to surface fresh events.',
+        },
+      }
+    }
     throw new Error(`POST ${_url} is not implemented in the mock client`)
   },
 } as Pick<ReturnType<typeof axios.create>, 'get' | 'post'>
@@ -87,4 +104,3 @@ const USE_MOCK = import.meta.env.VITE_USE_MOCK === 'true'
 const client = USE_MOCK ? mockClient : realClient
 
 export default client
-

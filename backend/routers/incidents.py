@@ -3,6 +3,7 @@ GET /incidents
 GET /incidents/stats
 GET /incidents/{incident_id}
 GET /incidents/{incident_id}/timeline
+POST /incidents/{incident_id}/refresh
 PATCH /incidents/{incident_id}
 ------------------------------
 Returns stored incidents and their forensic events.
@@ -13,13 +14,14 @@ from collections import Counter
 from datetime import datetime
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy.orm import Session
 
-from db.crud import get_incident, list_incidents
+from db.crud import get_incident, list_incidents, reset_incident_for_refresh
 from db.database import get_db
 from db.models import ExperimentRun
+from pipeline import run_collection_pipeline
 from scorer.severity import (
     build_compliance_reasons,
     check_gdpr_flag,
@@ -28,6 +30,7 @@ from scorer.severity import (
 )
 
 router = APIRouter(prefix="/incidents", tags=["incidents"])
+legacy_router = APIRouter(prefix="/incident", tags=["incidents"])
 
 _SEVERITY_LABELS: dict[int, str] = {1: "LOW", 2: "MEDIUM", 3: "HIGH", 4: "CRITICAL"}
 
@@ -101,6 +104,12 @@ class IncidentDetailOut(IncidentSummaryOut):
     class Config:
         from_attributes = True
         populate_by_name = True
+
+
+class RefreshResponse(BaseModel):
+    incident_id: str
+    status: str
+    message: str
 
 
 # ---------------------------------------------------------------------------
@@ -191,6 +200,67 @@ def get_incident_timeline(
     # The relationship has ``order_by=ForensicEvent.timestamp`` so the list is
     # already chronologically sorted.
     return incident.events
+
+
+# ---------------------------------------------------------------------------
+# Manual CloudTrail refresh endpoint
+# ---------------------------------------------------------------------------
+
+def _queue_incident_refresh(
+    incident_id: str,
+    background_tasks: BackgroundTasks,
+    db: Session,
+) -> RefreshResponse:
+    incident = get_incident(db, incident_id)
+    if incident is None:
+        raise HTTPException(status_code=404, detail="Incident not found")
+
+    if not incident.access_key_id:
+        raise HTTPException(
+            status_code=422,
+            detail="Incident does not have an AWS access key ID to query CloudTrail.",
+        )
+
+    reset_incident_for_refresh(db, incident_id)
+    background_tasks.add_task(
+        run_collection_pipeline,
+        incident.incident_id,
+        incident.access_key_id,
+        incident.exposure_start,
+        refresh_existing=True,
+    )
+
+    return RefreshResponse(
+        incident_id=incident.incident_id,
+        status="collecting",
+        message="Forensics refresh started. CloudTrail can take up to 15 minutes to surface fresh events.",
+    )
+
+
+@router.post("/{incident_id}/refresh", response_model=RefreshResponse, status_code=202)
+def refresh_incident_forensics(
+    incident_id: str,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+):
+    """
+    Manually re-run forensic collection for an incident.
+
+    This is useful after GitHub webhook detection when AWS CloudTrail events are
+    still delayed. Existing derived events/report output are cleared and the
+    normal collector → classifier → scorer → reporter pipeline is queued again.
+    """
+    return _queue_incident_refresh(incident_id, background_tasks, db)
+
+
+@legacy_router.post("/{incident_id}/refresh", response_model=RefreshResponse, status_code=202)
+def refresh_incident_forensics_legacy_path(
+    incident_id: str,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+):
+    """Compatibility alias for the singular /incident/{id}/refresh path."""
+    return _queue_incident_refresh(incident_id, background_tasks, db)
 
 
 # ---------------------------------------------------------------------------

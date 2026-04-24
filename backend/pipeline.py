@@ -25,6 +25,7 @@ from sqlalchemy.orm import Session
 from classifier.rules import classify_all_events
 from collectors.aws import AWSCloudTrailCollector
 from db.crud import (
+    reset_incident_for_refresh,
     save_collection_status,
     save_forensic_events,
     update_status,
@@ -79,7 +80,13 @@ def _extract_remediation_steps(report_text: str) -> list[str]:
     return steps
 
 
-def run_collection_pipeline(incident_id: str, access_key_id: str, exposure_start: datetime) -> None:
+def run_collection_pipeline(
+    incident_id: str,
+    access_key_id: str,
+    exposure_start: datetime,
+    *,
+    refresh_existing: bool = False,
+) -> None:
     """
     Execute the full forensic pipeline for a single incident.
 
@@ -106,11 +113,18 @@ def run_collection_pipeline(incident_id: str, access_key_id: str, exposure_start
     db: Session = SessionLocal()
     pipeline_start = time.monotonic()
     try:
+        if refresh_existing:
+            incident = reset_incident_for_refresh(db, incident_id)
+            if incident is None:
+                logger.warning("Refresh requested for missing incident %s", incident_id)
+                return
+
         # The exposure may still be open — use now() as end_time.
         exposure_end = datetime.now(tz=timezone.utc)
 
         logger.info(
-            "Pipeline started for incident %s (key=%s)",
+            "%s pipeline started for incident %s (key=%s)",
+            "Refresh" if refresh_existing else "Collection",
             incident_id,
             access_key_id,
         )
