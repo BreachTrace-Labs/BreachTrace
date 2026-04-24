@@ -204,6 +204,48 @@ AWS_API_TAXONOMY = {
     "glue:CreateJob": {"category": "resource_abuse", "severity": 3, "label": "Create Glue Job"},
     "glue:CreateDatabase": {"category": "resource_abuse", "severity": 3, "label": "Create Database"},
     "redshift:DeleteCluster": {"category": "resource_abuse", "severity": 4, "label": "Delete Redshift"},
+
+    # ================= DATA EXFILTRATION (Severity 3-4) =================
+    # Bulk-export / mass-read actions that are inherently exfiltration regardless of count.
+    # Single GetObject × N is handled by the bulk-escalation rule in rules.py.
+    "dynamodb:ExportTableToPointInTime": {"category": "exfiltration", "severity": 4, "label": "Export Table to S3"},
+    "dynamodb:BatchGetItem": {"category": "exfiltration", "severity": 4, "label": "Bulk Get Items"},
+    "s3:CopyObject": {"category": "exfiltration", "severity": 3, "label": "Copy Object"},
+    "rds:CopyDBSnapshot": {"category": "exfiltration", "severity": 4, "label": "Copy DB Snapshot"},
+    "ec2:CopySnapshot": {"category": "exfiltration", "severity": 3, "label": "Copy Volume Snapshot"},
+    "glacier:InitiateJob": {"category": "exfiltration", "severity": 4, "label": "Glacier Archive Retrieval"},
+
+    # ================= FINANCIAL ABUSE (Severity 3-4) =================
+    # AWS actions that generate significant unexpected billing charges.
+    "ec2:RequestSpotInstances": {"category": "financial_abuse", "severity": 3, "label": "Request Spot Instances"},
+    "ec2:AllocateHosts": {"category": "financial_abuse", "severity": 4, "label": "Allocate Dedicated Hosts"},
+    "rds:CreateDBInstance": {"category": "financial_abuse", "severity": 3, "label": "Create RDS Instance"},
+    "rds:CreateDBCluster": {"category": "financial_abuse", "severity": 4, "label": "Create RDS Cluster"},
+    "rds:RestoreDBInstanceFromDBSnapshot": {"category": "financial_abuse", "severity": 3, "label": "Restore DB from Snapshot"},
+    "elasticache:CreateCacheCluster": {"category": "financial_abuse", "severity": 3, "label": "Create ElastiCache Cluster"},
+    "elasticache:CreateReplicationGroup": {"category": "financial_abuse", "severity": 3, "label": "Create Cache Replication Group"},
+    "sagemaker:CreateTrainingJob": {"category": "financial_abuse", "severity": 4, "label": "Create SageMaker Training Job"},
+    "sagemaker:CreateEndpoint": {"category": "financial_abuse", "severity": 4, "label": "Create SageMaker Endpoint"},
+    "sagemaker:CreateNotebookInstance": {"category": "financial_abuse", "severity": 3, "label": "Create SageMaker Notebook"},
+    "redshift:CreateCluster": {"category": "financial_abuse", "severity": 4, "label": "Create Redshift Cluster"},
+    "elasticsearch:CreateDomain": {"category": "financial_abuse", "severity": 3, "label": "Create OpenSearch Domain"},
+    "es:CreateDomain": {"category": "financial_abuse", "severity": 3, "label": "Create Elasticsearch Domain"},
+
+    # ================= COMMUNICATION ABUSE (Severity 2-4) =================
+    # AWS messaging services used for spam, phishing, or flooding.
+    "sns:Publish": {"category": "communication_abuse", "severity": 3, "label": "SNS Publish"},
+    "sns:CreateTopic": {"category": "communication_abuse", "severity": 2, "label": "Create SNS Topic"},
+    "sns:Subscribe": {"category": "communication_abuse", "severity": 2, "label": "SNS Subscribe"},
+    "sns:SetSubscriptionAttributes": {"category": "communication_abuse", "severity": 2, "label": "Set SNS Subscription Attributes"},
+    "sqs:SendMessage": {"category": "communication_abuse", "severity": 3, "label": "Send SQS Message"},
+    "sqs:SendMessageBatch": {"category": "communication_abuse", "severity": 4, "label": "Bulk Send SQS Messages"},
+    "ses:SendEmail": {"category": "communication_abuse", "severity": 3, "label": "Send Email via SES"},
+    "ses:SendRawEmail": {"category": "communication_abuse", "severity": 3, "label": "Send Raw Email via SES"},
+    "ses:SendBulkTemplatedEmail": {"category": "communication_abuse", "severity": 4, "label": "Send Bulk Templated Email"},
+    "ses:SendBulkEmail": {"category": "communication_abuse", "severity": 4, "label": "Send Bulk Email"},
+    "ses:SendTemplatedEmail": {"category": "communication_abuse", "severity": 3, "label": "Send Templated Email"},
+    "pinpoint:SendMessages": {"category": "communication_abuse", "severity": 3, "label": "Send Pinpoint Messages"},
+    "mobiletargeting:SendMessages": {"category": "communication_abuse", "severity": 3, "label": "Send Pinpoint Messages"},
 }
 
 # ========== STATISTICS & VALIDATION ==========
@@ -228,6 +270,10 @@ if __name__ == "__main__":
     print(f"Severity Distribution: {stats['severities']}")
     
     # Breakdown
-    for cat in ["reconnaissance", "data_access", "privilege_escalation", "resource_abuse"]:
+    for cat in [
+        "reconnaissance", "data_access", "exfiltration",
+        "resource_abuse", "privilege_escalation",
+        "financial_abuse", "communication_abuse",
+    ]:
         apis = [a for a, d in AWS_API_TAXONOMY.items() if d["category"] == cat]
         print(f"\n{cat.upper()}: {len(apis)} APIs")

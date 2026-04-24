@@ -20,6 +20,12 @@ from sqlalchemy.orm import Session
 from db.crud import get_incident, list_incidents
 from db.database import get_db
 from db.models import ExperimentRun
+from scorer.severity import (
+    build_compliance_reasons,
+    check_gdpr_flag,
+    check_pcidss_flag,
+    check_soc2_flag,
+)
 
 router = APIRouter(prefix="/incidents", tags=["incidents"])
 
@@ -84,9 +90,13 @@ class IncidentSummaryOut(BaseModel):
 
 class IncidentDetailOut(IncidentSummaryOut):
     events: list[ForensicEventOut] = []
-    report_text: Optional[str]
-    remediation_steps: list[str]
+    report_text: Optional[str] = None
+    remediation_steps: list[str] = []
     estimated_financial_impact: Optional[str] = Field(None, validation_alias="financial_impact")
+    # Computed fields — not stored in DB, derived from events at request time.
+    pcidss_flag: bool = False
+    soc2_flag: bool = False
+    compliance_reasons: list[str] = []
 
     class Config:
         from_attributes = True
@@ -136,11 +146,28 @@ def get_incident_detail(
     incident_id: str,
     db: Session = Depends(get_db),
 ):
-    """Return a single incident with all its forensic events."""
+    """Return a single incident with all its forensic events and compliance flags."""
     incident = get_incident(db, incident_id)
     if incident is None:
         raise HTTPException(status_code=404, detail="Incident not found")
-    return incident
+
+    out = IncidentDetailOut.model_validate(incident)
+
+    # Compute per-regulation compliance flags from live event data.
+    gdpr = check_gdpr_flag(incident.events)
+    pcidss = check_pcidss_flag(incident.events)
+    soc2 = check_soc2_flag(incident.events)
+    out.pcidss_flag = pcidss
+    out.soc2_flag = soc2
+    # Refresh gdpr_flag in case the DB value pre-dates the improved detector.
+    out.gdpr_flag = incident.gdpr_flag or gdpr
+    out.compliance_reasons = build_compliance_reasons(
+        gdpr=out.gdpr_flag,
+        pcidss=pcidss,
+        soc2=soc2,
+        events=incident.events,
+    )
+    return out
 
 
 # ---------------------------------------------------------------------------

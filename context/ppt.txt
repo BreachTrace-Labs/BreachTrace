@@ -1,0 +1,357 @@
+
+The Situation
+Every day developers accidentally commit secrets — API keys, passwords,
+tokens — to public GitHub repositories. Automated bots find these secrets
+within minutes and start using them.
+The Current Gap
+Tools like GitGuardian already exist. They detect the leak and send an alert.
+But they only answer: "Was your key leaked?"
+Nobody answers the question that actually matters:
+"What happened BECAUSE your key was leaked?"
+Was my database accessed?
+Was customer data stolen?
+Were fake charges created?
+Do I need to inform my users legally?
+Today developers rotate the key and hope for the best. They never actually
+know.
+Why This Matters?
+At scale: 39 million secrets were leaked on GitHub in 2024 alone. The
+average cost of a breach involving compromised credentials is $4.88
+million (IBM Cost of Data Breach Report 2024). Automated bots exploit
+leaked credentials within 5 minutes of exposure.
+In reality: In January 2024, a single GitHub token was accidentally
+exposed. Before it was revoked, attackers used it to steal 270GB of
+internal New York Times data including source code and infrastructure
+tools. The token was exposed for minutes. The damage was permanent
+and irreversible.
+For compliance: GDPR, SOC2, and PCI-DSS all require organisations to
+assess the impact of a credential exposure and report if personal data
+was accessed. Without an automated forensic tool, this assessment is
+either done manually over hours or skipped entirely — both of which
+
+Problem Statement
+No automated system exists that correlates a GitHub credential exposure event with audit logs across
+affected cloud and SaaS platforms to determine what actions were taken during the exposure window,
+classify the blast radius, and generate an actionable forensic impact report — leaving developers
+blind to the actual damage caused by their leaked credentials.
+
+Solution - BreachTrace
+What BreachTrace Does
+A universal credential forensics platform that automatically detects leaked secrets on GitHub and traces
+their exploitation across every affected platform — delivering a complete forensic impact report in under
+60 seconds. No manual investigation. No security expertise required.
+Credentials We Cover
+Credential TypePlatform QueriedAWS Access KeysCloudTrail — every API call madeGCP Service Account
+KeysCloud Audit Logs — every GCP actionGitHub Personal Access TokensGitHub Audit Log — repos cloned,
+code accessedStripe Secret KeysStripe Events API — charges, refunds, customer dataTwilio Auth
+TokensUsage Records — messages sent, calls madeDatabase Connection StringsDB Audit Logs — queries
+run, tables accessedNPM TokensNPM Audit Log — packages published
+What The Dashboard Shows
+Forensic Timeline — chronological view of every suspicious event across all platforms during exposure
+window
+Blast Radius Summary — which platforms were hit and what category of damage occurred
+Affected Resources — specific files, databases, instances, accounts that were accessed
+Source Intelligence — IP addresses and geolocation of unauthorized access
+Financial Impact — estimated cost of resources spun up or transactions made
+Legal Assessment — automatic GDPR / PCI-DSS notification requirement flag
+Research Contribution
+First empirical study measuring exploitation speed across credential types.
+First unified blast radius taxonomy mapping API calls across 7 platforms to damage severity levels.
+First cross-platform forensic framework accessible to individual developers without security expertise.
+
+
+Focus Area Source Current Limitation BreachTrace Solution
+Leak Scale Meli et al. (2019) [1]
+Thousands of secrets leaked daily —
+manual investigation impossible at this
+volume
+Enables zero-touch forensic automation
+to handle high-volume leaks
+Attack Speed CrowdStrike (2026) [2]
+Attacker breakout time has dropped to
+72 minutes from initial access to
+exfiltration
+Triggers real-time SOAR responses
+operating within the 72-minute window
+Alert Fatigue Krause et al. (2023) [3]
+30.3% of developers leak secrets and
+ignore alerts because they misjudge
+actual risk
+Generates causal-chain forensic reports
+showing exactly what was accessed
+Lingering Risk GitGuardian (2025) [4]
+Developers delete commits instead of
+revoking credentials — creating valid
+"zombie leaks"
+Continuously monitors historical leaks
+against live cloud audit telemetry
+False Positives Basak et al. (2023) [5]
+Top detection tools produce high false
+positives due to weak regex and entropy
+models
+Replaces statistical guessing with
+deterministic Proof-of-Usage via audit
+logs
+Economic Impact IBM Security (2025) [6]
+Average breach costs $4.88M —
+organisations take 292 days to identify
+and contain
+Reduces detection-to-response time
+from days to under 60 seconds
+Causality Gap Cybersics & Sygnia (2025) [7][8]
+Cloud forensics fragmented across AWS,
+Azure, GCP — no source-to-impact link
+exists
+Normalises disparate logs into a unified
+forensic schema linked to the Git
+commit
+Regulatory Burden Vectra AI (2026) [9]
+22% of breaches involve stolen
+credentials — GDPR requires forensic
+traceability
+Automates chronological forensic
+timeline generation for compliance
+reporting
+
+Research Gap Source Current Technical Limitation BreachTrace Solution
+Inflated ML Metrics Soltaniani & Ghafari (2026) [10]
+Data duplication in SecretBench
+inflates AI scanner accuracy; models
+"memorise" rather than generalise
+Uses cloud audit logs as a
+deterministic validation oracle to
+bypass statistical guessing
+No Exploit Confirmation Basak et al. (2025) [11]
+Static tools identify secret-asset
+pairs but cannot confirm if the asset
+was actually exploited
+Temporal-identity correlation
+verifies active breaches via cloud
+audit telemetry
+Source-Blind IR Lekidis et al. (2024) [12]
+CACAO playbooks isolate resources
+but cannot trace root cause back to
+the specific developer commit
+Auto-revokes keys and alerts the
+exact developer who pushed the
+credential
+Static Risk Scoring Nagaraja & Bahsi (2026) [13]
+CVSS fails to capture multi-step
+exploitation impact of leaked
+credentials
+Dynamic blast radius computed
+from actual permissions-in-use
+during exposure
+Post-Detection Void Wahab et al. (2026) [14]
+Existing scanners stop at detection;
+no post-detection forensic capability
+exists
+Adds a cross-platform audit log
+correlation layer immediately after
+detection
+Developer Alert Fatigue Wahab et al. (2024) [15]
+Binary alerts fail under pressure; no
+contextual evidence is provided to
+the dev
+Shifts from punitive alerts to
+evidence-based causal chain
+forensic reports
+IaC Credential Leaks Rahman et al. (2019) [16]
+Hardcoded credentials leak heavily
+in Ansible and Terraform IaC scripts
+Normalises IaC credential exposures
+into a unified forensic pipeline
+Supply Chain Tokens Zahan et al. (2022) [17]
+npm supply chain attacks weaponise
+dependencies to bypass static
+repository checks
+Monitors third-party and supply
+chain API keys via the correlation
+engine
+Semantic Gap Shi et al. (2025) [18]
+Dynamically retrieved credentials
+evade regex as they lack fixed string
+patterns
+Tracks exploitation semantics by
+normalising backend telemetry
+patterns
+Npm Ecosystem Risk Zimmermann et al. (2019) [19]
+40% of popular packages have
+vulnerable dependencies, raising
+credential theft risk
+Integrates ecosystem vulnerability
+data into the risk-prioritisation
+engine
+
+Research Objective of the Project
+Primary Research Objective: To design, implement, and
+evaluate BreachTrace, a novel automated cybersecurity
+framework that bridges the "Forensic Causality
+Disconnect" between public source-code repositories
+and multi-cloud infrastructure.
+Specific Project Goals:
+Unify and Normalize Telemetry: Develop a crossplatform data schema that autonomously links
+credential exposure events (Point of Origin, e.g.,
+GitHub, IaC files) directly to cloud infrastructure
+API logs (Point of Exfiltration, e.g., AWS, GCP, Azure).
+Establish Proof-of-Usage (PoU): Overcome the
+false-positive limitations and alert fatigue of
+current static AI/regex secret detectors (e.g.,
+GitGuardian, CredDigger) by utilizing cloud audit
+logs as a deterministic validation oracle to confirm
+active exploitation.
+Calculate Dynamic Blast Radius: Create a dynamic
+risk assessment model that categorizes the impact
+of a leaked credential based on its actual
+"permissions-in-use" to accurately measure the
+multi-step threat it poses.
+Automate Closed-Loop Incident Response:
+Generate actionable "Causal-Chain Forensic
+Reports" for developers and integrate with SOAR
+playbooks to auto-revoke compromised
+credentials, drastically reducing the Mean Time To
+Respond (MTTR) to mitigate the massive economic
+impact of modern 72-minute breakout attacks
+
+
+FUNCTIONAL REQUIREMENTS
+FR1: Detect leaked credentials in public GitHub repositories via webhook within
+30 seconds of commit and support 7 credential types (AWS Access Keys, GCP
+Service Account Keys, GitHub Personal Access Tokens, Stripe Secret Keys, Twilio
+Auth Tokens, Database Connection Strings, NPM Tokens)
+FR2: Calculate exact exposure window from commit timestamp to credential
+revocation timestamp and query audit logs across platforms — AWS CloudTrail,
+GCP Cloud Audit Logs, Stripe Events API, GitHub Audit Log API, and Twilio Usage
+Records API
+FR3: Normalise audit log data from all platforms into a unified forensic event
+schema and classify every event into one of seven impact categories
+(Reconnaissance, Data Access, Data Exfiltration, Resource Abuse, Privilege
+Escalation, Financial Abuse, Communication Abuse)
+FR4: Compute overall incident severity score (Low, Medium, High, or Critical),
+generate forensic timeline showing chronological sequence of events across
+platforms, and display interactive D3.js timeline on dashboard
+FR5: Generate plain English incident summary using Gemini API, create specific
+remediation checklist based on detected impact categories, and automatically
+flag GDPR, PCI-DSS, and SOC2 notification requirements based on data types
+accessed
+FR6: Display complete forensic report on web dashboard within 60 seconds of
+detection, showing blast radius summary, affected resources, source IP
+addresses, and financial impact estimate
+FR7: Handle zero-activity reports (confirm nothing happened when no audit log
+activity is detected) and support 250 controlled experimental exposures for
+research dataset generation
+NON FUNCTIONAL REQUIREMENTS
+NFR1: Detection latency must be under 30 seconds from GitHub commit to
+alert, and complete forensic report must be generated within 60 seconds of
+detection
+NFR2: System must run on a standard developer laptop with zero infrastructure
+cost — all APIs must use free tiers only
+NFR3: No raw credential values may be stored at any point — only metadata
+and audit log results are allowed
+NFR4: Dashboard must be usable by developers with no prior security
+expertise, and system must handle API rate limits gracefully using exponential
+backoff
+NFR5: All forensic collectors must operate in parallel with graceful handling of
+auto-revocation and unavailable platform APIs — partial reports are
+acceptable
+NFR6: All experiment data must be generated using throwaway accounts with
+restricted permissions, and Stripe integration must use test mode exclusively
+with no real financial transactions
+NFR7: Research dataset must contain minimum 35 samples per credential type,
+classification accuracy must exceed 90% on controlled test set, and system
+must be deployable using Docker for consistent cross-platform execution
+
+There are no pre-existing dataset exists for this problem.
+Our aim is to generate the first cross-platform credential exploitation dataset through
+controlled ethical experiments.
+Generation Process
+Create throwaway accounts on AWS, Stripe, GitHub, GCP, Twilio
+Deliberately expose test credentials to public GitHub repositories
+Simulate attacker behaviour from a second device — controlled API calls
+BreachTrace automatically collects forensic data across all platforms
+250 controlled exposures — 35+ per credential type
+Why 250?
+7 credential types requiring minimum 30 samples each for statistical significance
+250 ÷ 7 = 35 samples per type — clears Welch t-test threshold comfortably
+Each experiment cycle takes 10–15 minutes — 250 cycles feasible across 4 team
+members in 4 weeks
+Sufficient for both rule-based classifier validation and ML model evaluation
+Research Value
+First empirical dataset measuring:
+Exploitation speed across 7 credential types
+Blast radius severity distribution across 250 exposures
+Exposure duration vs severity correlation
+Ethical Advantages
+Throwaway accounts only — no real user data
+Stripe test mode — no real transactions
+AWS read-only IAM — zero real damage possible
+Total cost: ₹0
+
+r.
+no.
+Dataset
+Name
+Description
+Credential
+Types
+Included
+No. Of
+Test
+Cases
+Purpose
+1
+Simulated
+Exposure
+Dataset
+Fully controlled
+exposures created by
+the team using
+throwaway accounts
+with restricted (readonly) permissions. We
+commit the credential
+and then simulate
+attacker activity by
+making controlled API
+calls from a different
+device/network.
+• AWS IAM Keys
+• Stripe Testmode Keys
+• GitHub PATs
+• PostgreSQL
+Connection
+Strings
+200+
+Primary dataset
+for validating the
+complete
+forensic
+pipeline,
+measuring
+exposure-todetection
+latency, and
+testing blastradius
+classification.
+2
+Historically
+Referenced
+Dataset
+Publicly available
+credential exposure data
+combined with official
+statistics from
+GitGuardian and GitHub
+General leaked
+secrets (used
+for
+benchmarking)
+Not
+applicable
+(reference
+only)
+Supporting data
+for the empirical
+exposure-to-use
+latency study
+and to compare
+our simulated
+results with realworld trends.
