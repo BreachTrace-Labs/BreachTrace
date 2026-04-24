@@ -32,7 +32,12 @@ from db.crud import (
 from db.database import SessionLocal
 from db.models import IncidentRecord
 from reporter.gemini import generate_report
-from scorer.severity import check_gdpr_flag, compute_financial_impact, score_incident
+from scorer.severity import (
+    check_gdpr_flag,
+    check_pcidss_flag,
+    compute_financial_impact,
+    score_incident,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -190,7 +195,8 @@ def run_collection_pipeline(incident_id: str, access_key_id: str, exposure_start
         try:
             overall_severity = score_incident(classified_events)
             financial_impact = compute_financial_impact(classified_events)
-            gdpr_flag = check_gdpr_flag(classified_events)
+            # gdpr_flag covers both GDPR and PCI-DSS — either triggers the flag
+            gdpr_flag = check_gdpr_flag(classified_events) or check_pcidss_flag(classified_events)
 
             incident_record: IncidentRecord | None = db.get(IncidentRecord, incident_id)
             if incident_record is not None:

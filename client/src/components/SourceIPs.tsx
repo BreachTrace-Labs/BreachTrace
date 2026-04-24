@@ -67,8 +67,9 @@ const SourceIPs: React.FC<Props> = ({ events }) => {
               >
                 <div className="flex items-center justify-between gap-2">
                   <span
-                    className="font-mono text-xs font-semibold truncate"
+                    className="font-mono text-xs font-semibold truncate flex-1 min-w-0"
                     style={{ color: 'var(--color-foreground)' }}
+                    title={ip}
                   >
                     {ipLabel(ip)}
                   </span>
