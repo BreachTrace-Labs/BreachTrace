@@ -1,6 +1,21 @@
 import { useEffect, useState } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
-import { ArrowLeft, AlertTriangle, Printer, ExternalLink, ShieldAlert, Scale, Building2, Activity, Check, CircleDot, Circle } from 'lucide-react'
+import {
+  ArrowLeft,
+  AlertTriangle,
+  Printer,
+  ExternalLink,
+  ShieldAlert,
+  Scale,
+  Building2,
+  Activity,
+  Clock3,
+  GitCommitHorizontal,
+  KeyRound,
+  Radio,
+  RefreshCw,
+  Timer,
+} from 'lucide-react'
 import client from '@/api/client'
 import type { IncidentRecord } from '@/types'
 import SeverityBadge from '@/components/SeverityBadge'
@@ -169,11 +184,7 @@ function MarkdownReport({ text }: { text: string }) {
   return <div className="space-y-2">{nodes}</div>
 }
 
-/* ─── status stepper ───────────────────────────────────────────── */
-
-const PIPELINE_STEPS: IncidentRecord['status'][] = [
-  'detecting', 'collecting', 'classifying', 'scoring', 'reporting', 'complete',
-]
+/* ─── incident summary helpers ─────────────────────────────────── */
 
 const STATUS_LABELS: Record<string, string> = {
   detecting:   'Detecting',
@@ -182,42 +193,57 @@ const STATUS_LABELS: Record<string, string> = {
   scoring:     'Scoring',
   reporting:   'Reporting',
   complete:    'Complete',
+  error:        'Needs Attention',
 }
 
-function PipelineStepper({ status }: { status: IncidentRecord['status'] }) {
-  const current = PIPELINE_STEPS.indexOf(status)
+type RefreshResponse = {
+  incident_id: string
+  status: IncidentRecord['status'] | string
+  message: string
+}
+
+function StatusPill({ status }: { status: string }) {
+  const complete = status === 'complete'
+  const errored = status === 'error'
+
   return (
-    <div className="flex flex-wrap items-center justify-center gap-1.5 sm:gap-2">
-      {PIPELINE_STEPS.map((step, i) => {
-        const done = i < current
-        const active = i === current
-        const inactive = i > current
-        return (
-          <div key={step} className="flex items-center gap-1.5 sm:gap-2">
-            <div
-              className={`flex items-center justify-center px-2.5 py-1.5 border rounded-sm text-[11px] sm:text-xs font-semibold uppercase tracking-wider transition-all duration-300 ${
-                active
-                  ? 'bg-primary/10 border-primary/30 text-primary shadow-sm'
-                  : done
-                  ? 'bg-muted/50 border-muted-foreground/20 text-muted-foreground/80'
-                  : 'bg-transparent border-dashed border-border text-muted-foreground/40'
-              }`}
-            >
-              {done && <Check size={13} className="mr-1.5 text-primary/70" />}
-              {active && <CircleDot size={13} className="mr-1.5 animate-pulse text-primary" />}
-              {inactive && <Circle size={13} className="mr-1.5 opacity-40 text-muted-foreground" />}
-              {STATUS_LABELS[step]}
-            </div>
-            {i < PIPELINE_STEPS.length - 1 && (
-              <div
-                className={`w-3 sm:w-6 h-px transition-all duration-300 ${
-                  done ? 'bg-primary/50' : 'bg-border border-dashed'
-                }`}
-              />
-            )}
-          </div>
-        )
-      })}
+    <span
+      className={`inline-flex items-center gap-2 rounded-sm border px-3 py-1.5 text-xs font-bold uppercase tracking-wider ${
+        complete
+          ? 'border-emerald-500/25 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300'
+          : errored
+          ? 'border-red-500/25 bg-red-500/10 text-red-600 dark:text-red-400'
+          : 'border-primary/20 bg-primary/10 text-primary'
+      }`}
+    >
+      <span className={`h-2 w-2 rounded-full ${complete ? 'bg-emerald-500' : errored ? 'bg-red-500' : 'bg-primary animate-pulse'}`} />
+      {complete ? 'Investigation Complete' : STATUS_LABELS[status] ?? status}
+    </span>
+  )
+}
+
+function SummaryTile({
+  icon: Icon,
+  label,
+  children,
+  accent = false,
+}: {
+  icon: React.ElementType
+  label: string
+  children: React.ReactNode
+  accent?: boolean
+}) {
+  return (
+    <div className="min-w-0 rounded-sm border bg-background/70 p-4 shadow-sm">
+      <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-muted-foreground">
+        <span className={`inline-flex h-6 w-6 items-center justify-center rounded-sm ${accent ? 'bg-red-500/10 text-red-600 dark:text-red-400' : 'bg-muted text-foreground'}`}>
+          <Icon size={14} />
+        </span>
+        {label}
+      </div>
+      <div className="mt-3 min-w-0 text-sm font-medium text-foreground">
+        {children}
+      </div>
     </div>
   )
 }
@@ -230,6 +256,8 @@ const IncidentDetail: React.FC = () => {
   const [incident, setIncident] = useState<IncidentRecord | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [refreshing, setRefreshing] = useState(false)
+  const [refreshNotice, setRefreshNotice] = useState<string | null>(null)
 
   useEffect(() => {
     if (!id) return
@@ -255,6 +283,24 @@ const IncidentDetail: React.FC = () => {
     }, 3000)
     return () => clearInterval(poll)
   }, [id])
+
+  const handleRefreshForensics = async () => {
+    if (!id || refreshing) return
+    setRefreshing(true)
+    setRefreshNotice(null)
+    try {
+      const { data } = await client.post<RefreshResponse>(`/incidents/${id}/refresh`)
+      setIncident((current) => current ? { ...current, status: 'collecting', events: [], report_text: null } : current)
+      setRefreshNotice(data.message || 'Forensics refresh started.')
+
+      const detail = await client.get<IncidentRecord>(`/incidents/${id}`)
+      setIncident(detail.data)
+    } catch {
+      setRefreshNotice('Unable to start forensic refresh. Check the backend logs and try again.')
+    } finally {
+      setRefreshing(false)
+    }
+  }
 
   if (loading) {
     return (
@@ -305,16 +351,20 @@ const IncidentDetail: React.FC = () => {
           </div>
         </div>
         
-        <div className="flex items-center gap-3">
+        <div className="flex flex-wrap items-center gap-3">
+          <StatusPill status={incident.status} />
+          <Button
+            variant="outline"
+            className="shadow-sm bg-background rounded-sm"
+            onClick={handleRefreshForensics}
+            disabled={refreshing}
+          >
+            <RefreshCw size={16} className={`mr-2 ${refreshing ? 'animate-spin' : ''}`} />
+            {refreshing ? 'Refreshing...' : 'Refresh Logs'}
+          </Button>
           <Button variant="outline" className="shadow-sm bg-background hidden sm:flex rounded-sm" onClick={() => window.print()}>
             <Printer size={16} className="mr-2" /> Export PDF
           </Button>
-          {incident.status !== 'complete' && (
-            <div className="px-4 py-2 bg-primary/10 text-primary text-sm font-medium rounded-sm flex items-center gap-2 border border-primary/20">
-              <div className="w-2 h-2 rounded-full bg-primary animate-pulse" />
-              Investigation Active
-            </div>
-          )}
         </div>
       </div>
 
@@ -326,12 +376,17 @@ const IncidentDetail: React.FC = () => {
           
           {/* Overview Card */}
           <div className="bg-card border rounded-sm shadow-sm overflow-hidden">
-            <div className="p-6 sm:p-8">
-              <div className="flex flex-col lg:flex-row lg:items-start justify-between gap-8 mb-8">
-                <div className="space-y-4 flex-1">
+            {refreshNotice && (
+              <div className="border-b bg-primary/5 px-6 py-3 text-sm font-medium text-primary sm:px-8">
+                {refreshNotice}
+              </div>
+            )}
+            <div className="grid lg:grid-cols-[minmax(0,1fr)_320px]">
+              <div className="p-6 sm:p-8">
+                <div className="space-y-6">
                   <div>
                     <h2 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground mb-1">Detected Credential</h2>
-                    <p className="text-xl sm:text-2xl font-mono font-bold text-foreground break-all">
+                    <p className="text-2xl sm:text-3xl font-mono font-bold tracking-tight text-foreground break-all">
                       {incident.credential_hint}
                     </p>
                   </div>
@@ -346,32 +401,49 @@ const IncidentDetail: React.FC = () => {
                     </a>
                   </div>
                 </div>
-
-                <div className="lg:w-auto w-full bg-muted/30 p-5 rounded-sm border border-muted flex shrink-0 justify-center">
-                  <PipelineStepper status={incident.status} />
-                </div>
               </div>
 
-              {/* Stats Grid */}
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-4 p-4 rounded-sm bg-muted/40 border border-muted/50">
-                <div className="space-y-1">
-                  <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Exposed</p>
-                  <p className="text-sm font-medium text-foreground">{fmtTime(incident.exposure_start)}</p>
+              <div className="border-t bg-muted/30 p-6 sm:p-8 lg:border-l lg:border-t-0">
+                <div className="flex items-center justify-between gap-3">
+                  <p className="text-xs font-bold uppercase tracking-widest text-muted-foreground">Current State</p>
+                  <StatusPill status={incident.status} />
                 </div>
-                <div className="space-y-1">
-                  <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Revoked</p>
-                  <p className="text-sm font-medium text-foreground">
-                    {incident.exposure_end ? fmtTime(incident.exposure_end) : <span className="text-red-500 font-semibold animate-pulse">Still Exposed</span>}
-                  </p>
+
+                <div className="mt-6 rounded-sm border bg-background p-5 shadow-sm">
+                  <div className="flex items-center gap-3">
+                    <span className="flex h-10 w-10 items-center justify-center rounded-sm bg-red-500/10 text-red-600 dark:text-red-400">
+                      <Radio size={18} />
+                    </span>
+                    <div>
+                      <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Exposure</p>
+                      <p className="text-base font-bold text-foreground">
+                        {incident.exposure_end ? 'Revoked' : <span className="text-red-500">Still Exposed</span>}
+                      </p>
+                    </div>
+                  </div>
+                  <div className="mt-5 border-t pt-4">
+                    <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Duration</p>
+                    <p className="mt-1 font-mono text-2xl font-bold tracking-tight text-foreground">{dur}</p>
+                  </div>
                 </div>
-                <div className="space-y-1">
-                  <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Duration</p>
-                  <p className="text-sm font-mono font-medium text-foreground">{dur}</p>
-                </div>
-                <div className="space-y-1">
-                  <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Commit</p>
-                  <p className="text-sm font-mono font-medium text-foreground">{incident.commit_hash.slice(0, 7)}</p>
-                </div>
+              </div>
+            </div>
+
+            {/* Stats Grid */}
+            <div className="border-t bg-muted/20 p-4 sm:p-6">
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
+                <SummaryTile icon={Clock3} label="Exposed">
+                  {fmtTime(incident.exposure_start)}
+                </SummaryTile>
+                <SummaryTile icon={Timer} label="Revoked" accent={!incident.exposure_end}>
+                  {incident.exposure_end ? fmtTime(incident.exposure_end) : <span className="font-semibold text-red-500 animate-pulse">Still Exposed</span>}
+                </SummaryTile>
+                <SummaryTile icon={GitCommitHorizontal} label="Commit">
+                  <span className="font-mono">{incident.commit_hash.slice(0, 7)}</span>
+                </SummaryTile>
+                <SummaryTile icon={KeyRound} label="Credential Type">
+                  <span className="break-words">{incident.credential_type}</span>
+                </SummaryTile>
               </div>
             </div>
             

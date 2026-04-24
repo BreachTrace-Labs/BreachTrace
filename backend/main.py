@@ -29,6 +29,7 @@ app.add_middleware(
 # ---------------------------------------------------------------------------
 app.include_router(webhook.router)
 app.include_router(incidents.router)
+app.include_router(incidents.legacy_router)
 app.include_router(research.router)
 app.include_router(simulate.router)
 
@@ -45,4 +46,3 @@ def health_check():
 @app.get("/health")
 def health():
     return {"status": "ok"}
-
