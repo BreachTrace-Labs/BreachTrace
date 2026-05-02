@@ -1,10 +1,12 @@
 """
 Incident severity scoring and financial impact estimation.
 
-This module provides three main functions:
-1. score_incident() - Returns 'Low', 'Medium', 'High', or 'Critical'
+This module provides:
+1. score_incident()        - Returns 'Low', 'Medium', 'High', or 'Critical'
 2. compute_financial_impact() - Estimates cost impact from resource abuse
-3. check_gdpr_flag() - Detects PII/personal data exposure
+3. check_gdpr_flag()       - Detects PII/personal data exposure (GDPR Article 33)
+4. check_pcidss_flag()     - Detects payment card data exposure (PCI-DSS Req. 12.10)
+5. check_soc2_flag()       - Detects security/availability incidents (SOC 2 CC6/A1)
 
 Severity Rules (in order of precedence):
 - If any of {privilege_escalation, exfiltration, code_compromise} -> Critical
@@ -23,7 +25,9 @@ _WEIGHT_TO_LABEL = {
     4: "Critical",
 }
 
-# Keywords indicating PII or personal data in resource names
+# ── GDPR Article 33 keywords ───────────────────────────────────────────────
+# Resource names containing these strings in a data_access or exfiltration
+# event indicate that personal data may have been accessed.
 PII_HINTS = (
     "user",
     "customer",
@@ -36,7 +40,55 @@ PII_HINTS = (
     "passport",
     "private",
     "confidential",
+    "employee",
+    "member",
+    "patient",
+    "profile",
+    "address",
+    "birth",
+    "national",
+    "medical",
+    "health",
+    "identity",
+    "orders",
+    "db",
+    "database",
 )
+
+# ── PCI-DSS Requirement 12.10 keywords ────────────────────────────────────
+# Payment card environment resource-name hints.
+PCI_DSS_HINTS = (
+    "payment",
+    "card",
+    "credit",
+    "billing",
+    "transaction",
+    "stripe",
+    "checkout",
+    "invoice",
+    "charge",
+    "refund",
+    "merchant",
+    "cvv",
+    "pan",
+    "bank",
+    "financial",
+    "paypal",
+    "braintree",
+    "wallet",
+    "debit",
+    "cardholder",
+)
+
+# Categories where payment data access is PCI-DSS relevant
+_PCI_DSS_SENSITIVE = frozenset({"data_access", "exfiltration", "financial_abuse"})
+
+# ── SOC 2 relevant categories ──────────────────────────────────────────────
+_SOC2_TRIGGER_CATEGORIES = frozenset({
+    "privilege_escalation",
+    "exfiltration",
+    "resource_abuse",
+})
 
 # High-impact categories that always trigger Critical severity
 CRITICAL_CATEGORIES = {"privilege_escalation", "exfiltration", "code_compromise"}
@@ -159,16 +211,16 @@ def compute_financial_impact(events: list[ForensicEvent]) -> str:
 
 def check_gdpr_flag(events: list[ForensicEvent]) -> bool:
     """
-    Detect if any data access/exfiltration events touch PII-hinting resources.
+    Detect if GDPR Article 33 breach notification may be required.
 
-    Scans affected_resource strings for keywords like 'user', 'customer', 'pii', 'email',
-    'personal', 'private', 'confidential', etc.
+    Triggered when a data_access or exfiltration event touches a resource whose
+    name contains PII-hinting keywords (user, customer, email, medical, etc.).
 
     Args:
-        events: List of ForensicEvent objects
+        events: Classified ForensicEvent objects.
 
     Returns:
-        bool: True if any data_access or exfiltration event touches PII-hinting resource
+        bool: True if PII access was detected.
     """
     sensitive_categories = {"data_access", "exfiltration"}
 
@@ -181,6 +233,108 @@ def check_gdpr_flag(events: list[ForensicEvent]) -> bool:
             return True
 
     return False
+
+
+def check_pcidss_flag(events: list[ForensicEvent]) -> bool:
+    """
+    Detect if PCI-DSS Requirement 12.10 incident notification may be required.
+
+    Triggered by:
+    - Any financial_abuse event (directly implicates the payment card environment).
+    - Data access or exfiltration touching resources with payment-related names
+      (payment, card, billing, stripe, transaction, etc.).
+
+    Args:
+        events: Classified ForensicEvent objects.
+
+    Returns:
+        bool: True if a PCI-DSS reportable event was detected.
+    """
+    for event in events:
+        if event.impact_category == "financial_abuse":
+            return True
+        if (
+            event.impact_category in _PCI_DSS_SENSITIVE
+            and event.affected_resource
+            and any(hint in event.affected_resource.lower() for hint in PCI_DSS_HINTS)
+        ):
+            return True
+    return False
+
+
+def check_soc2_flag(events: list[ForensicEvent]) -> bool:
+    """
+    Detect if a SOC 2 security incident should be documented.
+
+    Triggered by privilege escalation, data exfiltration, or large-scale
+    resource abuse — all of which affect SOC 2 Trust Service Criteria
+    CC6 (Logical Access) and A1 (Availability).
+
+    Args:
+        events: Classified ForensicEvent objects.
+
+    Returns:
+        bool: True if a SOC 2 reportable event was detected.
+    """
+    return any(
+        event.impact_category in _SOC2_TRIGGER_CATEGORIES
+        for event in events
+        if event.impact_category
+    )
+
+
+def build_compliance_reasons(
+    gdpr: bool,
+    pcidss: bool,
+    soc2: bool,
+    events: list[ForensicEvent],
+) -> list[str]:
+    """
+    Build human-readable compliance notification reasons for the incident report.
+
+    Returns a list of strings, one per applicable regulation, describing the
+    specific obligation and the triggering condition observed.
+    """
+    reasons: list[str] = []
+
+    if gdpr:
+        # Find a representative PII resource name to include in the message.
+        pii_resources = [
+            e.affected_resource
+            for e in events
+            if e.impact_category in {"data_access", "exfiltration"}
+            and e.affected_resource
+            and any(h in e.affected_resource.lower() for h in PII_HINTS)
+        ]
+        resource_hint = f" (e.g. '{pii_resources[0]}')" if pii_resources else ""
+        reasons.append(
+            f"GDPR Article 33: Personal data may have been accessed{resource_hint}. "
+            "Notify your Data Protection Authority within 72 hours if a breach is confirmed."
+        )
+
+    if pcidss:
+        fin_events = [e for e in events if e.impact_category == "financial_abuse"]
+        if fin_events:
+            reasons.append(
+                "PCI-DSS Requirement 12.10: Financial abuse events detected in the payment "
+                "card environment. Initiate your incident response plan immediately and "
+                "notify your acquiring bank and card brands."
+            )
+        else:
+            reasons.append(
+                "PCI-DSS Requirement 12.10: Payment-related resources were accessed during "
+                "the exposure window. Review cardholder data access logs and notify your "
+                "acquiring bank if cardholder data was compromised."
+            )
+
+    if soc2:
+        reasons.append(
+            "SOC 2 (CC6 / A1): A security event affecting logical access controls or system "
+            "availability was detected. Document this incident in your SOC 2 evidence records "
+            "and inform your auditor at the next review cycle."
+        )
+
+    return reasons
 
 
 def _is_large_object(resource_name: str) -> bool:

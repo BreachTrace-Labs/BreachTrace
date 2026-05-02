@@ -36,7 +36,7 @@ if not database_url:
         "DATABASE_URL environment variable is not set. "
         "Check your .env file before running alembic."
     )
-alembic_config.set_main_option("sqlalchemy.url", database_url)
+alembic_config.set_main_option("sqlalchemy.url", database_url.replace("%", "%%"))
 
 target_metadata = Base.metadata
 

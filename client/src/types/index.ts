@@ -33,4 +33,8 @@ export interface IncidentRecord {
   remediation_steps: string[]
   gdpr_flag: boolean
   estimated_financial_impact: string | null
+  // Computed by the detail endpoint — may be absent on list responses
+  pcidss_flag?: boolean
+  soc2_flag?: boolean
+  compliance_reasons?: string[]
 }
