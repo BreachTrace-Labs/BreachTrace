@@ -1,12 +1,7 @@
 """
-POST /webhook/github
---------------------
-Receives GitHub push-event webhooks, validates the HMAC-SHA256 signature,
-extracts the commit diff, scans for AWS credentials, and creates an
-IncidentRecord in the database for every match found.
-
-A background coroutine is launched for each incident to monitor whether the
-leaked key is revoked (polls AWS STS every 60 s for up to 10 minutes).
+POST /webhook/github   — receive GitHub push webhooks
+POST /webhook/register — auto-register a webhook on a GitHub repo via the API
+GET  /webhook/info     — return the configured webhook URL (for the Connect UI)
 """
 from __future__ import annotations
 
@@ -19,6 +14,7 @@ from datetime import datetime, timezone
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
 from github import Github, GithubException
+from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 import config
@@ -123,15 +119,19 @@ async def github_webhook(
     Receive a GitHub push webhook, detect leaked AWS credentials, and persist incidents.
     """
     body = await request.body()
+    
+    event_type = request.headers.get("X-GitHub-Event", "unknown")
+    logger.info(f"======> [WEBHOOK HIT] Received '{event_type}' event <======")
 
     # 1. Validate HMAC-SHA256 signature
     sig_header = request.headers.get("X-Hub-Signature-256", "")
     if not _verify_signature(body, sig_header):
+        logger.error(f"[WEBHOOK FAIL] Signature mismatch. Received: {sig_header[:25]}...")
         raise HTTPException(status_code=401, detail="Invalid webhook signature")
 
     # 2. Only process push events
-    event_type = request.headers.get("X-GitHub-Event", "")
     if event_type != "push":
+        logger.info(f"[WEBHOOK] Ignored non-push event: {event_type}")
         return {"status": "ignored", "event": event_type}
 
     payload: dict = json.loads(body)
@@ -141,9 +141,11 @@ async def github_webhook(
     commits: list[dict] = payload.get("commits", [])
 
     if not commits:
+        logger.info(f"[WEBHOOK] No commits in push payload for repo {repo_full_name}")
         return {"status": "ignored", "reason": "no commits in payload"}
 
     created_incidents: list[str] = []
+    logger.info(f"[WEBHOOK] Processing {len(commits)} commit(s) on {repo_full_name}...")
 
     # 3. Process each commit
     for commit in commits:
@@ -156,14 +158,20 @@ async def github_webhook(
         exposure_start: datetime = record_exposure_start(timestamp_str)
 
         # 4. Fetch the commit diff
+        logger.info(f"[WEBHOOK PROCESS] Fetching diff for {sha}...")
         diff_text = _fetch_diff(repo_full_name, sha)
         if not diff_text:
+            logger.info(f"[WEBHOOK FAIL] Could not fetch diff text for {sha}.")
             continue
 
         # 5. Scan for AWS credentials
+        logger.info(f"[WEBHOOK PROCESS] Scanning commit {sha}...")
         matches = scan(diff_text)
         if not matches:
+            logger.info(f"[WEBHOOK RESULT] No AWS secrets detected in commit {sha}.")
             continue
+
+        logger.info(f"[WEBHOOK FOUND] Found {len(matches)} secret(s) in {sha}!")
 
         for match in matches:
             # 6. Persist incident
@@ -210,4 +218,94 @@ async def github_webhook(
         "status": "processed",
         "incidents_created": len(created_incidents),
         "incident_ids": created_incidents,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Webhook registration helpers
+# ---------------------------------------------------------------------------
+
+class RegisterRequest(BaseModel):
+    repo_url: str      # e.g. "https://github.com/user/repo"
+    webhook_url: str   # e.g. "http://localhost:8000/webhook/github" or ngrok URL
+
+
+@router.post("/register", status_code=200)
+async def register_webhook(body: RegisterRequest):
+    """
+    Use the configured GITHUB_TOKEN to register (or confirm) a push webhook on
+    the target repo.  The frontend calls this when the user clicks
+    'Connect Repository'.
+    """
+    # Parse "user/repo" from any GitHub URL form
+    url = body.repo_url.rstrip("/")
+    if "github.com/" not in url:
+        raise HTTPException(status_code=400, detail="repo_url must be a GitHub repository URL")
+
+    repo_full_name = url.split("github.com/", 1)[1]
+
+    try:
+        gh = Github(config.GITHUB_TOKEN)
+        repo = gh.get_repo(repo_full_name)
+    except GithubException as exc:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Cannot access repository '{repo_full_name}': {exc.data.get('message', str(exc))}",
+        )
+
+    # Check if our webhook URL is already registered
+    try:
+        existing_hooks = list(repo.get_hooks())
+    except GithubException:
+        existing_hooks = []
+
+    for hook in existing_hooks:
+        if hook.config.get("url", "") == body.webhook_url:
+            return {
+                "success": True,
+                "already_existed": True,
+                "webhook_id": hook.id,
+                "message": f"Webhook already registered on {repo_full_name}",
+            }
+
+    # Register a new webhook
+    try:
+        hook = repo.create_hook(
+            name="web",
+            config={
+                "url": body.webhook_url,
+                "content_type": "json",
+                "secret": config.GITHUB_WEBHOOK_SECRET,
+                "insecure_ssl": "0",
+            },
+            events=["push"],
+            active=True,
+        )
+    except GithubException as exc:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Failed to create webhook: {exc.data.get('message', str(exc))}",
+        )
+
+    logger.info("Webhook registered on %s — hook id %s", repo_full_name, hook.id)
+    return {
+        "success": True,
+        "already_existed": False,
+        "webhook_id": hook.id,
+        "message": f"Webhook registered on {repo_full_name}",
+    }
+
+
+@router.get("/info")
+async def webhook_info(request: Request):
+    """
+    Return the webhook URL the frontend should display and offer to register.
+    Derives it from the incoming request's base URL so it works for both
+    localhost and any deployed environment.
+    """
+    base = str(request.base_url).rstrip("/")
+    return {
+        "webhook_url": f"{base}/webhook/github",
+        "secret_hint": config.GITHUB_WEBHOOK_SECRET[:4] + "****" if config.GITHUB_WEBHOOK_SECRET else "",
+        "environment": config.ENVIRONMENT,
     }

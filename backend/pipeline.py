@@ -18,13 +18,14 @@ from __future__ import annotations
 import logging
 import re
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from sqlalchemy.orm import Session
 
 from classifier.rules import classify_all_events
 from collectors.aws import AWSCloudTrailCollector
 from db.crud import (
+    reset_incident_for_refresh,
     save_collection_status,
     save_forensic_events,
     update_status,
@@ -32,9 +33,19 @@ from db.crud import (
 from db.database import SessionLocal
 from db.models import IncidentRecord
 from reporter.gemini import generate_report
-from scorer.severity import check_gdpr_flag, compute_financial_impact, score_incident
+from scorer.severity import (
+    check_gdpr_flag,
+    check_pcidss_flag,
+    compute_financial_impact,
+    score_incident,
+)
 
 logger = logging.getLogger(__name__)
+
+# How far before the commit timestamp to look in CloudTrail.
+# 120 minutes covers the demo flow (API calls made up to ~1h before pushing)
+# and real incidents where the key was in use before it was detected in a commit.
+_COLLECTION_LOOKBACK_MINUTES = 120
 
 # Map human-readable severity labels → DB integer (1–4)
 _SEVERITY_TO_INT: dict[str, int] = {
@@ -69,7 +80,13 @@ def _extract_remediation_steps(report_text: str) -> list[str]:
     return steps
 
 
-def run_collection_pipeline(incident_id: str, access_key_id: str, exposure_start: datetime) -> None:
+def run_collection_pipeline(
+    incident_id: str,
+    access_key_id: str,
+    exposure_start: datetime,
+    *,
+    refresh_existing: bool = False,
+) -> None:
     """
     Execute the full forensic pipeline for a single incident.
 
@@ -96,22 +113,34 @@ def run_collection_pipeline(incident_id: str, access_key_id: str, exposure_start
     db: Session = SessionLocal()
     pipeline_start = time.monotonic()
     try:
+        if refresh_existing:
+            incident = reset_incident_for_refresh(db, incident_id)
+            if incident is None:
+                logger.warning("Refresh requested for missing incident %s", incident_id)
+                return
+
         # The exposure may still be open — use now() as end_time.
         exposure_end = datetime.now(tz=timezone.utc)
 
         logger.info(
-            "Pipeline started for incident %s (key=%s)",
+            "%s pipeline started for incident %s (key=%s)",
+            "Refresh" if refresh_existing else "Collection",
             incident_id,
             access_key_id,
         )
 
         # ── STAGE 1: Collect CloudTrail events ────────────────────────────
+        # Extend the window 30 minutes back from the commit timestamp so that
+        # API calls made just before the commit (pre-exposure reconnaissance,
+        # or demo-seeded activity) are included.
+        collection_start = exposure_start - timedelta(minutes=_COLLECTION_LOOKBACK_MINUTES)
+
         t0 = time.monotonic()
         collector = AWSCloudTrailCollector()
         try:
             events = collector.collect(
                 credential=access_key_id,
-                start_time=exposure_start,
+                start_time=collection_start,
                 end_time=exposure_end,
             )
         except Exception:
@@ -180,7 +209,8 @@ def run_collection_pipeline(incident_id: str, access_key_id: str, exposure_start
         try:
             overall_severity = score_incident(classified_events)
             financial_impact = compute_financial_impact(classified_events)
-            gdpr_flag = check_gdpr_flag(classified_events)
+            # gdpr_flag covers both GDPR and PCI-DSS — either triggers the flag
+            gdpr_flag = check_gdpr_flag(classified_events) or check_pcidss_flag(classified_events)
 
             incident_record: IncidentRecord | None = db.get(IncidentRecord, incident_id)
             if incident_record is not None:

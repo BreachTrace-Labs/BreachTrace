@@ -12,7 +12,8 @@ from sqlalchemy import (
     Text,
     VARCHAR,
 )
-from sqlalchemy.dialects.postgresql import JSONB, UUID
+from sqlalchemy import String
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import declarative_base, relationship
 from sqlalchemy.sql import func
 
@@ -30,7 +31,7 @@ class IncidentRecord(Base):
     __tablename__ = "incident_records"
 
     incident_id = Column(
-        UUID(as_uuid=False),
+        String(36),
         primary_key=True,
         server_default=func.gen_random_uuid(),
         comment="UUID primary key",
@@ -148,13 +149,13 @@ class ForensicEvent(Base):
     __tablename__ = "forensic_events"
 
     event_id = Column(
-        UUID(as_uuid=False),
+        String(36),
         primary_key=True,
         server_default=func.gen_random_uuid(),
         comment="UUID, auto-generated",
     )
     incident_id = Column(
-        UUID(as_uuid=False),
+        String(36),
         ForeignKey("incident_records.incident_id", ondelete="CASCADE"),
         nullable=False,
     )
@@ -274,12 +275,12 @@ class CollectionStatus(Base):
     __tablename__ = "collection_status"
 
     id = Column(
-        UUID(as_uuid=False),
+        String(36),
         primary_key=True,
         server_default=func.gen_random_uuid(),
     )
     incident_id = Column(
-        UUID(as_uuid=False),
+        String(36),
         ForeignKey("incident_records.incident_id", ondelete="CASCADE"),
         nullable=False,
     )
@@ -352,12 +353,12 @@ class ExperimentRun(Base):
     __tablename__ = "experiment_runs"
 
     id = Column(
-        UUID(as_uuid=False),
+        String(36),
         primary_key=True,
         server_default=func.gen_random_uuid(),
     )
     incident_id = Column(
-        UUID(as_uuid=False),
+        String(36),
         ForeignKey("incident_records.incident_id", ondelete="SET NULL"),
         nullable=True,
         comment="Linked incident produced by this run",

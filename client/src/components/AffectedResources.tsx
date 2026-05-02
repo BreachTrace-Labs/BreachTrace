@@ -77,11 +77,12 @@ const AffectedResources: React.FC<Props> = ({ events }) => {
                   {g.resources.map((r) => (
                     <li
                       key={r}
-                      className="font-mono text-xs py-1.5 px-2 border-l-2"
+                      className="font-mono text-xs py-1.5 px-2 border-l-2 truncate"
                       style={{
                         borderColor: 'var(--color-border)',
                         color: 'var(--color-foreground)',
                       }}
+                      title={r}
                     >
                       {r}
                     </li>
