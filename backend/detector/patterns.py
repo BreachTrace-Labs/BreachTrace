@@ -131,8 +131,19 @@ def find_aws_credentials(text: str) -> list[CredentialMatch]:
 
 
 # =============================================================================
-# GCP — dataclass + stub (implementation: Day 2)
+# GCP — regex constants, dataclass, implementation
 # =============================================================================
+
+GCP_CLIENT_EMAIL_PATTERN = re.compile(
+    r'[a-z0-9\-\.]+@[a-z0-9\-]+\.iam\.gserviceaccount\.com'
+)
+# Keywords that confirm the surrounding JSON is a service account key file
+GCP_SERVICE_ACCOUNT_CONTEXT = ('"type"', 'service_account', 'private_key_id')
+GCP_PRIVATE_KEY_ID_PATTERN = re.compile(
+    r'"private_key_id"\s*:\s*"([a-f0-9]{40})"'
+)
+GCP_CONTEXT_RADIUS = 20
+
 
 @dataclass
 class GCPCredentialMatch:
@@ -145,23 +156,116 @@ class GCPCredentialMatch:
 
 
 def find_gcp_credentials(text: str) -> list[GCPCredentialMatch]:
-    # TODO Day 2: implement using GCP_CLIENT_EMAIL_PATTERN + context confirmation
-    raise NotImplementedError
+    matches = []
+    seen: set[str] = set()
+    lines = text.splitlines()
+
+    for i, line in enumerate(lines):
+        for m in GCP_CLIENT_EMAIL_PATTERN.finditer(line):
+            email = m.group(0)
+            if email in seen:
+                continue
+            seen.add(email)
+
+            # Check surrounding lines for service_account context keywords
+            lo = max(0, i - GCP_CONTEXT_RADIUS)
+            hi = min(len(lines), i + GCP_CONTEXT_RADIUS + 1)
+            context_block = "\n".join(lines[lo:hi])
+            context_confirmed = any(kw in context_block for kw in GCP_SERVICE_ACCOUNT_CONTEXT)
+
+            # Extract private_key_id from the same context window if present
+            key_id_match = GCP_PRIVATE_KEY_ID_PATTERN.search(context_block)
+            private_key_id = key_id_match.group(1) if key_id_match else None
+
+            hint = email[:8] + "..."
+            raw_match = f"{email} @ line {i + 1}"
+            if context_confirmed:
+                raw_match += " (service_account context)"
+
+            matches.append(GCPCredentialMatch(
+                credential_type="gcp_service_account",
+                client_email=email,
+                private_key_id=private_key_id,
+                credential_hint=hint,
+                raw_match=raw_match,
+                line_number=i + 1,
+            ))
+
+    return matches
 
 
 # =============================================================================
-# AZURE — dataclass + stub (implementation: Day 2)
+# AZURE — regex constants, dataclass, implementation
 # =============================================================================
+
+AZURE_CLIENT_ID_PATTERN = re.compile(
+    r'[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}',
+    re.IGNORECASE,
+)
+AZURE_CLIENT_ID_CONTEXT_KEYWORDS = (
+    'client_id', 'clientid', 'azure_client_id', 'appid', 'applicationid',
+)
+AZURE_CLIENT_SECRET_PATTERN = re.compile(r'[A-Za-z0-9\.\-_~]{34,}')
+AZURE_CLIENT_SECRET_CONTEXT_KEYWORDS = (
+    'client_secret', 'clientsecret', 'azure_client_secret', 'password',
+)
+AZURE_CONN_STRING_PATTERN = re.compile(
+    r'DefaultEndpointsProtocol=https;AccountName=[^;]+;AccountKey=[A-Za-z0-9+/=]{64,};'
+)
+AZURE_CONTEXT_RADIUS = 3
+
 
 @dataclass
 class AzureCredentialMatch:
     credential_type: str        # 'azure_service_principal' | 'azure_storage_connection'
-    client_id: str | None       # UUID if detected
-    credential_hint: str        # first 8 chars of client_id or 'AZURE_CONN...'
+    client_id: str | None       # UUID if service principal, None for connection strings
+    credential_hint: str        # first 8 chars of client_id, or 'AZURE_CONN...'
     raw_match: str
     line_number: int | None = None
 
 
 def find_azure_credentials(text: str) -> list[AzureCredentialMatch]:
-    # TODO Day 2: implement using UUID pattern + context keywords + connection string pattern
-    raise NotImplementedError
+    matches = []
+    seen: set[str] = set()
+    lines = text.splitlines()
+
+    # Connection strings are self-identifying — no context check needed
+    for i, line in enumerate(lines):
+        for m in AZURE_CONN_STRING_PATTERN.finditer(line):
+            conn_str = m.group(0)
+            if conn_str in seen:
+                continue
+            seen.add(conn_str)
+            matches.append(AzureCredentialMatch(
+                credential_type="azure_storage_connection",
+                client_id=None,
+                credential_hint="AZURE_CONN...",
+                raw_match=f"Azure storage connection string @ line {i + 1}",
+                line_number=i + 1,
+            ))
+
+    # UUID-format client IDs require nearby Azure context keywords to avoid false positives
+    for i, line in enumerate(lines):
+        for m in AZURE_CLIENT_ID_PATTERN.finditer(line):
+            uuid = m.group(0).lower()
+            if uuid in seen:
+                continue
+
+            lo = max(0, i - AZURE_CONTEXT_RADIUS)
+            hi = min(len(lines), i + AZURE_CONTEXT_RADIUS + 1)
+            context = "\n".join(lines[lo:hi]).lower()
+
+            if not any(kw in context for kw in AZURE_CLIENT_ID_CONTEXT_KEYWORDS):
+                continue  # UUID without Azure context — skip to avoid false positives
+
+            seen.add(uuid)
+            hint = uuid[:8] + "..."
+            matches.append(AzureCredentialMatch(
+                credential_type="azure_service_principal",
+                client_id=uuid,
+                credential_hint=hint,
+                raw_match=f"{uuid} @ line {i + 1}",
+                line_number=i + 1,
+            ))
+
+    return matches
