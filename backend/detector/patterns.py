@@ -2,6 +2,57 @@ import re
 from dataclasses import dataclass
 from typing import Sequence
 
+# =============================================================================
+# GCP CREDENTIAL PATTERNS — RESEARCH NOTES (Yash, Day 1)
+# =============================================================================
+#
+# GCP SERVICE ACCOUNT KEY (JSON file format):
+# {
+#   "type": "service_account",
+#   "project_id": "my-project",
+#   "private_key_id": "abc123...",
+#   "client_email": "name@project.iam.gserviceaccount.com",
+#   "private_key": "-----BEGIN RSA PRIVATE KEY-----\n..."
+# }
+#
+# PATTERN 1 — Primary anchor: client_email
+#   Regex: [a-z0-9\-\.]+@[a-z0-9\-]+\.iam\.gserviceaccount\.com
+#   Why this is the anchor: the domain suffix `.iam.gserviceaccount.com` is
+#   unique to GCP service accounts and cannot appear in legitimate non-GCP code.
+#
+# PATTERN 2 — Context confirmation: service_account type field
+#   Regex: "type"\s*:\s*"service_account"
+#   Purpose: reduces false positives — if client_email appears without this
+#   nearby, it could be a coincidental email. Check within ±20 lines.
+#
+# PATTERN 3 — Private key ID extraction
+#   Regex: "private_key_id"\s*:\s*"([a-f0-9]{40})"
+#   Purpose: 40-char hex key ID used to identify which specific key was leaked
+#   when a service account has multiple active keys.
+#
+# =============================================================================
+# AZURE CREDENTIAL PATTERNS — RESEARCH NOTES (Yash, Day 1)
+# =============================================================================
+#
+# PATTERN 4 — Azure Client ID (Service Principal / App Registration ID)
+#   Regex: [0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}
+#   Standard UUID format. UUID alone is NOT sufficient — must appear near
+#   context keywords (case-insensitive, within ±3 lines):
+#     client_id, clientid, azure_client_id, appid, applicationid, tenantid
+#
+# PATTERN 5 — Azure Client Secret
+#   Regex: [A-Za-z0-9\.\-_~]{34,}
+#   Azure-generated secrets are 34–40+ chars. Must appear near keywords:
+#     client_secret, clientsecret, azure_client_secret, password
+#   Conservative char class to avoid matching unrelated long strings.
+#
+# PATTERN 6 — Azure Storage Connection String (self-contained, no context needed)
+#   Regex: DefaultEndpointsProtocol=https;AccountName=[^;]+;AccountKey=[A-Za-z0-9+/=]{64,};
+#   The literal prefix is unique to Azure — no keyword context check required.
+#   AccountKey is a base64-encoded 512-bit key (~88 chars with padding).
+#
+# =============================================================================
+
 # AWS Access Key ID: starts with AKIA, followed by 16 uppercase alphanumeric chars
 AWS_ACCESS_KEY_PATTERN = re.compile(r"(?<![A-Za-z0-9/])(AKIA[0-9A-Z]{16})\b")
 
@@ -77,3 +128,40 @@ def find_aws_credentials(text: str) -> list[CredentialMatch]:
                 )
             )
     return matches
+
+
+# =============================================================================
+# GCP — dataclass + stub (implementation: Day 2)
+# =============================================================================
+
+@dataclass
+class GCPCredentialMatch:
+    credential_type: str        # 'gcp_service_account'
+    client_email: str           # matched service account email
+    private_key_id: str | None  # 40-char hex key ID if present in diff
+    credential_hint: str        # first 8 chars of email + '...'
+    raw_match: str
+    line_number: int | None = None
+
+
+def find_gcp_credentials(text: str) -> list[GCPCredentialMatch]:
+    # TODO Day 2: implement using GCP_CLIENT_EMAIL_PATTERN + context confirmation
+    raise NotImplementedError
+
+
+# =============================================================================
+# AZURE — dataclass + stub (implementation: Day 2)
+# =============================================================================
+
+@dataclass
+class AzureCredentialMatch:
+    credential_type: str        # 'azure_service_principal' | 'azure_storage_connection'
+    client_id: str | None       # UUID if detected
+    credential_hint: str        # first 8 chars of client_id or 'AZURE_CONN...'
+    raw_match: str
+    line_number: int | None = None
+
+
+def find_azure_credentials(text: str) -> list[AzureCredentialMatch]:
+    # TODO Day 2: implement using UUID pattern + context keywords + connection string pattern
+    raise NotImplementedError
