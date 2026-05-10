@@ -268,4 +268,27 @@ def find_azure_credentials(text: str) -> list[AzureCredentialMatch]:
                 line_number=i + 1,
             ))
 
+    # Client secrets — require Azure keyword context; skip anything already caught as UUID/conn string
+    for i, line in enumerate(lines):
+        for m in AZURE_CLIENT_SECRET_PATTERN.finditer(line):
+            secret = m.group(0)
+            if secret.lower() in seen:
+                continue
+
+            lo = max(0, i - AZURE_CONTEXT_RADIUS)
+            hi = min(len(lines), i + AZURE_CONTEXT_RADIUS + 1)
+            context = "\n".join(lines[lo:hi]).lower()
+
+            if not any(kw in context for kw in AZURE_CLIENT_SECRET_CONTEXT_KEYWORDS):
+                continue
+
+            seen.add(secret.lower())
+            matches.append(AzureCredentialMatch(
+                credential_type="azure_client_secret",
+                client_id=None,
+                credential_hint=secret[:8] + "...",
+                raw_match=f"Azure client secret @ line {i + 1}",
+                line_number=i + 1,
+            ))
+
     return matches

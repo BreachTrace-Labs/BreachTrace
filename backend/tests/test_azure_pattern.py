@@ -173,3 +173,39 @@ def test_connection_string_with_short_account_key_not_detected():
     matches = find_azure_credentials(text)
     conns = [m for m in matches if m.credential_type == "azure_storage_connection"]
     assert len(conns) == 0
+
+
+# ---------------------------------------------------------------------------
+# Client secret detection
+# ---------------------------------------------------------------------------
+
+VALID_CLIENT_SECRET = "A" * 40  # 40-char alphanumeric string
+
+
+def test_detects_client_secret_near_keyword():
+    text = f"client_secret={VALID_CLIENT_SECRET}"
+    matches = find_azure_credentials(text)
+    secrets = [m for m in matches if m.credential_type == "azure_client_secret"]
+    assert len(secrets) == 1
+
+
+def test_client_secret_hint_is_first_8_chars_plus_ellipsis():
+    text = f"client_secret={VALID_CLIENT_SECRET}"
+    matches = find_azure_credentials(text)
+    secrets = [m for m in matches if m.credential_type == "azure_client_secret"]
+    assert secrets[0].credential_hint == VALID_CLIENT_SECRET[:8] + "..."
+
+
+def test_client_secret_without_keyword_not_detected():
+    text = f"some_value={VALID_CLIENT_SECRET}"
+    matches = find_azure_credentials(text)
+    secrets = [m for m in matches if m.credential_type == "azure_client_secret"]
+    assert len(secrets) == 0
+
+
+def test_uuid_not_double_detected_as_client_secret():
+    # UUID near client_id should be caught as service_principal, not also as client_secret
+    text = f"client_id={VALID_UUID}\nclient_secret={VALID_UUID}"
+    matches = find_azure_credentials(text)
+    secrets = [m for m in matches if m.credential_type == "azure_client_secret"]
+    assert len(secrets) == 0

@@ -16,8 +16,9 @@ def _p95(values: list[float]) -> float:
 
 def compute_metrics(runs: list[dict]) -> dict:
     """Compute summary statistics over a list of ExperimentRun dicts."""
-    detection_times = [r["detection_time_s"] for r in runs if r.get("detection_time_s") is not None]
-    report_times    = [r["report_time_s"]    for r in runs if r.get("report_time_s")    is not None]
+    first_use_times = [r["first_use_time_s"] for r in runs if r.get("first_use_time_s") is not None]
+    detection_times = [r["detection_time_s"]  for r in runs if r.get("detection_time_s")  is not None]
+    report_times    = [r["report_time_s"]     for r in runs if r.get("report_time_s")     is not None]
 
     severity_counts: dict[str, int] = {}
     for r in runs:
@@ -27,11 +28,30 @@ def compute_metrics(runs: list[dict]) -> dict:
     completed = [r for r in runs if r.get("status") == "complete"]
 
     return {
-        "total_runs":            len(runs),
-        "completed_runs":        len(completed),
-        "detection_time_median": statistics.median(detection_times) if detection_times else None,
-        "detection_time_p95":    _p95(detection_times),
-        "report_time_median":    statistics.median(report_times)    if report_times    else None,
-        "report_time_p95":       _p95(report_times),
-        "severity_distribution": severity_counts,
+        "total_runs":              len(runs),
+        "completed_runs":          len(completed),
+        "first_use_time_median":   statistics.median(first_use_times) if first_use_times else None,
+        "first_use_time_p95":      _p95(first_use_times),
+        "detection_time_median":   statistics.median(detection_times) if detection_times else None,
+        "detection_time_p95":      _p95(detection_times),
+        "report_time_median":      statistics.median(report_times)    if report_times    else None,
+        "report_time_p95":         _p95(report_times),
+        "severity_distribution":   severity_counts,
     }
+
+
+# =============================================================================
+# STUB — Shashank implements these (Day 6, Task 6.5)
+#
+# compare_platforms: per-platform breakdown of all metrics
+# latency_by_platform: single mean detection latency per platform for paper table
+# =============================================================================
+
+def compare_platforms(runs: list[dict]) -> dict:
+    """Per-platform breakdown: avg detection, avg report, severity distribution, event count stats."""
+    raise NotImplementedError
+
+
+def latency_by_platform(runs: list[dict]) -> dict[str, float]:
+    """Returns {aws: X.X, gcp: X.X, azure: X.X} mean detection latency in seconds."""
+    raise NotImplementedError

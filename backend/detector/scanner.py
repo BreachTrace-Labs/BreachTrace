@@ -127,6 +127,6 @@ def scan(diff_text: str) -> list[CredentialMatch | GCPCredentialMatch | AzureCre
     return matches
 
 
-def scan_diff(diff_text: str) -> list[CredentialMatch]:
+def scan_diff(diff_text: str) -> list[CredentialMatch | GCPCredentialMatch | AzureCredentialMatch]:
     """Backward-compatible alias while the rest of the pipeline switches to `scan()`."""
     return scan(diff_text)
