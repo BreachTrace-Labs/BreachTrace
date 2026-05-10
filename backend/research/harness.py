@@ -282,6 +282,7 @@ def run_experiment(run_number: int) -> dict:
 #   - pipeline.py dispatches to GCPAuditLogCollector (Ritwik, Task 3.3)
 #   - google-cloud-storage installed (pip install google-cloud-storage)
 #   - GCP_EXPERIMENT_CLIENT_EMAIL + GCP_EXPERIMENT_PRIVATE_KEY set in .env
+# TODO(Yash): run 12 GCP experiments on Day 6 once prerequisites above are met
 # =============================================================================
 
 def _simulate_gcp_attacker_activity(client_email: str, private_key: str) -> list[str]:
@@ -383,6 +384,7 @@ def run_gcp_experiment(experiment_number: int) -> dict:
 #   - pipeline.py dispatches to AzureActivityLogCollector (Ritwik, Task 3.3)
 #   - azure-identity + azure-mgmt-resource installed
 #   - AZURE_EXPERIMENT_CLIENT_ID + AZURE_EXPERIMENT_CLIENT_SECRET set in .env
+# TODO(Yash): run 11 Azure experiments on Day 6 once prerequisites above are met
 # =============================================================================
 
 def _simulate_azure_attacker_activity(client_id: str, client_secret: str) -> list[str]:
