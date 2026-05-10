@@ -336,6 +336,7 @@ def run_gcp_experiment(experiment_number: int) -> dict:
         "credential": client_email,
         "started_at": _now_utc().isoformat(),
         "api_calls_made": [],
+        "first_use_time_s": None,
         "detection_time_s": None,
         "report_time_s": None,
         "events_collected": None,
@@ -346,6 +347,7 @@ def run_gcp_experiment(experiment_number: int) -> dict:
     t_start = time.time()
 
     result["api_calls_made"] = _simulate_gcp_attacker_activity(client_email, private_key)
+    result["first_use_time_s"] = round(time.time() - t_start, 1)
 
     diff_text = (
         f'"client_email": "{client_email}",\n'
@@ -437,6 +439,7 @@ def run_azure_experiment(experiment_number: int) -> dict:
         "credential": client_id,
         "started_at": _now_utc().isoformat(),
         "api_calls_made": [],
+        "first_use_time_s": None,
         "detection_time_s": None,
         "report_time_s": None,
         "events_collected": None,
@@ -447,6 +450,7 @@ def run_azure_experiment(experiment_number: int) -> dict:
     t_start = time.time()
 
     result["api_calls_made"] = _simulate_azure_attacker_activity(client_id, client_secret)
+    result["first_use_time_s"] = round(time.time() - t_start, 1)
 
     diff_text = (
         f"AZURE_CLIENT_ID={client_id}\n"
