@@ -4,7 +4,11 @@ from dataclasses import dataclass
 
 from detector.patterns import (
     AWS_ACCESS_KEY_PATTERN,
+    AzureCredentialMatch,
     CredentialMatch,
+    GCPCredentialMatch,
+    find_azure_credentials,
+    find_gcp_credentials,
     has_nearby_secret,
     mask_access_key_id,
 )
@@ -75,18 +79,19 @@ def _has_nearby_secret(lines: list[_DiffLine], index: int) -> bool:
     return has_nearby_secret([line.text for line in lines], index)
 
 
-def scan(diff_text: str) -> list[CredentialMatch]:
+def scan(diff_text: str) -> list[CredentialMatch | GCPCredentialMatch | AzureCredentialMatch]:
     """
-    Scan unified diff text for leaked AWS credentials.
+    Scan unified diff text for leaked credentials across AWS, GCP, and Azure.
 
-    Added lines are treated as detection candidates when diff markers are present.
-    Adjacent context lines are still inspected so nearby secret keys can be flagged.
-    Plain text input is handled as candidate input line-for-line.
+    AWS: only added lines are checked (candidate lines).
+    GCP/Azure: all stripped lines are passed so multi-line JSON key files and
+    context windows spanning unchanged lines are handled correctly.
     """
-    matches: list[CredentialMatch] = []
+    matches: list[CredentialMatch | GCPCredentialMatch | AzureCredentialMatch] = []
     seen: set[str] = set()
     lines = _normalize_diff_lines(diff_text)
 
+    # AWS — candidate (added) lines only, existing behaviour unchanged
     for index, line in enumerate(lines):
         if not line.is_candidate:
             continue
@@ -113,9 +118,15 @@ def scan(diff_text: str) -> list[CredentialMatch]:
                 )
             )
 
+    # GCP + Azure — run on all diff lines stripped of markers so context windows
+    # spanning unchanged lines are preserved for multi-line key file detection
+    stripped_text = "\n".join(line.text for line in lines)
+    matches.extend(find_gcp_credentials(stripped_text))
+    matches.extend(find_azure_credentials(stripped_text))
+
     return matches
 
 
-def scan_diff(diff_text: str) -> list[CredentialMatch]:
+def scan_diff(diff_text: str) -> list[CredentialMatch | GCPCredentialMatch | AzureCredentialMatch]:
     """Backward-compatible alias while the rest of the pipeline switches to `scan()`."""
     return scan(diff_text)
