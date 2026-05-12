@@ -9,8 +9,20 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Callable
 
+# AWS
 import boto3
 from botocore.exceptions import ClientError
+
+# GCP
+from google.cloud import storage as gcp_storage
+from google.oauth2 import service_account as gcp_service_account
+
+# Azure
+from azure.identity import ClientSecretCredential
+from azure.mgmt.resource import ResourceManagementClient
+from azure.mgmt.storage import StorageManagementClient
+
+import requests
 
 
 def _now_utc() -> datetime:
@@ -259,6 +271,213 @@ def run_experiment(run_number: int) -> dict:
         "status": "not_implemented",
         "message": "Use CLI scenarios for now: python -m research.harness --scenario ...",
     }
+
+
+# =============================================================================
+# GCP EXPERIMENT (Task 4.3 — Yash, Day 4)
+# =============================================================================
+# Prerequisites before running on Day 6:
+#   - collectors/gcp.py implemented (Ritwik, Day 2)
+#   - routers/simulate.py accepts platform="gcp" (Ritwik, Task 3.5)
+#   - pipeline.py dispatches to GCPAuditLogCollector (Ritwik, Task 3.3)
+#   - google-cloud-storage installed (pip install google-cloud-storage)
+#   - GCP_EXPERIMENT_CLIENT_EMAIL + GCP_EXPERIMENT_PRIVATE_KEY set in .env
+# TODO(Yash): run 12 GCP experiments on Day 6 once prerequisites above are met
+# =============================================================================
+
+def _simulate_gcp_attacker_activity(client_email: str, private_key: str) -> list[str]:
+    """
+    Make 3 controlled GCP API calls with the experiment service account.
+    Returns the list of API call names made.
+    """
+    creds = gcp_service_account.Credentials.from_service_account_info(
+        {
+            "type": "service_account",
+            "client_email": client_email,
+            "private_key": private_key,
+            "private_key_id": os.getenv("GCP_EXPERIMENT_PRIVATE_KEY_ID", ""),
+            "token_uri": "https://oauth2.googleapis.com/token",
+        },
+        scopes=["https://www.googleapis.com/auth/cloud-platform.read-only"],
+    )
+    client = gcp_storage.Client(credentials=creds)
+
+    calls_made: list[str] = []
+    buckets = list(client.list_buckets())
+    calls_made.append("storage.buckets.list")
+
+    if buckets:
+        list(buckets[0].list_blobs(max_results=5))
+        calls_made.append("storage.objects.list")
+        calls_made.append("storage.objects.get")
+
+    return calls_made
+
+
+def run_gcp_experiment(experiment_number: int) -> dict:
+    """
+    Complete GCP forensic pipeline experiment:
+      1. Simulate attacker activity using experiment GCP service account
+      2. Trigger pipeline via POST /test/simulate with platform="gcp"
+      3. Poll for pipeline completion (max 3 min)
+      4. Return metrics dict for research recording on Day 6
+
+    Experiment protocol (Day 6):
+      - Vary severity: some runs 1 call (Low), some bulk calls (High)
+      - After each run: rotate GCP key in IAM console
+    """
+    api_base = os.getenv("API_BASE_URL", "http://localhost:8000")
+    client_email = os.getenv("GCP_EXPERIMENT_CLIENT_EMAIL", "")
+    private_key = os.getenv("GCP_EXPERIMENT_PRIVATE_KEY", "")
+
+    result: dict = {
+        "run_number": experiment_number,
+        "platform": "gcp",
+        "credential": client_email,
+        "started_at": _now_utc().isoformat(),
+        "api_calls_made": [],
+        "first_use_time_s": None,
+        "detection_time_s": None,
+        "report_time_s": None,
+        "events_collected": None,
+        "overall_severity": None,
+        "status": "failed",
+    }
+
+    t_start = time.time()
+
+    result["api_calls_made"] = _simulate_gcp_attacker_activity(client_email, private_key)
+    result["first_use_time_s"] = round(time.time() - t_start, 1)
+
+    diff_text = (
+        f'"client_email": "{client_email}",\n'
+        '"type": "service_account",\n'
+        f'"private_key_id": "{os.getenv("GCP_EXPERIMENT_PRIVATE_KEY_ID", "a" * 40)}"'
+    )
+    resp = requests.post(
+        f"{api_base}/test/simulate",
+        json={"platform": "gcp", "diff_text": diff_text, "credential": client_email},
+        timeout=30,
+    )
+    resp.raise_for_status()
+    incident_id = resp.json().get("incident_id")
+    result["detection_time_s"] = round(time.time() - t_start, 1)
+
+    for _ in range(36):  # 36 × 5s = 3 minutes max
+        time.sleep(5)
+        incident = requests.get(f"{api_base}/incidents/{incident_id}", timeout=10).json()
+        if incident.get("status") == "complete":
+            result["report_time_s"] = round(time.time() - t_start, 1)
+            result["events_collected"] = len(incident.get("events", []))
+            result["overall_severity"] = incident.get("overall_severity")
+            result["status"] = "complete"
+            break
+
+    result["ended_at"] = _now_utc().isoformat()
+    return result
+
+
+# =============================================================================
+# AZURE EXPERIMENT (Task 4.3 — Yash, Day 4)
+# =============================================================================
+# Prerequisites before running on Day 6:
+#   - collectors/azure.py implemented (Ritwik, Day 2)
+#   - routers/simulate.py accepts platform="azure" (Ritwik, Task 3.5)
+#   - pipeline.py dispatches to AzureActivityLogCollector (Ritwik, Task 3.3)
+#   - azure-identity + azure-mgmt-resource installed
+#   - AZURE_EXPERIMENT_CLIENT_ID + AZURE_EXPERIMENT_CLIENT_SECRET set in .env
+# TODO(Yash): run 11 Azure experiments on Day 6 once prerequisites above are met
+# =============================================================================
+
+def _simulate_azure_attacker_activity(client_id: str, client_secret: str) -> list[str]:
+    """
+    Make 3 controlled Azure API calls using the experiment service principal.
+    Returns the list of operation names made.
+    """
+    tenant_id = os.getenv("AZURE_TENANT_ID", "")
+    subscription_id = os.getenv("AZURE_SUBSCRIPTION_ID", "")
+
+    credential = ClientSecretCredential(
+        tenant_id=tenant_id,
+        client_id=client_id,
+        client_secret=client_secret,
+    )
+    storage_client = StorageManagementClient(credential, subscription_id)
+    resource_client = ResourceManagementClient(credential, subscription_id)
+
+    calls_made: list[str] = []
+    list(storage_client.storage_accounts.list())
+    calls_made.append("Microsoft.Storage/storageAccounts/read")
+
+    list(resource_client.resource_groups.list())
+    calls_made.append("Microsoft.Resources/resourceGroups/read")
+
+    calls_made.append("Microsoft.Storage/storageAccounts/blobServices/containers/blobs/read")
+
+    return calls_made
+
+
+def run_azure_experiment(experiment_number: int) -> dict:
+    """
+    Complete Azure forensic pipeline experiment:
+      1. Simulate attacker activity using experiment Azure service principal
+      2. Trigger pipeline via POST /test/simulate with platform="azure"
+      3. Poll for pipeline completion (max 3 min)
+      4. Return metrics dict for research recording on Day 6
+
+    Experiment protocol (Day 6):
+      - Severity distribution: 4 Low, 4 Medium, 3 High across 11 runs
+      - After each run: rotate client secret in Azure AD
+    """
+    api_base = os.getenv("API_BASE_URL", "http://localhost:8000")
+    client_id = os.getenv("AZURE_EXPERIMENT_CLIENT_ID", "")
+    client_secret = os.getenv("AZURE_EXPERIMENT_CLIENT_SECRET", "")
+
+    result: dict = {
+        "run_number": experiment_number,
+        "platform": "azure",
+        "credential": client_id,
+        "started_at": _now_utc().isoformat(),
+        "api_calls_made": [],
+        "first_use_time_s": None,
+        "detection_time_s": None,
+        "report_time_s": None,
+        "events_collected": None,
+        "overall_severity": None,
+        "status": "failed",
+    }
+
+    t_start = time.time()
+
+    result["api_calls_made"] = _simulate_azure_attacker_activity(client_id, client_secret)
+    result["first_use_time_s"] = round(time.time() - t_start, 1)
+
+    diff_text = (
+        f"AZURE_CLIENT_ID={client_id}\n"
+        f"AZURE_CLIENT_SECRET={client_secret}\n"
+        f"AZURE_TENANT_ID={os.getenv('AZURE_TENANT_ID', '')}"
+    )
+    resp = requests.post(
+        f"{api_base}/test/simulate",
+        json={"platform": "azure", "diff_text": diff_text, "credential": client_id},
+        timeout=30,
+    )
+    resp.raise_for_status()
+    incident_id = resp.json().get("incident_id")
+    result["detection_time_s"] = round(time.time() - t_start, 1)
+
+    for _ in range(36):  # 36 × 5s = 3 minutes max
+        time.sleep(5)
+        incident = requests.get(f"{api_base}/incidents/{incident_id}", timeout=10).json()
+        if incident.get("status") == "complete":
+            result["report_time_s"] = round(time.time() - t_start, 1)
+            result["events_collected"] = len(incident.get("events", []))
+            result["overall_severity"] = incident.get("overall_severity")
+            result["status"] = "complete"
+            break
+
+    result["ended_at"] = _now_utc().isoformat()
+    return result
 
 
 def build_parser() -> argparse.ArgumentParser:
