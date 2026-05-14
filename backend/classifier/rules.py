@@ -16,6 +16,9 @@ DATA_ACCESS = "data_access"
 DATA_EXFILTRATION = "exfiltration"
 RESOURCE_ABUSE = "resource_abuse"
 PRIVILEGE_ESCALATION = "privilege_escalation"
+FINANCIAL_ABUSE = "financial_abuse"
+COMMUNICATION_ABUSE = "communication_abuse"
+CODE_COMPROMISE = "code_compromise"
 
 BULK_THRESHOLD = 5  # same api_action + same IP >= 5 times -> escalate to exfiltration
 

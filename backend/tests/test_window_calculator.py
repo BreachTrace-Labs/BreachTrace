@@ -204,8 +204,8 @@ class TestMonitorExposureWindow:
     async def test_monitor_cancel(self):
         mock_db = MagicMock()
 
-        with patch("backend.window.calculator.is_key_revoked", return_value=False), \
-             patch("backend.window.calculator.asyncio.sleep", return_value=None):
+        with patch("window.calculator.is_key_revoked", return_value=False), \
+             patch("window.calculator.asyncio.sleep", return_value=None):
 
             task = asyncio.create_task(
                 monitor_exposure_window("id", "key", mock_db)

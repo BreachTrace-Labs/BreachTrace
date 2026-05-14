@@ -1,13 +1,40 @@
+# All deps in one file. Consider splitting by platform (aws/gcp/azure)
+# if testing one service without installing all SDKs.
+
+# Web
 fastapi
 uvicorn[standard]
+requests
+
+# Database
 sqlalchemy
 alembic
 asyncpg
-boto3
+psycopg2-binary
+
+# Config
 pydantic
 pydantic-settings
-google-generativeai
-PyGithub
-tenacity
 python-dotenv
-psycopg2-binary
+tenacity
+
+# AI
+google-generativeai
+
+# GitHub
+PyGithub
+
+# AWS
+boto3
+
+# GCP
+google-cloud-storage
+google-auth
+
+# Azure
+azure-identity
+azure-mgmt-resource
+azure-mgmt-storage
+
+# Testing
+pytest  # dev-only

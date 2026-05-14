@@ -6,11 +6,36 @@ interface Props {
   steps: string[]
 }
 
+/* Strips the leading checkbox char that the pipeline includes in the raw text */
+function cleanStep(raw: string): string {
+  return raw
+    .replace(/^[☐☑]\s*/, '')  // remove ☐ / ☑ prefix
+    .trim()
+}
+
+/* Renders inline **bold** and *emphasis* (Gemini uses both) */
+function renderInline(text: string): React.ReactNode {
+  const parts = text.split(/(\*\*[^*]+\*\*|\*[^*\n]+\*)/g)
+  return (
+    <>
+      {parts.map((part, i) => {
+        if (part.startsWith('**') && part.endsWith('**') && part.length > 4) {
+          return <strong key={i} className="font-semibold">{part.slice(2, -2)}</strong>
+        }
+        if (part.startsWith('*') && part.endsWith('*') && part.length > 2) {
+          return <strong key={i} className="font-semibold">{part.slice(1, -1)}</strong>
+        }
+        return part || null
+      })}
+    </>
+  )
+}
+
 const RemediationChecklist: React.FC<Props> = ({ steps }) => {
   const [checked, setChecked] = useState<Set<number>>(new Set())
 
   const toggle = (i: number) =>
-    setChecked((prev) => {
+    setChecked(prev => {
       const next = new Set(prev)
       next.has(i) ? next.delete(i) : next.add(i)
       return next
@@ -39,41 +64,53 @@ const RemediationChecklist: React.FC<Props> = ({ steps }) => {
             Awaiting report generation
           </p>
         ) : (
-          <ul className="space-y-2">
-            {steps.map((step, i) => (
-              <li
-                key={i}
-                className="flex items-start gap-3 cursor-pointer group"
-                onClick={() => toggle(i)}
+          <>
+            {/* Progress bar */}
+            {steps.length > 1 && (
+              <div
+                className="h-1 rounded-full overflow-hidden mb-4"
+                style={{ backgroundColor: 'var(--color-muted)' }}
               >
-                <span
-                  className="mt-0.5 shrink-0 transition-colors"
+                <div
+                  className="h-full rounded-full transition-all duration-300"
                   style={{
-                    color: checked.has(i)
-                      ? 'var(--color-sev-low)'
-                      : 'var(--color-muted-foreground)',
+                    width: `${(doneCount / steps.length) * 100}%`,
+                    backgroundColor: 'var(--color-sev-low)',
                   }}
-                >
-                  {checked.has(i) ? (
-                    <CheckSquare size={15} strokeWidth={2} />
-                  ) : (
-                    <Square size={15} strokeWidth={2} />
-                  )}
-                </span>
-                <span
-                  className="text-sm leading-snug transition-colors"
-                  style={{
-                    color: checked.has(i)
-                      ? 'var(--color-muted-foreground)'
-                      : 'var(--color-foreground)',
-                    textDecoration: checked.has(i) ? 'line-through' : 'none',
-                  }}
-                >
-                  {step}
-                </span>
-              </li>
-            ))}
-          </ul>
+                />
+              </div>
+            )}
+
+            <ul className="space-y-2.5">
+              {steps.map((raw, i) => {
+                const text = cleanStep(raw)
+                const done = checked.has(i)
+                return (
+                  <li
+                    key={i}
+                    className="flex items-start gap-3 cursor-pointer"
+                    onClick={() => toggle(i)}
+                  >
+                    <span
+                      className="mt-0.5 shrink-0 transition-colors"
+                      style={{ color: done ? 'var(--color-sev-low)' : 'var(--color-muted-foreground)' }}
+                    >
+                      {done ? <CheckSquare size={15} strokeWidth={2} /> : <Square size={15} strokeWidth={2} />}
+                    </span>
+                    <span
+                      className="text-sm leading-snug transition-colors"
+                      style={{
+                        color: done ? 'var(--color-muted-foreground)' : 'var(--color-foreground)',
+                        textDecoration: done ? 'line-through' : 'none',
+                      }}
+                    >
+                      {renderInline(text)}
+                    </span>
+                  </li>
+                )
+              })}
+            </ul>
+          </>
         )}
       </CardContent>
     </Card>

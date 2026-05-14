@@ -78,6 +78,32 @@ def set_exposure_end(db: Session, incident_id: str, end_time: datetime) -> None:
         db.commit()
 
 
+def reset_incident_for_refresh(db: Session, incident_id: str) -> IncidentRecord | None:
+    """
+    Clear derived forensic output before a manual CloudTrail refresh.
+
+    CloudTrail can deliver events several minutes late, so a manual rerun should
+    replace stale event/report data instead of appending duplicate events.
+    """
+    incident = db.get(IncidentRecord, incident_id)
+    if incident is None:
+        return None
+
+    db.query(ORMForensicEvent).filter(
+        ORMForensicEvent.incident_id == incident_id
+    ).delete(synchronize_session=False)
+
+    incident.status = "collecting"
+    incident.overall_severity = None
+    incident.report_text = None
+    incident.remediation_steps = []
+    incident.gdpr_flag = False
+    incident.financial_impact = None
+    db.commit()
+    db.refresh(incident)
+    return incident
+
+
 # ---------------------------------------------------------------------------
 # ForensicEvent helpers
 # ---------------------------------------------------------------------------
