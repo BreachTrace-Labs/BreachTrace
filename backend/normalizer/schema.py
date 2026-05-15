@@ -20,6 +20,8 @@ class ForensicEvent(BaseModel):
     success: bool = True
     error_code: Optional[str] = None
     raw_data: dict = Field(default_factory=dict)
+    principal_id: Optional[str] = None
+    location: Optional[str] = None
     # Filled by classifier
     impact_category: Optional[str] = None
     severity_weight: Optional[int] = None  # 1=Low 2=Medium 3=High 4=Critical
@@ -27,9 +29,13 @@ class ForensicEvent(BaseModel):
 
 class IncidentRecord(BaseModel):
     incident_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    platform: str = "aws"
     credential_type: str = "aws_access_key"
     credential_hint: str                         # e.g. 'AKIA****WXYZ'
     access_key_id: str                           # Full AKIA... key ID (NOT the secret)
+    gcp_project_id: Optional[str] = None
+    azure_tenant_id: Optional[str] = None
+    azure_subscription_id: Optional[str] = None
     repo_url: str
     commit_hash: str
     exposure_start: datetime

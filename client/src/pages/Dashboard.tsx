@@ -9,7 +9,7 @@ import {
   Scale,
 } from 'lucide-react'
 import client from '@/api/client'
-import type { IncidentRecord } from '@/types'
+import type { IncidentSummary } from '@/types'
 import SeverityBadge from '@/components/SeverityBadge'
 import {
   Table,
@@ -24,7 +24,9 @@ import { Button } from '@/components/ui/button'
 /* ─── helpers ─────────────────────────────────────────────────── */
 
 function fmtTime(ts: string) {
-  return new Date(ts).toLocaleString('en-US', {
+  const date = new Date(ts)
+  if (Number.isNaN(date.getTime())) return '--'
+  return date.toLocaleString('en-US', {
     month: 'short',
     day: 'numeric',
     hour: '2-digit',
@@ -37,6 +39,7 @@ function fmtTime(ts: string) {
 function duration(start: string, end: string | null, now: number) {
   const s = new Date(start).getTime()
   const e = end ? new Date(end).getTime() : now
+  if (Number.isNaN(s) || Number.isNaN(e)) return '--'
   const diff = Math.floor((e - s) / 1000)
   const m = Math.floor(diff / 60)
   const sec = diff % 60
@@ -66,14 +69,24 @@ const SEV_ROW_BORDER: Record<string, string> = {
   LOW:      'var(--color-sev-low)',
 }
 
-function StatusPill({ status }: { status: IncidentRecord['status'] }) {
+const STATUS_LABELS: Record<string, string> = {
+  detecting:   'Detecting',
+  collecting:  'Collecting',
+  classifying: 'Classifying',
+  scoring:     'Scoring',
+  reporting:   'Reporting',
+  complete:    'Complete',
+  error:        'Needs Attention',
+}
+
+function StatusPill({ status }: { status: IncidentSummary['status'] }) {
   return (
     <span className="inline-flex items-center gap-1.5 text-xs font-medium capitalize">
       <span
         className="w-1.5 h-1.5 rounded-full inline-block"
         style={{ backgroundColor: STATUS_DOT[status] ?? 'var(--color-muted-foreground)' }}
       />
-      {status}
+      {STATUS_LABELS[status] ?? status}
     </span>
   )
 }
@@ -130,7 +143,7 @@ function StatCard({
 
 /* ─── severity distribution chart ─────────────────────────────── */
 
-function SeverityChart({ incidents }: { incidents: IncidentRecord[] }) {
+function SeverityChart({ incidents }: { incidents: IncidentSummary[] }) {
   const sevs = ['CRITICAL', 'HIGH', 'MEDIUM', 'LOW'] as const
   const counts = sevs.map(s => ({
     sev: s,
@@ -175,7 +188,7 @@ function SeverityChart({ incidents }: { incidents: IncidentRecord[] }) {
 
 /* ─── credential type chart ────────────────────────────────────── */
 
-function CredentialChart({ incidents }: { incidents: IncidentRecord[] }) {
+function CredentialChart({ incidents }: { incidents: IncidentSummary[] }) {
   const counts = incidents.reduce<Record<string, number>>((acc, i) => {
     const t = i.credential_type || 'Unknown'
     acc[t] = (acc[t] ?? 0) + 1
@@ -226,7 +239,7 @@ function CredentialChart({ incidents }: { incidents: IncidentRecord[] }) {
 
 /* ─── pipeline status distribution ─────────────────────────────── */
 
-function StatusBreakdown({ incidents }: { incidents: IncidentRecord[] }) {
+function StatusBreakdown({ incidents }: { incidents: IncidentSummary[] }) {
   const statuses = ['detecting', 'collecting', 'classifying', 'scoring', 'reporting', 'complete'] as const
   const counts = statuses.map(s => ({
     status: s,
@@ -288,9 +301,10 @@ function StatusBreakdown({ incidents }: { incidents: IncidentRecord[] }) {
 /* ─── component ────────────────────────────────────────────────── */
 
 const Dashboard: React.FC = () => {
-  const [incidents, setIncidents] = useState<IncidentRecord[]>([])
+  const [incidents, setIncidents] = useState<IncidentSummary[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [filterPlatform, setFilterPlatform] = useState<string>('All')
   const [now, setNow] = useState(Date.now())
   const tickerRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const navigate = useNavigate()
@@ -306,7 +320,7 @@ const Dashboard: React.FC = () => {
     setLoading(true)
     setError(null)
     try {
-      const { data } = await client.get<IncidentRecord[]>('/incidents')
+      const { data } = await client.get<IncidentSummary[]>('/incidents')
       setIncidents(data)
     } catch {
       setError('Could not reach the backend. Make sure the API is running.')
@@ -320,7 +334,7 @@ const Dashboard: React.FC = () => {
   useEffect(() => {
     const poll = setInterval(() => {
       client
-        .get<IncidentRecord[]>('/incidents')
+        .get<IncidentSummary[]>('/incidents')
         .then(({ data }) => setIncidents(data))
         .catch(() => {})
     }, 3000)
@@ -331,6 +345,10 @@ const Dashboard: React.FC = () => {
   const active          = incidents.filter(i => i.status !== 'complete').length
   const credTypes       = [...new Set(incidents.map(i => i.credential_type))].length
   const complianceFlags = incidents.filter(i => i.gdpr_flag).length
+
+  const filteredIncidents = filterPlatform === 'All' 
+    ? incidents 
+    : incidents.filter(i => i.platform === filterPlatform)
 
   return (
     <div className="space-y-8">
@@ -361,7 +379,7 @@ const Dashboard: React.FC = () => {
       >
         <StatCard
           label="Total Incidents"
-          value={loading ? '—' : incidents.length}
+          value={loading ? '—' : filteredIncidents.length}
           icon={<Activity size={14} strokeWidth={2} />}
           sub={loading ? undefined : `${active} active`}
         />
@@ -440,10 +458,21 @@ const Dashboard: React.FC = () => {
                 className="ml-2 text-xs font-mono px-1.5 py-0.5 rounded"
                 style={{ backgroundColor: 'var(--color-muted)', color: 'var(--color-muted-foreground)' }}
               >
-                {incidents.length}
+                {filteredIncidents.length}
               </span>
             )}
           </h2>
+          <div className="flex bg-[var(--color-muted)] p-1 rounded-md">
+            {['All', 'AWS', 'GCP', 'Azure'].map(platform => (
+              <button
+                key={platform}
+                onClick={() => setFilterPlatform(platform)}
+                className={`px-3 py-1 text-xs font-medium rounded-sm transition-colors ${filterPlatform === platform ? 'bg-[var(--color-background)] shadow-sm' : 'text-[var(--color-muted-foreground)] hover:text-[var(--color-foreground)]'}`}
+              >
+                {platform}
+              </button>
+            ))}
+          </div>
         </div>
 
         {error ? (
@@ -481,6 +510,14 @@ const Dashboard: React.FC = () => {
             <p className="mt-1 text-sm" style={{ color: 'var(--color-muted-foreground)' }}>
               Connect your GitHub repository to begin monitoring.
             </p>
+            <Button
+              variant="outline"
+              size="sm"
+              className="mt-4"
+              onClick={() => navigate('/connect')}
+            >
+              Connect Repository
+            </Button>
           </div>
         ) : (
           <div className="border" style={{ borderColor: 'var(--color-border)' }}>
@@ -497,7 +534,7 @@ const Dashboard: React.FC = () => {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {incidents.map((inc) => {
+                {filteredIncidents.map((inc) => {
                   const sevBorder = inc.overall_severity
                     ? SEV_ROW_BORDER[inc.overall_severity]
                     : 'transparent'

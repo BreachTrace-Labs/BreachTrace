@@ -36,6 +36,9 @@
   --color-sev-high-bg: #fff7ed;
   --color-sev-critical: #dc2626;
   --color-sev-critical-bg: #fef2f2;
+  --color-sev-orange: #f97316;
+  --color-sev-blue: #3b82f6;
+  --color-sev-teal: #14b8a6;
 
   /* Status colours */
   --color-status-detecting: #6366f1;
@@ -86,6 +89,9 @@
     --color-sev-high-bg: #1c0900;
     --color-sev-critical: #f87171;
     --color-sev-critical-bg: #1c0202;
+    --color-sev-orange: #ea580c;
+    --color-sev-blue: #2563eb;
+    --color-sev-teal: #0d9488;
   }
 
   * {
