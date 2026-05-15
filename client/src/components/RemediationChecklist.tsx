@@ -9,7 +9,7 @@ interface Props {
 /* Strips the leading checkbox char that the pipeline includes in the raw text */
 function cleanStep(raw: string): string {
   return raw
-    .replace(/^[☐☑]\s*/, '')  // remove ☐ / ☑ prefix
+    .replace(/^(?:\d+\.|\[\s*\]|[-*☐☑])\s*/, '')  // remove 1., [ ], -, *, ☐ / ☑ prefix
     .trim()
 }
 

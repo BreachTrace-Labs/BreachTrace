@@ -348,7 +348,7 @@ const Dashboard: React.FC = () => {
 
   const filteredIncidents = filterPlatform === 'All' 
     ? incidents 
-    : incidents.filter(i => i.platform === filterPlatform)
+    : incidents.filter(i => i.platform?.toLowerCase() === filterPlatform.toLowerCase())
 
   return (
     <div className="space-y-8">
