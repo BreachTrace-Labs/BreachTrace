@@ -30,7 +30,9 @@ import { Button } from '@/components/ui/button'
 /* ─── helpers ─────────────────────────────────────────────────── */
 
 function fmtTime(ts: string) {
-  return new Date(ts).toLocaleString('en-US', {
+  const date = new Date(ts)
+  if (Number.isNaN(date.getTime())) return '--'
+  return date.toLocaleString('en-US', {
     year: 'numeric',
     month: 'short',
     day: 'numeric',
@@ -43,7 +45,10 @@ function fmtTime(ts: string) {
 }
 
 function duration(start: string, end: string | null) {
-  const diff = Math.floor(((end ? new Date(end).getTime() : Date.now()) - new Date(start).getTime()) / 1000)
+  const startMs = new Date(start).getTime()
+  const endMs = end ? new Date(end).getTime() : Date.now()
+  if (Number.isNaN(startMs) || Number.isNaN(endMs)) return '--'
+  const diff = Math.floor((endMs - startMs) / 1000)
   const h = Math.floor(diff / 3600)
   const m = Math.floor((diff % 3600) / 60)
   const s = diff % 60
@@ -439,7 +444,7 @@ const IncidentDetail: React.FC = () => {
                   {incident.exposure_end ? fmtTime(incident.exposure_end) : <span className="font-semibold text-red-500 animate-pulse">Still Exposed</span>}
                 </SummaryTile>
                 <SummaryTile icon={GitCommitHorizontal} label="Commit">
-                  <span className="font-mono">{incident.commit_hash.slice(0, 7)}</span>
+                  <span className="font-mono">{incident.commit_hash ? incident.commit_hash.slice(0, 7) : '—'}</span>
                 </SummaryTile>
                 <SummaryTile icon={KeyRound} label="Credential Type">
                   <span className="break-words">{incident.credential_type}</span>

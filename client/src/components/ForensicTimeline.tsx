@@ -180,15 +180,21 @@ const ForensicTimeline: React.FC<Props> = ({ events }) => {
 
     const tooltip = d3.select(tooltipRef.current)
 
-    /* Event circles */
-    g.selectAll('circle')
+    const getSymbol = (platform?: string) => {
+      const p = platform?.toLowerCase()
+      if (p === 'gcp') return d3.symbolSquare
+      if (p === 'azure') return d3.symbolDiamond
+      return d3.symbolCircle
+    }
+
+    g.selectAll('path.event-node')
       .data(data)
       .enter()
-      .append('circle')
-      .attr('cx', d => x(d.ts))
-      .attr('cy', d => (y(d.source) ?? 0) + y.bandwidth() / 2)
-      .attr('r', 6)
-      .attr('fill', d => SEV_COLOR[d.severity_weight || 1] ?? 'var(--color-muted-foreground)')
+      .append('path')
+      .attr('class', 'event-node')
+      .attr('d', (d) => d3.symbol().type(getSymbol(d.platform)).size(120)())
+      .attr('transform', (d) => `translate(${x(d.ts)}, ${(y(d.source) ?? 0) + y.bandwidth() / 2})`)
+      .attr('fill', (d) => SEV_COLOR[d.severity_weight || 1] || 'var(--color-muted-foreground)')
       .attr('stroke', 'var(--color-background)')
       .attr('stroke-width', 1.5)
       .style('cursor', 'pointer')
@@ -223,11 +229,11 @@ const ForensicTimeline: React.FC<Props> = ({ events }) => {
         l4.textContent = `Mapped to ${d.impact_category ?? 'unclassified'} because action = ${d.api_action}`
 
         node.append(b, l2, l3, l4)
-        tooltip.style('opacity', 1)
-
-        d3.select(this)
-          .attr('r', 8)
-          .attr('stroke-width', 2)
+        const [mx, my] = d3.pointer(event, wrapperRef.current)
+        tooltip
+          .style('opacity', 1)
+          .style('left', `${mx + 12}px`)
+          .style('top', `${my - 10}px`)
       })
       .on('mousemove', function(event) {
         const [mx, my] = d3.pointer(event, wrapperRef.current)

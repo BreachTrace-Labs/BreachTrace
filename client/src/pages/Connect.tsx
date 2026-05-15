@@ -100,7 +100,7 @@ function Section({
 /* ─── main component ─────────────────────────────────────────────────── */
 
 const Connect: React.FC = () => {
-  const [webhookInfo, setWebhookInfo] = useState<WebhookInfo | null>(null)
+  const [, setWebhookInfo] = useState<WebhookInfo | null>(null)
   const [infoError, setInfoError] = useState(false)
 
   const [repoUrl, setRepoUrl] = useState('')

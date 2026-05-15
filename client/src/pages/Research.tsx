@@ -8,13 +8,13 @@ import { Separator } from '@/components/ui/separator'
 
 interface ExperimentRun {
   run_id: string
-  access_key_id: string
+  access_key_id: string | null
   detection_time_s: number | null
   report_time_s: number | null
   api_calls: string[]
-  expected_severity: string
+  expected_severity: string | null
   actual_severity: string | null
-  status: string
+  status: string | null
   created_at: string
 }
 
@@ -25,6 +25,12 @@ interface ResearchStats {
   severity_distribution: Record<string, number>
   detection_target_s: number
   report_target_s: number
+  precision?: number
+  recall?: number
+  f1?: number
+  public_dataset_runs?: number
+  public_dataset_avg_detection_time_s?: number
+  public_dataset_avg_report_time_s?: number
 }
 
 /* ─── track badge ──────────────────────────────────────────────── */
@@ -172,12 +178,15 @@ const Research: React.FC = () => {
 
           <Separator className="my-5" />
 
-          <div className="grid grid-cols-3 gap-px border" style={{ backgroundColor: 'var(--color-border)' }}>
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-px border" style={{ backgroundColor: 'var(--color-border)' }}>
             {[
-              { label: 'Precision', key: 'precision', target: '> 95%' },
-              { label: 'Recall', key: 'recall', target: '> 90%' },
-              { label: 'F1 Score', key: 'f1', target: '> 92%' },
-            ].map(({ label, target }) => (
+              { label: 'Total Runs', key: 'public_dataset_runs', target: '200', unit: '' },
+              { label: 'Avg Detection', key: 'public_dataset_avg_detection_time_s', target: '< 30s', unit: 's' },
+              { label: 'Avg Report', key: 'public_dataset_avg_report_time_s', target: '< 60s', unit: 's' },
+              { label: 'Precision', key: 'precision', target: '> 95%', unit: '%' },
+              { label: 'Recall', key: 'recall', target: '> 90%', unit: '%' },
+              { label: 'F1 Score', key: 'f1', target: '> 92%', unit: '%' },
+            ].map(({ label, target, key, unit }) => (
               <div
                 key={label}
                 className="p-5"
@@ -189,7 +198,11 @@ const Research: React.FC = () => {
                 >
                   {label}
                 </span>
-                <span className="text-2xl font-bold font-mono">—</span>
+                <span className="text-2xl font-bold font-mono">
+                  {stats && stats[key as keyof ResearchStats] !== undefined
+                    ? `${stats[key as keyof ResearchStats]}${unit}`
+                    : '—'}
+                </span>
                 <span
                   className="text-xs block mt-1"
                   style={{ color: 'var(--color-muted-foreground)' }}
@@ -360,16 +373,18 @@ const Research: React.FC = () => {
                         style={{ borderBottom: i < runs.length - 1 ? `1px solid var(--color-border)` : 'none' }}
                       >
                         <td className="px-4 py-2.5 font-mono text-xs">{i + 1}</td>
-                        <td className="px-4 py-2.5 font-mono text-xs">{run.access_key_id.slice(0, 16)}…</td>
+                        <td className="px-4 py-2.5 font-mono text-xs">
+                          {run.access_key_id ? `${run.access_key_id.slice(0, 16)}…` : '—'}
+                        </td>
                         <td className="px-4 py-2.5 font-mono text-xs">
                           {run.detection_time_s !== null ? `${run.detection_time_s.toFixed(1)}s` : '—'}
                         </td>
                         <td className="px-4 py-2.5 font-mono text-xs">
                           {run.report_time_s !== null ? `${run.report_time_s.toFixed(1)}s` : '—'}
                         </td>
-                        <td className="px-4 py-2.5 text-xs">{run.expected_severity}</td>
+                        <td className="px-4 py-2.5 text-xs">{run.expected_severity ?? '—'}</td>
                         <td className="px-4 py-2.5 text-xs">{run.actual_severity ?? '—'}</td>
-                        <td className="px-4 py-2.5 text-xs capitalize">{run.status}</td>
+                        <td className="px-4 py-2.5 text-xs capitalize">{run.status ?? '—'}</td>
                       </tr>
                     ))}
                   </tbody>
