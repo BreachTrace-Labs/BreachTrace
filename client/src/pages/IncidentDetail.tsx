@@ -23,6 +23,7 @@ import ForensicTimeline from '@/components/ForensicTimeline'
 import BlastRadiusSummary from '@/components/BlastRadiusSummary'
 import AffectedResources from '@/components/AffectedResources'
 import SourceIPs from '@/components/SourceIPs'
+import ReactMarkdown from 'react-markdown'
 import RemediationChecklist from '@/components/RemediationChecklist'
 import EventAnalytics from '@/components/EventAnalytics'
 import { Button } from '@/components/ui/button'
@@ -30,7 +31,9 @@ import { Button } from '@/components/ui/button'
 /* ─── helpers ─────────────────────────────────────────────────── */
 
 function fmtTime(ts: string) {
-  return new Date(ts).toLocaleString('en-US', {
+  const date = new Date(ts)
+  if (Number.isNaN(date.getTime())) return '--'
+  return date.toLocaleString('en-US', {
     year: 'numeric',
     month: 'short',
     day: 'numeric',
@@ -43,7 +46,10 @@ function fmtTime(ts: string) {
 }
 
 function duration(start: string, end: string | null) {
-  const diff = Math.floor(((end ? new Date(end).getTime() : Date.now()) - new Date(start).getTime()) / 1000)
+  const startMs = new Date(start).getTime()
+  const endMs = end ? new Date(end).getTime() : Date.now()
+  if (Number.isNaN(startMs) || Number.isNaN(endMs)) return '--'
+  const diff = Math.floor((endMs - startMs) / 1000)
   const h = Math.floor(diff / 3600)
   const m = Math.floor((diff % 3600) / 60)
   const s = diff % 60
@@ -52,136 +58,12 @@ function duration(start: string, end: string | null) {
 
 /* ─── markdown renderer ────────────────────────────────────────── */
 
-function renderInline(text: string): React.ReactNode {
-  // Split on **bold** then *em* patterns
-  const parts = text.split(/(\*\*[^*]+\*\*|\*[^*\n]+\*)/g)
-  return (
-    <>
-      {parts.map((part, i) => {
-        if (part.startsWith('**') && part.endsWith('**') && part.length > 4) {
-          return <strong key={i} className="font-semibold">{part.slice(2, -2)}</strong>
-        }
-        if (part.startsWith('*') && part.endsWith('*') && part.length > 2 && !part.startsWith('**')) {
-          // Gemini uses single * for emphasis, treat as bold
-          return <strong key={i} className="font-semibold">{part.slice(1, -1)}</strong>
-        }
-        return part || null
-      })}
-    </>
-  )
-}
-
 function MarkdownReport({ text }: { text: string }) {
-  const lines = text.split('\n')
-  const nodes: React.ReactNode[] = []
-  let para: string[] = []
-  let key = 0
-
-  const flushPara = () => {
-    if (para.length === 0) return
-    nodes.push(
-      <p key={key++} className="text-sm leading-relaxed" style={{ color: 'var(--color-foreground)' }}>
-        {renderInline(para.join(' '))}
-      </p>
-    )
-    para = []
-  }
-
-  for (const raw of lines) {
-    const line = raw.trim()
-
-    if (!line) {
-      flushPara()
-      continue
-    }
-
-    // Headings
-    if (/^#{1,2} /.test(line)) {
-      flushPara()
-      const text = line.replace(/^#{1,2} /, '')
-      nodes.push(
-        <p
-          key={key++}
-          className="text-[11px] font-bold uppercase tracking-widest mt-5 mb-1.5"
-          style={{ color: 'var(--color-muted-foreground)' }}
-        >
-          {text}
-        </p>
-      )
-      continue
-    }
-
-    if (/^### /.test(line)) {
-      flushPara()
-      nodes.push(
-        <p key={key++} className="text-sm font-semibold mt-3 mb-1" style={{ color: 'var(--color-foreground)' }}>
-          {renderInline(line.slice(4))}
-        </p>
-      )
-      continue
-    }
-
-    // Checklist items (☐ or ☑)
-    if (/^[☐☑] /.test(line)) {
-      flushPara()
-      const checked = line.startsWith('☑')
-      nodes.push(
-        <div key={key++} className="flex items-start gap-2 text-sm my-0.5">
-          <span
-            className="shrink-0 mt-0.5 text-base leading-tight"
-            style={{ color: checked ? 'var(--color-sev-low)' : 'var(--color-muted-foreground)' }}
-          >
-            {checked ? '☑' : '☐'}
-          </span>
-          <span style={{ color: 'var(--color-foreground)' }}>{renderInline(line.slice(2))}</span>
-        </div>
-      )
-      continue
-    }
-
-    // Bullet list items
-    if (/^[-•] /.test(line) || /^\* [^*]/.test(line)) {
-      flushPara()
-      const content = line.replace(/^[-•*] /, '')
-      nodes.push(
-        <div key={key++} className="flex items-start gap-2.5 text-sm my-0.5">
-          <span
-            className="shrink-0 mt-2 w-1 h-1 rounded-full"
-            style={{ backgroundColor: 'var(--color-muted-foreground)', opacity: 0.6 }}
-          />
-          <span style={{ color: 'var(--color-foreground)' }}>{renderInline(content)}</span>
-        </div>
-      )
-      continue
-    }
-
-    // Numbered list items
-    if (/^\d+[.)]\s/.test(line)) {
-      flushPara()
-      const match = line.match(/^(\d+[.)]\s*)(.*)$/)
-      const num = match?.[1] ?? ''
-      const content = match?.[2] ?? line
-      nodes.push(
-        <div key={key++} className="flex items-start gap-2 text-sm my-0.5">
-          <span
-            className="shrink-0 font-mono text-[11px] mt-0.5 w-5 text-right"
-            style={{ color: 'var(--color-muted-foreground)' }}
-          >
-            {num.trim()}
-          </span>
-          <span style={{ color: 'var(--color-foreground)' }}>{renderInline(content)}</span>
-        </div>
-      )
-      continue
-    }
-
-    // Regular paragraph text
-    para.push(line)
-  }
-
-  flushPara()
-
-  return <div className="space-y-2">{nodes}</div>
+  return (
+    <div className="space-y-2">
+      <ReactMarkdown>{text}</ReactMarkdown>
+    </div>
+  )
 }
 
 /* ─── incident summary helpers ─────────────────────────────────── */
@@ -439,7 +321,7 @@ const IncidentDetail: React.FC = () => {
                   {incident.exposure_end ? fmtTime(incident.exposure_end) : <span className="font-semibold text-red-500 animate-pulse">Still Exposed</span>}
                 </SummaryTile>
                 <SummaryTile icon={GitCommitHorizontal} label="Commit">
-                  <span className="font-mono">{incident.commit_hash.slice(0, 7)}</span>
+                  <span className="font-mono">{incident.commit_hash ? incident.commit_hash.slice(0, 7) : '—'}</span>
                 </SummaryTile>
                 <SummaryTile icon={KeyRound} label="Credential Type">
                   <span className="break-words">{incident.credential_type}</span>

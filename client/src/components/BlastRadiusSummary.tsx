@@ -76,9 +76,15 @@ const BlastRadiusSummary: React.FC<Props> = ({ incident }) => {
             >
               <span
                 className="font-semibold uppercase tracking-wider"
-                style={{ color: 'var(--color-muted-foreground)' }}
+                style={{ 
+                  color: incident.platform?.toLowerCase() === 'gcp' ? 'var(--color-sev-blue)' : 
+                         incident.platform?.toLowerCase() === 'azure' ? 'var(--color-sev-teal)' : 
+                         'var(--color-sev-orange)' 
+                }}
               >
-                AWS CloudTrail
+                {incident.platform?.toLowerCase() === 'gcp' ? 'GCP Cloud Audit Logs' : 
+                 incident.platform?.toLowerCase() === 'azure' ? 'Azure Activity Log' : 
+                 'AWS CloudTrail'}
               </span>
               <span className="font-mono font-semibold">{total} events</span>
             </div>

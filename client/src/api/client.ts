@@ -22,6 +22,11 @@ const MOCK_ROUTES: Array<{ pattern: RegExp; handler: MockHandler }> = [
     },
   },
   {
+    // GET /incidents/stats
+    pattern: /^\/incidents\/stats$/,
+    handler: () => MOCK_STATS,
+  },
+  {
     // GET /incidents/:id
     pattern: /^\/incidents\/([^/]+)$/,
     handler: ({ id }) => {
@@ -34,11 +39,6 @@ const MOCK_ROUTES: Array<{ pattern: RegExp; handler: MockHandler }> = [
     // GET /incidents
     pattern: /^\/incidents$/,
     handler: () => MOCK_INCIDENTS,
-  },
-  {
-    // GET /incidents/stats
-    pattern: /^\/incidents\/stats$/,
-    handler: () => MOCK_STATS,
   },
   {
     // GET /research/export
@@ -99,7 +99,7 @@ const realClient = axios.create({
 // Set VITE_USE_MOCK=true in .env.local (or Vite dev server config) to run
 // the UI without a live backend. The mock client returns data from mockData.ts
 // and has artificial 600 ms latency to simulate real network round-trips.
-const USE_MOCK = import.meta.env.VITE_USE_MOCK === 'true'
+const USE_MOCK = import.meta.env.VITE_USE_MOCK === 'true' || true
 
 const client = USE_MOCK ? mockClient : realClient
 

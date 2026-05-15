@@ -15,7 +15,7 @@ const INC1_EVENTS: ForensicEvent[] = [
     resource_type: null,
     success: true,
     error_code: null,
-    raw_data: {},
+    raw_data: {}, principal_id: null, location: null,
     impact_category: 'reconnaissance',
     severity_weight: 1,
   },
@@ -31,7 +31,7 @@ const INC1_EVENTS: ForensicEvent[] = [
     resource_type: 'bucket',
     success: true,
     error_code: null,
-    raw_data: {},
+    raw_data: {}, principal_id: null, location: null,
     impact_category: 'reconnaissance',
     severity_weight: 1,
   },
@@ -47,7 +47,7 @@ const INC1_EVENTS: ForensicEvent[] = [
     resource_type: 'bucket',
     success: true,
     error_code: null,
-    raw_data: {},
+    raw_data: {}, principal_id: null, location: null,
     impact_category: 'data_access',
     severity_weight: 2,
   },
@@ -63,7 +63,7 @@ const INC1_EVENTS: ForensicEvent[] = [
     resource_type: 'instance',
     success: true,
     error_code: null,
-    raw_data: {},
+    raw_data: {}, principal_id: null, location: null,
     impact_category: 'resource_abuse',
     severity_weight: 3,
   },
@@ -79,7 +79,7 @@ const INC1_EVENTS: ForensicEvent[] = [
     resource_type: 'instance',
     success: true,
     error_code: null,
-    raw_data: {},
+    raw_data: {}, principal_id: null, location: null,
     impact_category: 'resource_abuse',
     severity_weight: 3,
   },
@@ -95,7 +95,7 @@ const INC1_EVENTS: ForensicEvent[] = [
     resource_type: 'key',
     success: true,
     error_code: null,
-    raw_data: {},
+    raw_data: {}, principal_id: null, location: null,
     impact_category: 'privilege_escalation',
     severity_weight: 4,
   },
@@ -116,7 +116,7 @@ const INC2_EVENTS: ForensicEvent[] = [
     resource_type: null,
     success: true,
     error_code: null,
-    raw_data: {},
+    raw_data: {}, principal_id: null, location: null,
     impact_category: 'reconnaissance',
     severity_weight: 1,
   },
@@ -132,7 +132,7 @@ const INC2_EVENTS: ForensicEvent[] = [
     resource_type: 'instance',
     success: true,
     error_code: null,
-    raw_data: {},
+    raw_data: {}, principal_id: null, location: null,
     impact_category: 'reconnaissance',
     severity_weight: 1,
   },
@@ -153,7 +153,7 @@ const INC3_EVENTS: ForensicEvent[] = [
     resource_type: null,
     success: true,
     error_code: null,
-    raw_data: {},
+    raw_data: {}, principal_id: null, location: null,
     impact_category: 'reconnaissance',
     severity_weight: 1,
   },
@@ -169,7 +169,7 @@ const INC3_EVENTS: ForensicEvent[] = [
     resource_type: 'bucket',
     success: true,
     error_code: null,
-    raw_data: {},
+    raw_data: {}, principal_id: null, location: null,
     impact_category: 'exfiltration',
     severity_weight: 4,
   },
@@ -185,7 +185,7 @@ const INC3_EVENTS: ForensicEvent[] = [
     resource_type: 'bucket',
     success: true,
     error_code: null,
-    raw_data: {},
+    raw_data: {}, principal_id: null, location: null,
     impact_category: 'exfiltration',
     severity_weight: 4,
   },
@@ -201,10 +201,84 @@ const INC3_EVENTS: ForensicEvent[] = [
     resource_type: 'key',
     success: true,
     error_code: null,
-    raw_data: {},
+    raw_data: {}, principal_id: null, location: null,
     impact_category: 'privilege_escalation',
     severity_weight: 4,
   },
+]
+
+/* ─── shared events for incident 4 (GCP) ───────────────────────── */
+
+const INC4_EVENTS: ForensicEvent[] = [
+  {
+    event_id: 'ev-301',
+    platform: 'gcp',
+    timestamp: '2026-04-10T11:00:00Z',
+    api_action: 'storage.buckets.list',
+    event_source: 'storage.googleapis.com',
+    source_ip: '34.120.55.101',
+    user_agent: 'google-cloud-sdk/412.0.0',
+    affected_resource: null,
+    resource_type: null,
+    success: true,
+    error_code: null,
+    raw_data: {}, principal_id: 'service-account-key', location: 'us-central1',
+    impact_category: 'reconnaissance',
+    severity_weight: 1,
+  },
+  {
+    event_id: 'ev-302',
+    platform: 'gcp',
+    timestamp: '2026-04-10T11:05:00Z',
+    api_action: 'compute.instances.insert',
+    event_source: 'compute.googleapis.com',
+    source_ip: '34.120.55.101',
+    user_agent: 'google-cloud-sdk/412.0.0',
+    affected_resource: 'crypto-miner-instance',
+    resource_type: 'instance',
+    success: true,
+    error_code: null,
+    raw_data: {}, principal_id: 'service-account-key', location: 'us-central1-a',
+    impact_category: 'resource_abuse',
+    severity_weight: 3,
+  }
+]
+
+/* ─── shared events for incident 5 (Azure) ─────────────────────── */
+
+const INC5_EVENTS: ForensicEvent[] = [
+  {
+    event_id: 'ev-401',
+    platform: 'azure',
+    timestamp: '2026-04-12T15:20:00Z',
+    api_action: 'Microsoft.Storage/storageAccounts/listKeys/action',
+    event_source: 'management.azure.com',
+    source_ip: '52.164.200.12',
+    user_agent: 'AzureCLI/2.45.0',
+    affected_resource: 'prodstorageacc',
+    resource_type: 'storage_account',
+    success: true,
+    error_code: null,
+    raw_data: {}, principal_id: 'compromised-sp-id', location: 'eastus',
+    impact_category: 'privilege_escalation',
+    severity_weight: 4,
+  },
+  {
+    event_id: 'ev-402',
+    platform: 'azure',
+    timestamp: '2026-04-12T15:25:00Z',
+    api_action: 'Microsoft.Compute/virtualMachines/write',
+    event_source: 'management.azure.com',
+    source_ip: '52.164.200.12',
+    user_agent: 'AzureCLI/2.45.0',
+    affected_resource: 'rogue-vm-01',
+    resource_type: 'virtual_machine',
+    success: true,
+    error_code: null,
+    raw_data: {}, principal_id: 'compromised-sp-id', location: 'eastus',
+    impact_category: 'resource_abuse',
+    severity_weight: 3,
+  }
 ]
 
 /* ─── incidents ───────────────────────────────────────────────── */
@@ -214,7 +288,7 @@ export const MOCK_INCIDENTS: IncidentRecord[] = [
     incident_id: 'inc-001',
     credential_type: 'AWS_ACCESS_KEY',
     credential_hint: 'AKIA***XYZ',
-    access_key_id: 'AKIAIOSFODNN7XYZ',
+    access_key_id: '', platform: 'aws', gcp_project_id: null, azure_tenant_id: null, azure_subscription_id: null,
     repo_url: 'https://github.com/dev-team/infrastructure',
     commit_hash: 'a3f8e7d9b2c1045f6e8a9b0c1d2e3f4a5b6c7d8e',
     exposure_start: '2026-03-17T14:23:41Z',
@@ -239,7 +313,7 @@ export const MOCK_INCIDENTS: IncidentRecord[] = [
     incident_id: 'inc-002',
     credential_type: 'AWS_ACCESS_KEY',
     credential_hint: 'AKIA***ABC',
-    access_key_id: 'AKIAIOSFODNN7ABC',
+    access_key_id: '', platform: 'aws', gcp_project_id: null, azure_tenant_id: null, azure_subscription_id: null,
     repo_url: 'https://github.com/yash-dev/ml-project',
     commit_hash: 'b9c3d2e1f0a8b7c6d5e4f3a2b1c0d9e8f7a6b5c4',
     exposure_start: '2026-03-18T09:11:55Z',
@@ -261,7 +335,7 @@ export const MOCK_INCIDENTS: IncidentRecord[] = [
     incident_id: 'inc-003',
     credential_type: 'AWS_ACCESS_KEY',
     credential_hint: 'AKIA***QRS',
-    access_key_id: 'AKIAIOSFODNN7QRS',
+    access_key_id: '', platform: 'aws', gcp_project_id: null, azure_tenant_id: null, azure_subscription_id: null,
     repo_url: 'https://github.com/breachtrace-demo/web-app',
     commit_hash: 'c1d2e3f4a5b6c7d8e9f0a1b2c3d4e5f6a7b8c9d0',
     exposure_start: '2026-03-19T22:00:58Z',
@@ -287,7 +361,7 @@ export const MOCK_INCIDENTS: IncidentRecord[] = [
     incident_id: 'inc-004',
     credential_type: 'AWS_ACCESS_KEY',
     credential_hint: 'AKIA***MNO',
-    access_key_id: 'AKIAIOSFODNN7MNO',
+    access_key_id: '', platform: 'aws', gcp_project_id: null, azure_tenant_id: null, azure_subscription_id: null,
     repo_url: 'https://github.com/shashank-r/backend-api',
     commit_hash: 'd2e3f4a5b6c7d8e9f0a1b2c3d4e5f6a7b8c9d0e1',
     exposure_start: '2026-03-29T07:44:12Z',
@@ -300,19 +374,61 @@ export const MOCK_INCIDENTS: IncidentRecord[] = [
     gdpr_flag: false,
     estimated_financial_impact: null,
   },
+  {
+    incident_id: 'inc-005',
+    credential_type: 'GCP_SERVICE_ACCOUNT',
+    credential_hint: 'gcp-sa-***',
+    access_key_id: null, platform: 'gcp', gcp_project_id: 'my-gcp-project-123', azure_tenant_id: null, azure_subscription_id: null,
+    repo_url: 'https://github.com/dev-team/gcp-infra',
+    commit_hash: 'e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4',
+    exposure_start: '2026-04-10T10:55:00Z',
+    exposure_end: '2026-04-10T11:20:00Z',
+    status: 'complete',
+    events: INC4_EVENTS,
+    overall_severity: 'HIGH',
+    report_text: `A GCP Service Account key was leaked and used to enumerate storage buckets and spin up a compute instance for crypto-mining.\n\nImmediate containment actions required to stop active instance.`,
+    remediation_steps: [
+      'Revoke the leaked GCP Service Account key',
+      'Delete unauthorized compute instances',
+      'Audit GCP Cloud Audit Logs for further unauthorized access'
+    ],
+    gdpr_flag: false,
+    estimated_financial_impact: 'Compute instances: $0.10/hr. Total accruing: ~$0.50+',
+  },
+  {
+    incident_id: 'inc-006',
+    credential_type: 'AZURE_SERVICE_PRINCIPAL',
+    credential_hint: 'az-sp-***',
+    access_key_id: null, platform: 'azure', gcp_project_id: null, azure_tenant_id: 'tenant-1234', azure_subscription_id: 'sub-5678',
+    repo_url: 'https://github.com/dev-team/azure-infra',
+    commit_hash: 'f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5',
+    exposure_start: '2026-04-12T15:10:00Z',
+    exposure_end: '2026-04-12T16:00:00Z',
+    status: 'complete',
+    events: INC5_EVENTS,
+    overall_severity: 'CRITICAL',
+    report_text: `An Azure Service Principal secret was exposed and used to list storage account keys and create unauthorized virtual machines.\n\nAssume full compromise of storage accounts.`,
+    remediation_steps: [
+      'Rotate the Azure Service Principal secret',
+      'Review and delete rogue virtual machines',
+      'Rotate storage account keys that were listed by the attacker'
+    ],
+    gdpr_flag: true,
+    estimated_financial_impact: 'Virtual machines: $0.20/hr. Total accruing: ~$1.00+',
+  },
 ]
 
 /* ─── research experiments ─────────────────────────────────────── */
 
 export interface ExperimentRun {
   run_id: string
-  access_key_id: string
+  access_key_id: string | null
   detection_time_s: number | null
   report_time_s: number | null
   api_calls: string[]
-  expected_severity: string
+  expected_severity: string | null
   actual_severity: string | null
-  status: string
+  status: string | null
   created_at: string
 }
 
@@ -328,6 +444,50 @@ function makeRun(
   return {
     run_id: `run-${String(i).padStart(3, '0')}`,
     access_key_id: `AKIA${key}`,
+    detection_time_s: detMs,
+    report_time_s: repMs,
+    api_calls: calls,
+    expected_severity: expSev,
+    actual_severity: actSev,
+    status: 'complete',
+    created_at: `2026-03-29T${String(8 + Math.floor(i / 4)).padStart(2, '0')}:${String((i * 7) % 60).padStart(2, '0')}:00Z`,
+  }
+}
+
+function makeGcpRun(
+  i: number,
+  key: string,
+  detMs: number,
+  repMs: number,
+  calls: string[],
+  expSev: string,
+  actSev: string
+): ExperimentRun {
+  return {
+    run_id: `run-${String(i).padStart(3, '0')}`,
+    access_key_id: `gcp-sa-${key}`,
+    detection_time_s: detMs,
+    report_time_s: repMs,
+    api_calls: calls,
+    expected_severity: expSev,
+    actual_severity: actSev,
+    status: 'complete',
+    created_at: `2026-03-29T${String(8 + Math.floor(i / 4)).padStart(2, '0')}:${String((i * 7) % 60).padStart(2, '0')}:00Z`,
+  }
+}
+
+function makeAzureRun(
+  i: number,
+  key: string,
+  detMs: number,
+  repMs: number,
+  calls: string[],
+  expSev: string,
+  actSev: string
+): ExperimentRun {
+  return {
+    run_id: `run-${String(i).padStart(3, '0')}`,
+    access_key_id: `az-sp-${key}`,
     detection_time_s: detMs,
     report_time_s: repMs,
     api_calls: calls,
@@ -379,6 +539,20 @@ export const MOCK_EXPERIMENT_RUNS: ExperimentRun[] = [
   makeRun(33, 'IOSFODNN7C008', 11.3, 25.2, ['GetCallerIdentity'], 'LOW', 'LOW'),
   makeRun(34, 'IOSFODNN7C009', 9.1, 22.8, ['GetCallerIdentity'], 'LOW', 'LOW'),
   makeRun(35, 'IOSFODNN7C010', 10.5, 23.6, ['GetCallerIdentity'], 'LOW', 'LOW'),
+
+  // Group D — GCP storage.buckets.list + compute.instances.insert → HIGH
+  makeGcpRun(36, 'GCP001', 14.2, 38.6, ['storage.buckets.list', 'compute.instances.insert'], 'HIGH', 'HIGH'),
+  makeGcpRun(37, 'GCP002', 15.8, 41.3, ['storage.buckets.list', 'compute.instances.insert'], 'HIGH', 'HIGH'),
+  makeGcpRun(38, 'GCP003', 13.9, 39.5, ['storage.buckets.list', 'compute.instances.insert'], 'HIGH', 'HIGH'),
+  makeGcpRun(39, 'GCP004', 16.1, 42.1, ['storage.buckets.list', 'compute.instances.insert'], 'HIGH', 'HIGH'),
+  makeGcpRun(40, 'GCP005', 14.5, 39.8, ['storage.buckets.list', 'compute.instances.insert'], 'HIGH', 'MEDIUM'), // misclassification
+
+  // Group E — Azure listKeys + virtualMachines/write → CRITICAL
+  makeAzureRun(41, 'AZ001', 12.1, 45.2, ['Microsoft.Storage/storageAccounts/listKeys/action', 'Microsoft.Compute/virtualMachines/write'], 'CRITICAL', 'CRITICAL'),
+  makeAzureRun(42, 'AZ002', 16.5, 48.7, ['Microsoft.Storage/storageAccounts/listKeys/action', 'Microsoft.Compute/virtualMachines/write'], 'CRITICAL', 'CRITICAL'),
+  makeAzureRun(43, 'AZ003', 14.8, 46.9, ['Microsoft.Storage/storageAccounts/listKeys/action', 'Microsoft.Compute/virtualMachines/write'], 'CRITICAL', 'CRITICAL'),
+  makeAzureRun(44, 'AZ004', 15.2, 47.4, ['Microsoft.Storage/storageAccounts/listKeys/action', 'Microsoft.Compute/virtualMachines/write'], 'CRITICAL', 'CRITICAL'),
+  makeAzureRun(45, 'AZ005', 13.6, 46.1, ['Microsoft.Storage/storageAccounts/listKeys/action', 'Microsoft.Compute/virtualMachines/write'], 'CRITICAL', 'CRITICAL'),
 ]
 
 /* ─── derived stats ─────────────────────────────────────────────── */
@@ -400,4 +574,10 @@ export const MOCK_STATS = {
   severity_distribution: sevDist,
   detection_target_s: 30,
   report_target_s: 60,
+  precision: 98.5,
+  recall: 96.2,
+  f1: 97.3,
+  public_dataset_runs: 200,
+  public_dataset_avg_detection_time_s: 12.4,
+  public_dataset_avg_report_time_s: 29.8,
 }

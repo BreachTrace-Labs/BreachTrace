@@ -9,7 +9,7 @@ interface Props {
 /* Strips the leading checkbox char that the pipeline includes in the raw text */
 function cleanStep(raw: string): string {
   return raw
-    .replace(/^[☐☑]\s*/, '')  // remove ☐ / ☑ prefix
+    .replace(/^(?:\d+\.|\[\s*\]|[-*☐☑])\s*/, '')  // remove 1., [ ], -, *, ☐ / ☑ prefix
     .trim()
 }
 
@@ -37,7 +37,11 @@ const RemediationChecklist: React.FC<Props> = ({ steps }) => {
   const toggle = (i: number) =>
     setChecked(prev => {
       const next = new Set(prev)
-      next.has(i) ? next.delete(i) : next.add(i)
+      if (next.has(i)) {
+        next.delete(i)
+      } else {
+        next.add(i)
+      }
       return next
     })
 
