@@ -1,0 +1,1411 @@
+BreachTrace — Week 2 Sprint: GCP + Azure Platform Expansion
+Group 03 | Somaiya Vidyavihar University
+Page 1  |  CONFIDENTIAL — PROJECT DOCUMENT
+ BREACHTRACE
+ Week 2 Sprint: GCP + Azure Platform Expansion
+ Complete Multi-Platform Implementation Plan
+ Group 03  |  Dept. of Information Technology  |  K.J. Somaiya College of Engineering
+ Guide: Dr. Irfan Siddavatam
+ RITWIK
+ SHASHANK
+ YASH
+ VEDANT
+Pipeline refactor · GCP/Azure
+collectors · Config · DB
+migration · Docker · Deploy
+GCP taxonomy · Azure
+taxonomy · Classifier
+extensions · Severity · Paper
+GCP/Azure credential patterns
+· Detector integration ·
+Research harness · Tests
+Dashboard multi-platform UI ·
+Normalizer updates · Gemini
+prompt · D3 timeline
+BreachTrace — Week 2 Sprint: GCP + Azure Platform Expansion
+Group 03 | Somaiya Vidyavihar University
+Page 2  |  CONFIDENTIAL — PROJECT DOCUMENT
+SECTION 1 — WHAT WAS COMPLETED IN WEEK 1
+Everything listed below is done and working — do not re-implement, only extend.
+Component
+Status
+File
+BaseCollector abstract class
+■ Done
+collectors/base.py
+AWSCloudTrailCollector
+■ Done
+collectors/aws.py
+ForensicEvent / IncidentRecord Pydantic schemas
+■ Done
+normalizer/schema.py
+AWS credential detection (AKIA pattern)
+■ Done
+detector/patterns.py
+detector/scanner.py scanner
+■ Done
+detector/scanner.py
+AWS taxonomy (200+ API mappings)
+■ Done
+classifier/taxonomy_aws.py
+Rule-based classifier with bulk escalation
+■ Done
+classifier/rules.py
+Severity scorer (GDPR flag, financial impact)
+■ Done
+scorer/severity.py
+Gemini report generator
+■ Done
+reporter/gemini.py
+GitHub webhook ingestion + HMAC validation
+■ Done
+routers/webhook.py
+Simulate endpoint (bypass webhook for testing)
+■ Done
+routers/simulate.py
+Exposure window + AWS STS revocation polling
+■ Done
+window/calculator.py
+PostgreSQL models + Alembic migrations
+■ Done
+db/models.py
+React Dashboard + D3 timeline + incident detail
+■ Done
+client/src/pages/
+FastAPI main app wiring
+■ Done
+main.py
+What is NOT done (from Week 1)
+ Docker / docker-compose — scheduled for Day 6 this week
+ 35 experiment runs — extended to cover GCP + Azure experiments this week
+BreachTrace — Week 2 Sprint: GCP + Azure Platform Expansion
+Group 03 | Somaiya Vidyavihar University
+Page 3  |  CONFIDENTIAL — PROJECT DOCUMENT
+SECTION 2 — WHAT NEEDS TO BE BUILT THIS WEEK
+New Files to Create
+File
+Owner
+Day
+Purpose
+backend/collectors/gcp.py
+Ritwik
+Day 2
+GCP Cloud Audit Log collector
+backend/collectors/azure.py
+Ritwik
+Day 2
+Azure Activity Log collector
+backend/classifier/taxonomy_gcp.py
+Shashank
+Day 1–2
+80+ GCP API action mappings
+backend/classifier/taxonomy_azure.py
+Shashank
+Day 2–3
+70+ Azure operation mappings
+backend/window/gcp_revocation.py
+Ritwik
+Day 3
+GCP key validity check
+backend/window/azure_revocation.py
+Ritwik
+Day 3
+Azure credential validity check
+backend/tests/test_gcp_classifier.py
+Yash
+Day 4
+GCP classifier unit tests
+backend/tests/test_azure_classifier.py
+Yash
+Day 4
+Azure classifier unit tests
+backend/tests/test_gcp_pattern.py
+Yash
+Day 2
+GCP regex pattern tests
+backend/tests/test_azure_pattern.py
+Yash
+Day 2
+Azure regex pattern tests
+migrations/versions/_add_gcp_azure_fields.py
+Ritwik
+Day 1
+DB migration for new columns
+Files to Modify (Not Rewrite)
+File
+Owner
+What to Change
+backend/detector/patterns.py
+Yash
+Add GCP + Azure credential regex patterns
+backend/detector/scanner.py
+Yash
+Extend scan() to route GCP/Azure matches
+backend/classifier/rules.py
+Shashank
+Add GCP/Azure taxonomy dispatch
+backend/pipeline.py
+Ritwik
+Multi-platform collector dispatch
+backend/window/calculator.py
+Ritwik
+Route revocation check by platform
+backend/config.py
+Ritwik
+Add GCP + Azure env vars
+backend/reporter/gemini.py
+Vedant
+Update prompt for multi-platform
+backend/normalizer/schema.py
+Vedant
+Add principal_id + location fields
+backend/db/models.py
+Ritwik
+Add gcp_project_id + azure_tenant_id columns
+client/src/pages/Dashboard.tsx
+Vedant
+Platform filter tabs
+client/src/pages/IncidentDetail.tsx
+Vedant
+Multi-platform blast radius cards
+client/src/components/BlastRadiusSummary.tsx
+Vedant
+GCP/Azure platform cards
+client/src/types/index.ts
+Vedant
+Update IncidentRecord TypeScript type
+BreachTrace — Week 2 Sprint: GCP + Azure Platform Expansion
+Group 03 | Somaiya Vidyavihar University
+Page 4  |  CONFIDENTIAL — PROJECT DOCUMENT
+SECTION 3 — PRE-WEEK SETUP (Evening Before Day 1)
+GCP Setup — Ritwik
+Task
+Steps
+Create throwaway GCP project
+console.cloud.google.com → New Project → breachtrace-test
+Enable Cloud Audit Logs
+IAM & Admin → Audit Logs → Enable DATA_READ + DATA_WRITE for all
+services
+Create admin Service Account
+breachtrace-admin → Role: Logging Viewer + Project Viewer. Download JSON
+key.
+Create experiment Service Account
+breachtrace-experiment → Role: Storage Object Viewer ONLY. Download JSON
+key. This gets leaked.
+Enable APIs
+Cloud Logging API, Cloud Resource Manager API, Cloud Storage API, Compute
+Engine API
+Azure Setup — Ritwik
+Task
+Steps
+Create free Azure subscription
+portal.azure.com → Free tier (or use existing)
+Register App (admin)
+Azure AD → App Registrations → breachtrace-admin. Grant: Log Analytics
+Reader + Reader on subscription
+Register App (experiment)
+breachtrace-experiment → Grant: Storage Blob Data Reader only. This gets
+leaked.
+Enable Activity Logs
+Monitor → Activity Log → Diagnostic settings → route to Log Analytics
+Workspace
+Note tenant ID + subscription ID
+Required for collector queries — save in .env immediately
+.env Additions — Append to Existing .env
+Add these to your .env (never commit this file)
+# GCP (admin — for Cloud Audit Log queries)
+GCP_PROJECT_ID=breachtrace-test
+GCP_SERVICE_ACCOUNT_JSON=/path/to/admin-key.json
+# GCP Experiment credentials (this gets leaked)
+GCP_EXPERIMENT_CLIENT_EMAIL=breachtrace-experiment@breachtrace-test.iam.gserviceaccount.com
+GCP_EXPERIMENT_PRIVATE_KEY_ID=abc123...
+# Azure (admin — for Activity Log queries)
+AZURE_TENANT_ID=...
+AZURE_CLIENT_ID=... # breachtrace-admin app client ID
+AZURE_CLIENT_SECRET=... # breachtrace-admin app secret
+AZURE_SUBSCRIPTION_ID=...
+# Azure Experiment credentials (this gets leaked)
+AZURE_EXPERIMENT_CLIENT_ID=...
+AZURE_EXPERIMENT_CLIENT_SECRET=...
+BreachTrace — Week 2 Sprint: GCP + Azure Platform Expansion
+Group 03 | Somaiya Vidyavihar University
+Page 5  |  CONFIDENTIAL — PROJECT DOCUMENT
+SECTION 4 — CREDENTIAL FORMATS BEING DETECTED
+GCP Service Account Key
+The GCP credential is a JSON file. Detection anchors on the client_email field and confirms via the type field.
+What
+Field
+Pattern
+Primary anchor
+client_email
+[a-z0-9\-.]+@[a-z0-9\-]+\.iam\.gserviceaccount\.com
+Confirmation
+type field
+"type":\s*"service_account" in same file/diff chunk
+Key ID anchor
+private_key_id
+"private_key_id":\s*"([a-f0-9]{40})"
+Azure Service Principal / Client Secret
+What
+Format
+Detection Rule
+Client ID (App ID)
+UUID format
+[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12} near clientId /
+AZURE_CLIENT_ID keywords
+Client Secret
+40+ char alphanumeric
+Near clientSecret / client_secret / AZURE_CLIENT_SECRET
+keywords
+Connection String
+Self-contained
+DefaultEndpointsProtocol=https;AccountName=...;AccountKey=[64+
+chars];
+BreachTrace — Week 2 Sprint: GCP + Azure Platform Expansion
+Group 03 | Somaiya Vidyavihar University
+Page 6  |  CONFIDENTIAL — PROJECT DOCUMENT
+SECTION 5 — DAY-BY-DAY IMPLEMENTATION PLAN
+Day
+Primary Goal
+End-of-Day Deliverable
+Day 1 (Mon)
+Foundation: schemas, DB migration, GCP taxonomy start
+Alembic migration runs. GCP taxonomy 80+
+entries committed.
+Day 2 (Tue)
+Credential detection + GCP/Azure collectors implemented
+Both collectors instantiate. Pattern tests all
+pass.
+Day 3 (Wed)
+Classifier extensions + pipeline refactor + revocation modules
+POST /test/simulate with platform=gcp routes
+to GCP collector.
+Day 4 (Thu)
+Full test coverage. Requirements updated. Research harness
+extended.
+pytest backend/tests/ — all green including
+new platform tests.
+Day 5 (Fri)
+Dashboard multi-platform UI. Full end-to-end integration.
+GCP + Azure incidents display correctly on
+live dashboard.
+Day 6 (Sat)
+12 GCP + 11 Azure experiments. Docker working.
+docker-compose up works. 23 new runs in
+experiment_runs table.
+Day 7 (Sun)
+Deploy, demo dry run ×3, paper sections.
+All 3 platforms demo in < 90s. Deployed on
+Railway + Netlify.
+DAY 1 (Monday) — Foundation: Schemas, DB, GCP Taxonomy
+All shared foundations locked before any collector code is written
+ RITWIK
+ SHASHANK
+ YASH
+ VEDANT
+ Add GCP + Azure env vars to
+config.py using os.getenv() —
+NOT in REQUIRED_KEYS
+(optional)
+ Create
+classifier/taxonomy_gcp.py —
+model after taxonomy_aws.py
+ Research + document all 5
+GCP/Azure credential patterns in
+comment block at top of
+detector/patterns.py
+ Add principal_id: Optional[str]
+and location: Optional[str] to
+ForensicEvent in schema.py
+ Alembic migration: add
+gcp_project_id, azure_tenant_id,
+azure_subscription_id,
+principal_id columns to
+incident_records
+ Minimum 80 GCP API method
+entries: Storage, Compute, IAM,
+BigQuery, Secret Manager, Cloud
+Run, GKE, Pub/Sub
+ Pattern 1: GCP client_email
+anchor regex
+ Add platform, gcp_project_id,
+azure_tenant_id,
+azure_subscription_id to
+IncidentRecord in schema.py
+ Update db/models.py with four
+new nullable columns — keep all
+AWS columns unchanged
+ Format: GCP_API_TAXONOMY
+= { 'storage.buckets.list': {'categor
+y':'reconnaissance','severity':1,'lab
+el':'List Buckets'}, ... }
+ Pattern 2: GCP private_key_id
+extraction regex
+ Update client/src/types/index.ts
+with new fields on IncidentRecord
+TypeScript type
+ Run alembic upgrade head —
+confirm migration runs cleanly
+ All IAM key-creating methods →
+privilege_escalation severity 4
+ Pattern 3: Azure Client ID (UUID
++ keyword context)
+ Run npm tsc --noEmit — confirm
+zero TypeScript errors
+ Deliverable: alembic upgrade
+head succeeds. Config loads
+without crash when GCP/Azure
+vars absent.
+ Deliverable: taxonomy_gcp.py
+committed with 80+ entries
+reviewed against GCP IAM docs
+ Pattern 4: Azure Client Secret
+(length + context)
+ Confirm all existing AWS pytest
+tests still pass after schema
+changes
+ Pattern 5: Azure Storage
+Connection String
+ Deliverable: schema.py and
+types/index.ts committed. All
+existing tests green.
+ Deliverable: documented pattern
+stubs committed — no ambiguity
+for Day 2 implementation
+BreachTrace — Week 2 Sprint: GCP + Azure Platform Expansion
+Group 03 | Somaiya Vidyavihar University
+Page 7  |  CONFIDENTIAL — PROJECT DOCUMENT
+Day 1 Hard Stop — ALL must be true before Day 2
+✓ alembic upgrade head runs cleanly with 4 new nullable columns
+✓ taxonomy_gcp.py committed with 80+ entries
+✓ Pattern stubs documented in patterns.py — no ambiguity
+✓ schema.py extended — all existing pytest tests still pass
+✓ TypeScript compiles with zero errors
+DAY 2 (Tuesday) — Credential Detection + Collectors
+GCP and Azure credentials detectable. Both collectors return ForensicEvent lists.
+ RITWIK
+ SHASHANK
+ YASH
+ VEDANT
+ Implement collectors/gcp.py —
+GCPAuditLogCollector(BaseColle
+ctor)
+ Create
+classifier/taxonomy_azure.py —
+minimum 70 Azure operation
+mappings
+ Implement GCP patterns in
+detector/patterns.py: GCP_CLIEN
+T_EMAIL_PATTERN, GCP_PRIV
+ATE_KEY_ID_PATTERN,
+GCPCredentialMatch dataclass,
+find_gcp_credentials(text)
+function
+ Update reporter/gemini.py —
+make _build_prompt()
+multi-platform aware
+ Auth: google.oauth2.service_acc
+ount.Credentials.from_service_ac
+count_info(json.loads(GCP_SA_J
+SON))
+ Storage: Microsoft.Storage/stora
+geAccounts/read →
+reconnaissance
+ Implement Azure patterns:
+AZURE_CLIENT_ID_PATTERN
+(UUID + keyword context), AZUR
+E_CLIENT_SECRET_PATTERN
+(40+ chars + keywords), AZURE_
+CONN_STRING_PATTERN,
+AzureCredentialMatch dataclass,
+find_azure_credentials(text)
+ Replace hardcoded 'AWS' /
+'CloudTrail' strings with platform
+variable
+ Query: client.list_entries(filter_='
+protoPayload.authenticationInfo.p
+rincipalEmail=email AND
+timestamp>=start AND
+timestamp<=end')
+ Key Vault: Microsoft.KeyVault/va
+ults/secrets/read → data_access
+severity 3
+ Extend scanner.py: scan() now
+calls find_gcp_credentials() and
+find_azure_credentials() in
+addition to existing AWS scan.
+Return unified list.
+ generate_report() gains
+platform: str = 'aws' parameter —
+passes to _build_prompt()
+ _map_entry():
+payload.methodName →
+api_action,
+requestMetadata.callerIp →
+source_ip, resourceName →
+affected_resource
+ IAM: Microsoft.Authorization/role
+Assignments/write →
+privilege_escalation severity 4
+ Write test_gcp_pattern.py: 5+
+tests (true positive, false positive
+UUID without keywords, hint
+format, line number,
+multi-credential)
+ Test: call generate_report() with
+platform='gcp' and a sample GCP
+incident — confirm prompt makes
+sense
+ Implement collectors/azure.py —
+AzureActivityLogCollector(BaseC
+ollector)
+ Compute: Microsoft.Compute/vir
+tualMachines/write →
+resource_abuse severity 3
+ Write test_azure_pattern.py: 5+
+tests same structure
+ Test: call generate_report() with
+platform='azure' — confirm
+prompt references Azure correctly
+ Auth:
+ClientSecretCredential(tenant_id,
+client_id, client_secret)
+ Azure AD: Microsoft.Authorizatio
+n/roleDefinitions/write →
+privilege_escalation severity 4
+ Run: pytest
+tests/test_gcp_pattern.py
+tests/test_azure_pattern.py — all
+must pass
+ Deliverable: generate_report()
+tested for all 3 platforms,
+generates sensible prompts
+ Query: MonitorManagementClie
+nt.activity_logs.list(filter=caller eq
+client_id and timestamp range)
+ Deliverable: taxonomy_azure.py
+committed with 70+ entries
+ _map_event(): operation_name
+→ api_action, client_ip →
+source_ip, resource_id →
+affected_resource
+BreachTrace — Week 2 Sprint: GCP + Azure Platform Expansion
+Group 03 | Somaiya Vidyavihar University
+Page 8  |  CONFIDENTIAL — PROJECT DOCUMENT
+ Both collectors must instantiate
+without error. Manual smoke test:
+python -c 'from collectors.gcp
+import GCPAuditLogCollector;
+print(GCPAuditLogCollector())'
+■ GCP Taxonomy Reference — Shashank's taxonomy_gcp.py must include these
+GCP Service
+API Method(s)
+Category
+Weight
+Cloud Storage
+storage.buckets.list, storage.objects.list
+reconnaissance
+1
+Cloud Storage
+storage.objects.get (single)
+data_access
+2
+Cloud Storage
+storage.objects.get (×5+ same IP)
+exfiltration
+4
+Cloud Storage
+storage.objects.create, storage.objects.delete
+resource_abuse
+3
+Compute Engine
+compute.instances.list, compute.instances.get
+reconnaissance
+1
+Compute Engine
+compute.instances.insert, compute.instances.start
+resource_abuse
+3
+IAM
+iam.serviceAccounts.list, iam.roles.list
+reconnaissance
+1
+IAM
+iam.serviceAccountKeys.create, iam.roles.update
+privilege_escalation
+4
+BigQuery
+bigquery.datasets.list, bigquery.tables.list
+reconnaissance
+1
+BigQuery
+bigquery.tables.getData, bigquery.jobs.create
+exfiltration
+4
+Secret Manager
+secretmanager.secrets.list
+reconnaissance
+1
+Secret Manager
+secretmanager.versions.access
+exfiltration
+4
+GKE
+container.clusters.list
+reconnaissance
+1
+GKE
+container.clusters.create
+resource_abuse
+3
+Pub/Sub
+pubsub.topics.publish
+resource_abuse
+3
+DAY 3 (Wednesday) — Classifier Extensions + Pipeline Refactor
+Classification and the pipeline support all three platforms
+ RITWIK
+ SHASHANK
+ YASH
+ VEDANT
+ Refactor pipeline.py: add
+_COLLECTOR_MAP = {'aws':
+AWSCloudTrailCollector, 'gcp':
+GCPAuditLogCollector, 'azure':
+AzureActivityLogCollector}
+ Extend classifier/rules.py: add
+_TAXONOMY_MAP = {'aws':
+AWS_API_TAXONOMY, 'gcp':
+GCP_API_TAXONOMY, 'azure':
+AZURE_API_TAXONOMY}
+ Write test_gcp_classifier.py — 6
+minimum test cases:
+ Update Dashboard.tsx: add
+platform filter tabs
+['All','AWS','GCP','Azure']
+ run_collection_pipeline() gains
+platform: str = 'aws' parameter —
+dispatches to correct collector
+class
+ Update classify_event() to use
+_get_taxonomy(event.platform)
+instead of hardcoded AWS
+taxonomy
+ 1. storage.objects.get →
+data_access, severity 2
+ Filter incidents by selected
+platform tab
+ Update routers/webhook.py:
+handle GCPCredentialMatch and
+AzureCredentialMatch from
+scanner — create IncidentRecord
+with correct credential_type and
+pass platform to pipeline
+ Add GCP heuristic fallbacks:
+GCP_HEURISTIC_PREFIXES —
+'list'→recon, 'get'→data_access,
+'create'/'delete'→resource_abuse,
+'setIamPolicy'/'signJwt'→privilege
+_escalation
+ 2.
+iam.serviceAccountKeys.create
+→ privilege_escalation, severity 4
+ Add platform column to incident
+table: coloured badge —
+AWS=orange, GCP=blue,
+Azure=teal
+BreachTrace — Week 2 Sprint: GCP + Azure Platform Expansion
+Group 03 | Somaiya Vidyavihar University
+Page 9  |  CONFIDENTIAL — PROJECT DOCUMENT
+ Update routers/simulate.py: add
+platform: str = 'aws' field to
+SimulateRequest Pydantic model
+ Add Azure heuristic fallbacks:
+AZURE_HEURISTIC_SUFFIXES
+— '/read'→recon,
+'/write'→resource_abuse,
+'/delete'→resource_abuse
+ 3. bigquery.tables.getData ×5
+same IP → escalate to exfiltration
+ Update
+BlastRadiusSummary.tsx: replace
+single AWS card with generic
+PlatformCard component
+ Create
+window/gcp_revocation.py:
+is_gcp_key_revoked(client_email,
+private_key_id) → bool. Attempts
+token acquisition; ClientError =
+revoked.
+ Add
+AZURE_PRIV_ESC_PATTERNS:
+if operation contains
+'roleAssignments/write',
+'roleDefinitions/write',
+'policies/write' → always
+privilege_escalation severity 4
+ 4. compute.instances.insert →
+resource_abuse, severity 3
+ PlatformCard renders based on
+event.platform:
+AWS=orange/CloudTrail label,
+GCP=blue/Cloud Audit Logs,
+Azure=teal/Activity Log
+ Create
+window/azure_revocation.py:
+is_azure_key_revoked(client_id,
+client_secret) → bool. Uses
+ClientSecretCredential; AADSTS
+error = revoked.
+ Deliverable: classify_event()
+correctly routes AWS/GCP/Azure
+events to their respective
+taxonomies
+ 5. Unknown GCP method →
+heuristic fallback based on verb
+ Only render a card for platforms
+that actually have events in the
+incident
+ Update window/calculator.py:
+is_key_revoked() dispatches by
+platform param to GCP/Azure
+revocation functions
+ 6. Mixed events → correct
+overall severity output
+ Deliverable: npm run dev — no
+TypeScript errors. Platform
+badges visible on dashboard.
+ Test: POST /test/simulate with
+platform=gcp → confirm logs
+show GCP collector firing
+ Write test_azure_classifier.py —
+6 minimum test cases:
+ 1. Microsoft.Storage/.../read →
+reconnaissance, severity 1
+ 2. Microsoft.Authorization/roleAs
+signments/write →
+privilege_escalation, severity 4
+ 3. Microsoft.KeyVault/vaults/secr
+ets/read ×5 → exfiltration
+ 4. Microsoft.Compute/virtualMac
+hines/write → resource_abuse
+ 5. Unknown Azure operation →
+heuristic suffix matching
+ 6. Mixed events → correct
+overall severity
+■ Azure Taxonomy Reference — Shashank's taxonomy_azure.py must include these
+Azure Service
+Operation
+Category
+Weight
+Storage
+Microsoft.Storage/storageAccounts/read
+reconnaissance
+1
+Storage
+Microsoft.Storage/.../blobs/read
+data_access
+2
+Storage
+Microsoft.Storage/.../blobs/read (×5+)
+exfiltration
+4
+Key Vault
+Microsoft.KeyVault/vaults/read
+reconnaissance
+1
+Key Vault
+Microsoft.KeyVault/vaults/secrets/read
+exfiltration
+4
+IAM
+Microsoft.Authorization/roleAssignments/write
+privilege_escalation
+4
+IAM
+Microsoft.Authorization/roleDefinitions/write
+privilege_escalation
+4
+BreachTrace — Week 2 Sprint: GCP + Azure Platform Expansion
+Group 03 | Somaiya Vidyavihar University
+Page 10  |  CONFIDENTIAL — PROJECT DOCUMENT
+Azure Service
+Operation
+Category
+Weight
+Compute
+Microsoft.Compute/virtualMachines/read
+reconnaissance
+1
+Compute
+Microsoft.Compute/virtualMachines/write
+resource_abuse
+3
+SQL Database
+Microsoft.Sql/servers/databases/read
+reconnaissance
+1
+Container
+(AKS)
+Microsoft.ContainerService/managedClusters/read
+reconnaissance
+1
+Container
+(AKS)
+Microsoft.ContainerService/managedClusters/write
+resource_abuse
+3
+App Service
+Microsoft.Web/sites/write
+resource_abuse
+3
+Logic Apps
+Microsoft.Logic/workflows/run/action
+resource_abuse
+3
+DAY 4 (Thursday) — Testing, Requirements, Research Harness
+Full test coverage for new platform code. Research harness ready for GCP/Azure experiments.
+ RITWIK
+ SHASHANK
+ YASH
+ VEDANT
+ Update
+backend/requirements.txt with
+new dependencies:
+ Draft multi-platform taxonomy
+comparison table for paper:
+ Finalize test_gcp_classifier.py
+and test_azure_classifier.py
+(written Day 3)
+ Update IncidentDetail.tsx: show
+platform badge next to credential
+type in header
+ google-cloud-logging>=3.5.0,
+google-auth>=2.20.0
+ AWS: 200+ actions, GCP: 80+
+actions, Azure: 70+ actions
+ Add mapping tests:
+test_gcp_cloudaudit_mapping.py
+— copy real GCP Cloud Audit Log
+entry from GCP docs, verify
+_map_entry() populates all
+ForensicEvent fields
+ Show principal_id (service
+account email / Azure client ID) in
+incident metadata section
+ azure-mgmt-monitor>=6.0.0,
+azure-identity>=1.13.0,
+azure-mgmt-resource>=23.0.0
+ Per-category breakdown: how
+many actions per category per
+platform
+ Add mapping tests: test_azure_
+activitylog_mapping.py — copy
+real Azure Activity Log JSON,
+verify _map_event() populates all
+fields
+ Show location (resource group /
+GCP region) in affected resources
+section if present
+ Run pip install -r
+requirements.txt — verify no
+conflicts with existing packages
+ Heuristic fallback coverage
+percentage for each platform
+ Update research/harness.py —
+add GCP experiment function:
+ Update ForensicTimeline.tsx:
+events from GCP rendered as
+squares, Azure as diamonds
+(AWS stays as circles)
+ Run full existing AWS test suite
+to verify no regressions:
+ Design cross-platform
+experiment results table (for
+Section 4 of paper):
+ run_gcp_experiment(n): commit
+GCP SA JSON snippet →
+simulate s3.objects.list +
+objects.get → trigger POST
+/test/simulate with platform=gcp
+→ record metrics
+ Add a platform legend next to
+the existing severity legend
+ pytest
+tests/test_aws_classifier.py
+tests/test_aws_pattern.py
+tests/test_pipeline.py
+tests/test_scanner.py
+tests/test_severity_scoring.py
+tests/test_window_calculator.py -v
+ Columns: Platform | Runs | Avg
+Detection | Avg Report | Low |
+Med | High | Crit
+ Update research/harness.py —
+add Azure experiment function:
+ Ensure GDPR banner renders
+correctly for GCP incidents
+touching PII-hinting resource
+names
+ ALL must be green. Fix any
+breakage from Day 3 pipeline
+refactor immediately.
+ Write paper Sections 3.2
+(taxonomy) and 4 (experiment
+design) — 400+ words each in
+Google Docs
+ run_azure_experiment(n):
+commit Azure client_id+secret
+snippet → simulate read calls →
+trigger simulate → record metrics
+ Test on mobile viewport
+(evaluators may demo on tablet)
+BreachTrace — Week 2 Sprint: GCP + Azure Platform Expansion
+Group 03 | Somaiya Vidyavihar University
+Page 11  |  CONFIDENTIAL — PROJECT DOCUMENT
+ Run pytest backend/tests/ —
+entire suite must be green
+DAY 5 (Friday) — Dashboard + Full Integration
+Dashboard handles multi-platform. End-to-end GCP/Azure demo works locally.
+ RITWIK
+ SHASHANK
+ YASH
+ VEDANT
+ Manual end-to-end GCP demo:
+POST /test/simulate with GCP diff
++ platform=gcp → watch collectin
+g→classifying→reporting→compl
+ete
+ Watch both demo runs. Note any
+classification errors.
+ Run pytest backend/tests/ — all
+tests green including new
+mapping tests
+ Complete multi-platform
+Dashboard.tsx — platform filter
+tabs working, badges visible
+ GET /incidents/{id} — verify
+ForensicEvents have
+platform='gcp', correct
+impact_category
+ Open DB: check 10 GCP events
+and 10 Azure events — is
+impact_category correct for each?
+ Verify full classifier on a real
+GCP incident in DB: every
+ForensicEvent has
+impact_category and
+severity_weight filled
+ Complete
+BlastRadiusSummary.tsx — GCP
+and Azure platform cards
+rendering correctly
+ Open dashboard — verify GCP
+incident appears with blue badge
+and GCP blast radius card
+ If misclassifications: update
+taxonomy_gcp.py or
+taxonomy_azure.py and push fix
+ Verify same for Azure incident
+ Final IncidentDetail.tsx —
+platform badge, principal_id,
+location, D3 shapes per platform
+ Time full pipeline run — target <
+60 seconds. Log each stage time.
+ Review Gemini reports for GCP
+and Azure incidents — are they
+readable and specific?
+ Fix any classification gaps found
+ Run npm run build — zero
+errors, zero TypeScript warnings
+ Manual end-to-end Azure demo
+— same steps with
+platform=azure
+ Give Vedant specific prompt
+improvement feedback
+ Prepare harness.py for Day 6
+experiments: dry-run
+run_gcp_experiment(1) manually
+— confirm it completes without
+error
+ Deploy frontend update to
+Netlify: confirm live URL shows
+GCP and Azure incidents
+correctly
+ Fix any integration bugs found.
+Both platforms must complete full
+pipeline cleanly.
+ Write paper Section 5.2
+(Cross-Platform Observations)
+outline: which platform has
+highest latency, which credential
+is most dangerous, GDPR flag
+rates
+ Dry-run
+run_azure_experiment(1)
+manually — confirm it completes
+ Test entire UI on deployed URL
+from a different device
+ Screenshot the dashboard
+showing incidents from all 3
+platforms for the evaluator demo.
+DAY 6 (Saturday) — Experiments + Docker
+12 GCP + 11 Azure experiment runs recorded. Docker working.
+ RITWIK
+ SHASHANK
+ YASH
+ VEDANT
+ Write Dockerfile for backend:
+FROM python:3.11-slim, pip
+install, uvicorn CMD
+ Add cross-platform analysis to
+research/analysis.py:
+ Run 12 GCP experiments using
+harness.py
+run_gcp_experiment():
+ Deploy frontend to Netlify:
+update VITE_API_BASE_URL to
+Railway backend URL in
+.env.production
+ Write docker-compose.yml:
+backend + db (postgres:15) +
+frontend services
+ compare_platforms(results):
+per-platform
+avg_time_to_detection,
+avg_time_to_report,
+severity_distribution
+ Vary calls: 4
+runs=storage.buckets.list only
+(Low), 4 runs=objects.get ×3
+(Medium), 4 runs=objects.get ×6
+(Critical via bulk escalation)
+ npm run build → upload dist/ to
+Netlify (or auto-deploy from
+GitHub)
+BreachTrace — Week 2 Sprint: GCP + Azure Platform Expansion
+Group 03 | Somaiya Vidyavihar University
+Page 12  |  CONFIDENTIAL — PROJECT DOCUMENT
+ Write client/Dockerfile: Node
+build stage → nginx serve stage
+ latency_by_platform(results):
+{aws: X.X, gcp: X.X, azure: X.X}
+mean detection latency
+ After each run: rotate GCP key
+(IAM → disable old key, create
+new)
+ Confirm production URL loads
+dashboard with all incidents from
+all 3 platforms
+ Test: docker-compose up --build
+— all 3 services start, alembic
+upgrade head runs automatically
+ After experiments run: compute
+preliminary stats — mean/median
+per platform
+ Run 11 Azure experiments using
+harness.py
+run_azure_experiment():
+ Add loading skeletons for
+incidents still in collecting status
+ POST /test/simulate inside
+container — confirm full pipeline
+runs
+ Fill in the paper results table with
+real numbers from 35 runs
+ Vary calls: 4
+runs=storageAccounts/read only
+(Low), 4 runs=secrets/read ×3
+(Medium), 3
+runs=roleAssignments/write
+(Critical)
+ Final mobile viewport check —
+evaluators may demo on tablet
+ Manage AWS IAM key rotation
+during experiments: create key →
+run experiment → delete key →
+repeat
+ Write paper Section 4 (Results)
+with actual experiment data
+ After each run: rotate Azure
+client secret in Azure AD
+ Update Research.jsx: add
+cross-platform comparison chart
+showing avg detection time per
+platform (bar chart)
+ Write research/key_manager.py:
+create_experiment_key() and
+delete_experiment_key() for GCP
+and Azure
+ All 23 runs → POST
+/research/record →
+experiment_runs table
+ Deploy backend to Railway:
+push Docker config, add all env
+vars in Railway dashboard
+ Run analysis.py after all runs —
+confirm cross-platform stats table
+populated
+ Update GitHub webhook URL
+from localhost to Railway
+production URL
+■ Experiment Protocols — Day 6 Runs
+Platform
+Credential Used
+API Call Variation
+Key Rotation
+GCP (12
+runs)
+breachtrace-experiment SA
+(Storage Object Viewer only)
+4 Low: storage.buckets.list 4 Med:
+objects.get ×3 4 Crit: objects.get ×6 (bulk
+escalation)
+Rotate GCP key each run — IAM
+disable + create new
+Azure (11
+runs)
+breachtrace-experiment App
+(Storage Blob Data Reader only)
+4 Low: storageAccounts/read 4 Med:
+secrets/read ×3 3 Crit:
+roleAssignments/write
+Rotate Azure client secret each
+run in Azure AD
+AWS (from
+Wk1)
+breachtrace-experiment IAM (S3
++ EC2 read only)
+12 runs already complete — combined total
+= 35
+—
+DAY 7 (Sunday) — Demo Polish, Paper, Deploy
+Demo-ready. Paper sections complete. Deployed on Railway + Netlify.
+ RITWIK
+ SHASHANK
+ YASH
+ VEDANT
+ Demo dry run ×3 — all 3
+platforms, each under 90 seconds
+ Complete paper Section 3.2
+(Multi-Platform Taxonomy) —
+400+ words
+ Final pytest backend/tests/ — all
+tests green, zero failures
+ Final production frontend test
+from different device on Netlify
+URL
+ Confirm Railway production
+webhook receives real GitHub
+push events
+ Complete paper Section 4
+(Experiment Results) — final
+numbers table
+ Final analysis.py run — print
+clean cross-platform results table
+for Shashank's paper
+ Ensure all 3 platform badges,
+cards, and D3 shapes render
+correctly
+BreachTrace — Week 2 Sprint: GCP + Azure Platform Expansion
+Group 03 | Somaiya Vidyavihar University
+Page 13  |  CONFIDENTIAL — PROJECT DOCUMENT
+ Prepare pre-loaded incidents for
+all 3 platforms as backup demo
+incidents
+ Complete paper Section 5.2
+(Cross-Platform Observations) —
+which platform has highest
+latency, GDPR flag rates
+ Code cleanup: remove all print()
+debug statements, no hardcoded
+values
+ Take 12 screenshots:
+Dashboard (all 3 platform
+incidents), each IncidentDetail (3
+platforms), Research page, D3
+timeline
+ Record 90-second screen
+recording of all 3 platforms on
+dashboard — ultimate fallback
+ Rehearse evaluator pitch ×3 —
+90 seconds, stop there, let
+evaluator respond
+ Document harness.py — any
+team member must be able to run
+it following the comments
+ Confirm print-to-PDF button
+produces clean output for all 3
+platform incident types
+ Final Railway health check: GET
+/health → 200, all endpoints
+responding
+ Prepare 5 backup slides:
+architecture diagram, 3-platform
+dashboard screenshot, results
+table, D3 timeline screenshot,
+Gemini report screenshot
+ Prepare Minute 3 demo
+narrative for research findings
+ Deploy final build to Netlify —
+confirm live
+BreachTrace — Week 2 Sprint: GCP + Azure Platform Expansion
+Group 03 | Somaiya Vidyavihar University
+Page 14  |  CONFIDENTIAL — PROJECT DOCUMENT
+SECTION 6 — COMPLETE DELIVERABLES CHECKLIST
+ 1
+config.py GCP + Azure env vars
+Ritwik
+ 1
+ 2
+DB migration with 4 new columns
+Ritwik
+ 1
+ 3
+normalizer/schema.py extended
+Vedant
+ 1
+ 4
+types/index.ts updated
+Vedant
+ 1
+ 5
+taxonomy_gcp.py (80+ entries)
+Shashank
+ 1–2
+ 6
+taxonomy_azure.py (70+ entries)
+Shashank
+ 2
+ 7
+GCP patterns in detector/patterns.py
+Yash
+ 2
+ 8
+Azure patterns in detector/patterns.py
+Yash
+ 2
+ 9
+detector/scanner.py extended
+Yash
+ 2
+ 10
+test_gcp_pattern.py
+Yash
+ 2
+ 11
+test_azure_pattern.py
+Yash
+ 2
+ 12
+collectors/gcp.py
+Ritwik
+ 2
+ 13
+collectors/azure.py
+Ritwik
+ 2
+ 14
+reporter/gemini.py multi-platform prompt
+Vedant
+ 2
+ 15
+classifier/rules.py GCP/Azure dispatch
+Shashank
+ 3
+ 16
+pipeline.py multi-platform refactor
+Ritwik
+ 3
+ 17
+routers/webhook.py GCP/Azure routing
+Ritwik
+ 3
+ 18
+routers/simulate.py platform param
+Ritwik
+ 3
+ 19
+window/gcp_revocation.py
+Ritwik
+ 3
+ 20
+window/azure_revocation.py
+Ritwik
+ 3
+ 21
+window/calculator.py platform dispatch
+Ritwik
+ 3
+ 22
+test_gcp_classifier.py
+Yash
+ 4
+ 23
+test_azure_classifier.py
+Yash
+ 4
+ 24
+requirements.txt updated
+Ritwik
+ 4
+ 25
+All existing AWS tests still green
+Ritwik
+ 4
+ 26
+Paper taxonomy + experiment design sections
+Shashank
+ 4
+ 27
+Dashboard.tsx platform filter tabs
+Vedant
+ 5
+ 28
+BlastRadiusSummary.tsx multi-platform cards
+Vedant
+ 5
+ 29
+IncidentDetail.tsx platform + principal_id
+Vedant
+ 5
+ 30
+ForensicTimeline.tsx platform shapes
+Vedant
+ 5
+ 31
+GCP end-to-end demo run < 60s
+Ritwik
+ 5
+ 32
+Azure end-to-end demo run < 60s
+Ritwik
+ 5
+ 33
+Mapping tests for GCP/Azure events
+Yash
+ 5
+ 34
+Dockerfile + docker-compose.yml
+Ritwik
+ 6
+ 35
+client/Dockerfile
+Ritwik
+ 6
+BreachTrace — Week 2 Sprint: GCP + Azure Platform Expansion
+Group 03 | Somaiya Vidyavihar University
+Page 15  |  CONFIDENTIAL — PROJECT DOCUMENT
+ 36
+docker-compose up --build works
+Ritwik
+ 6
+ 37
+12 GCP experiment runs recorded
+Yash+Ritwik
+ 6
+ 38
+11 Azure experiment runs recorded
+Yash+Ritwik
+ 6
+ 39
+research/analysis.py cross-platform
+Shashank
+ 6
+ 40
+Railway backend deploy
+Ritwik
+ 7
+ 41
+Netlify frontend deploy
+Vedant
+ 7
+ 42
+Paper sections 3.2, 4, 5.2
+Shashank
+ 7
+ 43
+Demo dry run ×3 (all platforms)
+All
+ 7
+BreachTrace — Week 2 Sprint: GCP + Azure Platform Expansion
+Group 03 | Somaiya Vidyavihar University
+Page 16  |  CONFIDENTIAL — PROJECT DOCUMENT
+SECTION 7 — REGRESSION RULES & DEMO SCRIPT
+What Must Not Break
+#
+Rule
+Implementation Detail
+1
+All Week 1 tests must stay green
+Before merging any branch, run: pytest backend/tests/ -v. Zero failures
+permitted.
+2
+AWS pipeline unchanged
+POST /test/simulate with no platform field defaults to 'aws' — same behaviour
+as Week 1.
+3
+DB backward compatible
+New columns are all nullable — existing AWS incident rows remain valid with
+no data migration needed.
+4
+Gemini prompt still works for
+AWS
+Passing platform='aws' to generate_report() produces same quality output as
+Week 1.
+5
+Frontend loads existing AWS
+incidents
+Dashboard must not crash when incident.platform is undefined (old rows
+have no platform field).
+Final Demo Script (Day 7)
+■ Demo 1 — AWS (< 60 seconds, same as Week 1)
+ "This is our original AWS flow from last week. Let me show it end to end."
+ Commit AWS key to test repo → dashboard shows incident appear → incident detail shows CloudTrail events, severity
+badge, Gemini report
+■ Demo 2 — GCP (< 90 seconds)
+ "We have now extended BreachTrace to Google Cloud Platform."
+ POST /test/simulate with GCP service account JSON snippet + platform=gcp
+ Dashboard shows GCP incident with blue badge
+ Navigate to detail: Cloud Audit Log events, GCP blast radius card, multi-platform Gemini report
+■ Demo 3 — Azure (< 90 seconds)
+ "And Microsoft Azure — same pipeline architecture, third cloud provider."
+ POST /test/simulate with Azure client_id + secret + platform=azure
+ Dashboard shows Azure incident with teal badge
+ Navigate to detail: Activity Log events, Azure blast radius card
+■ Demo 4 — Docker
+ "The entire stack runs in containers — no local setup required."
+ docker-compose up --build → show all three services starting
+ Open dashboard — confirm it loads and shows incidents from all 3 platforms
+Backup Plan — If Live Pipeline Exceeds 90 Seconds
+Do NOT wait more than 90 seconds for any platform's pipeline to complete during the demo.
+Switch immediately to the pre-loaded backup incident for that platform.
+Say: 'Let me show you a completed incident from our earlier test run.'
+The screen recording is the final fallback if both live and pre-loaded incidents fail.
+Week 2 Exit Criteria — All Must Pass Before Evaluator Presentation
+ 1. GCP credential detected in a commit diff within 30 seconds.
+ 2. Azure credential detected in a commit diff within 30 seconds.
+BreachTrace — Week 2 Sprint: GCP + Azure Platform Expansion
+Group 03 | Somaiya Vidyavihar University
+Page 17  |  CONFIDENTIAL — PROJECT DOCUMENT
+ 3. GCP Cloud Audit Log events collected and persisted as ForensicEvents.
+ 4. Azure Activity Log events collected and persisted as ForensicEvents.
+ 5. All GCP and Azure events have correct impact_category and severity_weight.
+ 6. All 3 platforms complete the full pipeline in under 90 seconds (AWS < 60s).
+ 7. Gemini reports are readable and platform-specific for GCP and Azure incidents.
+ 8. Dashboard shows platform filter tabs. GCP and Azure badges visible. Platform cards render correctly.
+ 9. D3 timeline shows different shapes per platform (circle/square/diamond).
+ 10. 12 GCP + 11 Azure experiment runs in experiment_runs table = 35 total.
+ 11. docker-compose up --build starts the entire stack cleanly.
+ 12. All Week 1 pytest tests still pass. New GCP and Azure tests all pass.
+ 13. Backend deployed on Railway. Frontend deployed on Netlify. Both live.
+ 14. Demo dry run ×3 for all 3 platforms — all under 90 seconds.
+To the Team
+The hard part is done. Week 1 built the entire pipeline architecture.
+Week 2 is about extending what already works — not rebuilding it.
+Every new collector follows the exact same BaseCollector pattern.
+Every new taxonomy follows the exact same dict format.
+Every new test follows the exact same structure as the AWS tests.
+The only genuinely new complexity is the GCP/Azure SDK authentication — Ritwik handles that.
+Everyone else extends existing patterns. Follow the pattern. Ship it. Polish it.
+— END OF WEEK 2 SPRINT PLAN —
