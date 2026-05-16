@@ -21,10 +21,14 @@ def create_incident(
     *,
     credential_type: str,
     credential_hint: str,
-    access_key_id: str,
+    access_key_id: str | None = None,
     repo_url: str,
     commit_hash: str,
     exposure_start: datetime,
+    principal_id: str | None = None,
+    gcp_project_id: str | None = None,
+    azure_tenant_id: str | None = None,
+    azure_subscription_id: str | None = None,
 ) -> IncidentRecord:
     """Insert a new incident row and return the persisted object."""
     incident = IncidentRecord(
@@ -35,6 +39,10 @@ def create_incident(
         repo_url=repo_url,
         commit_hash=commit_hash,
         exposure_start=exposure_start,
+        principal_id=principal_id,
+        gcp_project_id=gcp_project_id,
+        azure_tenant_id=azure_tenant_id,
+        azure_subscription_id=azure_subscription_id,
         status="collecting",
         remediation_steps=[],
         gdpr_flag=False,
@@ -145,6 +153,9 @@ def save_forensic_events(
             error_code=error_code,
             is_denied=is_denied,
             principal_arn=principal_arn,
+            # GCP / Azure identity fields (None for AWS events)
+            principal_id=getattr(event, "principal_id", None),
+            location=getattr(event, "location", None),
             raw_data=event.raw_data,
             impact_category=event.impact_category,
             severity_weight=event.severity_weight,

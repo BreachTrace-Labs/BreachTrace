@@ -20,6 +20,7 @@ from sqlalchemy.orm import Session
 import config
 from db.crud import create_incident, set_exposure_end
 from db.database import SessionLocal, get_db
+from detector.patterns import AzureCredentialMatch, GCPCredentialMatch
 from detector.scanner import scan
 from pipeline import run_collection_pipeline
 from window.calculator import is_key_revoked, record_exposure_start
@@ -74,21 +75,23 @@ def _fetch_diff(repo_full_name: str, sha: str) -> str:
 
 async def _monitor_revocation(
     incident_id: str,
-    access_key_id: str,
-    secret_access_key: str,
+    credential: str,
+    secret: str,
     db_factory,
+    *,
+    platform: str = "aws",
 ) -> None:
     """
-    Poll AWS STS every 60 s for up to 10 minutes.
-    Sets exposure_end on the incident the moment the key is revoked.
+    Poll the credential revocation endpoint every 60 s for up to 10 minutes.
+    Sets exposure_end on the incident the moment the credential is revoked.
     """
     max_polls = 10  # 10 × 60 s = 10 minutes
     for _ in range(max_polls):
         await asyncio.sleep(60)
         try:
-            revoked = is_key_revoked(access_key_id, secret_access_key)
+            revoked = is_key_revoked(credential, secret, platform=platform)
         except Exception as exc:
-            logger.error("STS revocation check failed for %s: %s", access_key_id, exc)
+            logger.error("Revocation check failed for %s: %s", credential[:20], exc)
             continue
 
         if revoked:
@@ -174,43 +177,81 @@ async def github_webhook(
         logger.info(f"[WEBHOOK FOUND] Found {len(matches)} secret(s) in {sha}!")
 
         for match in matches:
-            # 6. Persist incident
+            # 6. Determine platform + unified credential identifier
+            if isinstance(match, GCPCredentialMatch):
+                match_platform = "gcp"
+                credential = match.client_email
+                incident_principal_id = match.client_email
+                incident_access_key_id = None
+            elif isinstance(match, AzureCredentialMatch):
+                match_platform = "azure"
+                credential = match.client_id or ""
+                incident_principal_id = match.client_id
+                incident_access_key_id = None
+            else:
+                # AWS CredentialMatch
+                match_platform = "aws"
+                credential = match.access_key_id
+                incident_principal_id = None
+                incident_access_key_id = match.access_key_id
+
             incident = create_incident(
                 db,
                 credential_type=match.credential_type,
                 credential_hint=match.credential_hint,
-                access_key_id=match.access_key_id,
+                access_key_id=incident_access_key_id,
                 repo_url=repo_url,
                 commit_hash=sha,
                 exposure_start=exposure_start,
+                principal_id=incident_principal_id,
             )
             created_incidents.append(incident.incident_id)
             logger.info(
-                "Incident created: %s | key hint: %s | repo: %s",
+                "Incident created: %s | platform: %s | hint: %s | repo: %s",
                 incident.incident_id,
+                match_platform,
                 match.credential_hint,
                 repo_url,
             )
 
-            # Fire CloudTrail collection in the background — does NOT block the
-            # webhook response.  The pipeline stores events to DB and advances
-            # the incident status to 'classifying'.
+            # Fire event collection in the background.
             background_tasks.add_task(
                 run_collection_pipeline,
                 incident.incident_id,
-                match.access_key_id,
+                credential,
                 exposure_start,
+                platform=match_platform,
             )
 
-            # Launch revocation monitor ONLY for the experiment key — the secret
-            # for arbitrary real leaked keys is never available via the webhook path.
-            if match.access_key_id == config.EXPERIMENT_AWS_ACCESS_KEY_ID:
+            # Launch revocation monitor for known experiment credentials only.
+            if match_platform == "aws" and credential == config.EXPERIMENT_AWS_ACCESS_KEY_ID:
                 asyncio.create_task(
                     _monitor_revocation(
                         incident.incident_id,
-                        match.access_key_id,
+                        credential,
                         config.EXPERIMENT_AWS_SECRET_ACCESS_KEY,
                         SessionLocal,
+                        platform="aws",
+                    )
+                )
+            elif match_platform == "gcp" and credential == config.GCP_EXPERIMENT_CLIENT_EMAIL:
+                asyncio.create_task(
+                    _monitor_revocation(
+                        incident.incident_id,
+                        credential,
+                        getattr(match, "private_key_id", "") or "",
+                        SessionLocal,
+                        platform="gcp",
+                    )
+                )
+            elif match_platform == "azure" and credential == config.AZURE_EXPERIMENT_CLIENT_ID:
+                asyncio.create_task(
+                    _monitor_revocation(
+                        incident.incident_id,
+                        credential,
+                        config.AZURE_EXPERIMENT_CLIENT_SECRET,
+                        SessionLocal,
+                        platform="azure",
                     )
                 )
 

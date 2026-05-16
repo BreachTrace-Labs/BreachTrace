@@ -1,35 +1,20 @@
-# STUB — Ritwik implements this (Day 2, Task 2.5)
-#
-# Required packages (add to requirements.txt):
-#   google-cloud-logging>=3.5.0
-#   google-auth>=2.20.0
-#
-# Dependencies before implementing:
-#   - config.py must have GCP_PROJECT_ID + GCP_SERVICE_ACCOUNT_JSON (Ritwik, Task 1.1)
-#   - normalizer/schema.py must have principal_id field added (Vedant, Task 1.6)
-#
-# How _map_entry works (GCP Cloud Audit Log → ForensicEvent):
-#
-#   entry.payload          dict  → protoPayload fields from Cloud Audit Log
-#   entry.timestamp        datetime
-#   entry.resource.type    str   → GCP resource type e.g. "gcs_bucket"
-#
-#   payload fields used:
-#     "methodName"                             → api_action
-#     "serviceName"                            → event_source
-#     "requestMetadata.callerIp"               → source_ip
-#     "requestMetadata.callerSuppliedUserAgent" → user_agent
-#     "resourceName"                           → affected_resource
-#     "authenticationInfo.principalEmail"      → principal_id  (needs Vedant schema update)
-#     "status.code"                            → 0 = success, else error
-#
-# CloudTrail equivalent lookup:
-#   filter: protoPayload.authenticationInfo.principalEmail = "<leaked_email>"
-#           AND timestamp >= start AND timestamp <= end
-#           AND logName:"cloudaudit.googleapis.com"
+"""
+GCP Cloud Audit Log collector.
 
+Queries Google Cloud Audit Logs for activity by a specific service account
+email during an exposure window.
+
+Required packages:
+    google-cloud-logging>=3.5.0
+    google-auth>=2.20.0
+"""
+from __future__ import annotations
+
+import json
 import logging
-from datetime import datetime
+import uuid
+from datetime import datetime, timezone
+from typing import Any
 
 from collectors.base import BaseCollector
 from normalizer.schema import ForensicEvent
@@ -46,19 +31,19 @@ class GCPAuditLogCollector(BaseCollector):
     platform = "gcp"
 
     def __init__(self) -> None:
-        # Ritwik implements:
-        #   from google.cloud import logging as gcp_logging
-        #   from google.oauth2 import service_account
-        #   import json, config
-        #
-        #   creds_json = json.loads(config.GCP_SERVICE_ACCOUNT_JSON)
-        #   credentials = service_account.Credentials.from_service_account_info(
-        #       creds_json, scopes=["https://www.googleapis.com/auth/logging.read"]
-        #   )
-        #   self._client = gcp_logging.Client(
-        #       project=config.GCP_PROJECT_ID, credentials=credentials
-        #   )
-        raise NotImplementedError
+        import config
+        from google.cloud import logging as gcp_logging
+        from google.oauth2 import service_account
+
+        creds_info: dict[str, Any] = json.loads(config.GCP_SERVICE_ACCOUNT_JSON)
+        credentials = service_account.Credentials.from_service_account_info(
+            creds_info,
+            scopes=["https://www.googleapis.com/auth/logging.read"],
+        )
+        self._client = gcp_logging.Client(
+            project=config.GCP_PROJECT_ID,
+            credentials=credentials,
+        )
 
     def collect(
         self,
@@ -70,34 +55,54 @@ class GCPAuditLogCollector(BaseCollector):
         credential = GCP service account email (principalEmail of the leaked key).
         Queries Cloud Audit Logs for all activity during [start_time, end_time].
         """
-        # Ritwik implements:
-        #   filter_str = (
-        #       f'protoPayload.authenticationInfo.principalEmail="{credential}" '
-        #       f'AND timestamp>="{start_time.isoformat()}" '
-        #       f'AND timestamp<="{end_time.isoformat()}" '
-        #       'AND logName:"cloudaudit.googleapis.com"'
-        #   )
-        #   entries = self._client.list_entries(filter_=filter_str)
-        #   return [self._map_entry(e) for e in entries]
-        raise NotImplementedError
+        # Ensure UTC-aware ISO strings for the filter
+        start_iso = _to_utc_iso(start_time)
+        end_iso = _to_utc_iso(end_time)
+
+        filter_str = (
+            f'protoPayload.authenticationInfo.principalEmail="{credential}" '
+            f'AND timestamp>="{start_iso}" '
+            f'AND timestamp<="{end_iso}" '
+            'AND logName:"cloudaudit.googleapis.com"'
+        )
+
+        logger.info("[GCP] Querying audit logs for %s (%s → %s)", credential, start_iso, end_iso)
+        entries = self._client.list_entries(filter_=filter_str)
+        events = [self._map_entry(e) for e in entries]
+        logger.info("[GCP] Collected %d forensic events for %s", len(events), credential)
+        return events
 
     def _map_entry(self, entry) -> ForensicEvent:
         """Map one GCP Cloud Audit Log entry to the shared ForensicEvent schema."""
-        # Ritwik implements:
-        #   payload = entry.payload if isinstance(entry.payload, dict) else {}
-        #   status_code = payload.get("status", {}).get("code", 0)
-        #   return ForensicEvent(
-        #       platform="gcp",
-        #       timestamp=entry.timestamp,
-        #       api_action=payload.get("methodName", "Unknown"),
-        #       event_source=payload.get("serviceName"),
-        #       source_ip=payload.get("requestMetadata", {}).get("callerIp"),
-        #       user_agent=payload.get("requestMetadata", {}).get("callerSuppliedUserAgent"),
-        #       affected_resource=payload.get("resourceName"),
-        #       resource_type=entry.resource.type if entry.resource else None,
-        #       principal_id=payload.get("authenticationInfo", {}).get("principalEmail"),
-        #       success=status_code == 0,
-        #       error_code=str(status_code) if status_code else None,
-        #       raw_data=payload,
-        #   )
-        raise NotImplementedError
+        payload: dict[str, Any] = entry.payload if isinstance(entry.payload, dict) else {}
+
+        status_block = payload.get("status", {}) or {}
+        status_code: int = status_block.get("code", 0)
+
+        request_meta: dict = payload.get("requestMetadata", {}) or {}
+        auth_info: dict = payload.get("authenticationInfo", {}) or {}
+        resource = getattr(entry, "resource", None)
+
+        return ForensicEvent(
+            event_id=str(uuid.uuid4()),
+            platform="gcp",
+            timestamp=entry.timestamp,
+            api_action=payload.get("methodName", "Unknown"),
+            event_source=payload.get("serviceName"),
+            source_ip=request_meta.get("callerIp"),
+            user_agent=request_meta.get("callerSuppliedUserAgent"),
+            affected_resource=payload.get("resourceName"),
+            resource_type=resource.type if resource else None,
+            principal_id=auth_info.get("principalEmail"),
+            success=(status_code == 0),
+            error_code=str(status_code) if status_code else None,
+            raw_data=payload,
+        )
+
+
+def _to_utc_iso(dt: datetime) -> str:
+    """Return an ISO-8601 string in UTC (with trailing Z)."""
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
