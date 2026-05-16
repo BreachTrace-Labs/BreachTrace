@@ -151,6 +151,16 @@ class IncidentRecord(Base):
         Index("ix_incident_records_status", "status"),
     )
 
+    @property
+    def platform(self) -> str:
+        """Derive cloud platform from credential_type (not a DB column)."""
+        ctype = (self.credential_type or "").lower()
+        if "gcp" in ctype:
+            return "gcp"
+        if "azure" in ctype:
+            return "azure"
+        return "aws"
+
     def __repr__(self) -> str:
         return (
             f"<IncidentRecord id={self.incident_id!r} "

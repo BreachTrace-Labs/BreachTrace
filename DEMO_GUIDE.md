@@ -1,57 +1,67 @@
-# BreachTrace — Complete Local Demo Guide
+﻿# BreachTrace â€” Complete Local Demo Guide
 
-**Group 03 · K.J. Somaiya College of Engineering · Information Technology**
+**Group 03 Â· K.J. Somaiya College of Engineering Â· Information Technology**
 **Guide: Dr. Irfan Siddavatam**
 
 ---
 
 ## Overview
 
-This guide walks through every step required to demonstrate BreachTrace locally in front of evaluators — from creating AWS credentials to seeing a live forensic report appear on the dashboard.
+This guide walks through every step required to demonstrate BreachTrace locally in front of evaluators â€” from creating cloud credentials across AWS, GCP, and Azure, to watching live forensic reports appear on the dashboard for all three platforms.
 
 The demonstration flow is:
 ```
-Make AWS API calls (15 min before demo)
-     ↓
-Start backend + frontend
-     ↓
-Trigger simulate endpoint (in front of evaluators)
-     ↓
-Dashboard shows incident appearing live
-     ↓
-Click incident → pipeline stepper advances in real time
-     ↓
+Make cloud API calls on ALL platforms (20 min before demo)
+     â†“
+Start backend + frontend (no Docker)
+     â†“
+Trigger simulate endpoint for each platform (in front of evaluators)
+     â†“
+Dashboard shows incidents appearing live with platform badges (AWS / GCP / Azure)
+     â†“
+Click incident â†’ pipeline stepper advances in real time
+     â†“
 D3 timeline, blast radius, Gemini report, remediation checklist all appear
 ```
 
+**What you need accounts/access for:**
+- AWS (free tier â€” IAM users, CloudTrail)
+- GCP (free tier â€” Cloud Logging, service accounts)
+- Azure (free subscription â€” Activity Logs, app registrations)
+- GitHub (any account â€” personal access token)
+- Google AI Studio (free â€” Gemini API key)
+- PostgreSQL (local install)
+
 ---
 
-## PART 1 — AWS Account & Credentials Setup
+## PART 1 â€” AWS Account & Credentials Setup
 
-### Step 1.1 — Create a Throwaway AWS Account
+### Step 1.1 â€” Create / Use an AWS Account
 
-> Skip this if you already have an AWS account — just use it and create new IAM users inside it.
+> Skip to Step 1.2 if you already have an AWS account â€” just create new IAM users inside it.
 
-1. Go to [https://aws.amazon.com](https://aws.amazon.com) → **Create an AWS Account**
+1. Go to [https://aws.amazon.com](https://aws.amazon.com) â†’ **Create an AWS Account**
 2. Use any email (a Gmail alias like `yourname+breachtrace@gmail.com` works)
 3. Choose **Free tier**
-4. Add a payment card — you will not be charged (all calls used are free tier)
+4. Add a payment card â€” you will **not** be charged (all calls used are free-tier management events)
 
 ---
 
-### Step 1.2 — Create the Admin IAM User
+### Step 1.2 â€” Create the Admin IAM User
 
-This user's credentials go into `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` in `.env`. The backend uses these to query CloudTrail for what the leaked key did.
+These credentials go into `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY`. The backend uses them to query CloudTrail for what the leaked key did.
 
-1. **AWS Console** → search **IAM** → **Users** → **Create user**
+1. **AWS Console** â†’ **IAM** â†’ **Users** â†’ **Create user**
 2. Username: `breachtrace-admin`
-3. **Access type:** Programmatic access only (no AWS Console login needed)
-4. **Permissions** — attach these managed policies:
+3. Uncheck "Provide user access to the AWS Management Console"
+4. **Next** â†’ **Attach policies directly** â†’ attach all four:
    - `CloudTrailReadOnlyAccess`
    - `AmazonS3ReadOnlyAccess`
    - `AmazonEC2ReadOnlyAccess`
    - `IAMReadOnlyAccess`
-5. On the final screen, **copy immediately** (you only see the secret once):
+5. **Create user** â†’ click the new user â†’ **Security credentials** tab â†’ **Create access key**
+6. Use case: **Command Line Interface (CLI)** â†’ confirm â†’ **Next** â†’ **Create access key**
+7. **Copy immediately** (the secret is shown only once):
    ```
    AWS_ACCESS_KEY_ID=AKIA...
    AWS_SECRET_ACCESS_KEY=...
@@ -59,18 +69,17 @@ This user's credentials go into `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` 
 
 ---
 
-### Step 1.3 — Create the Experiment IAM User
+### Step 1.3 â€” Create the Experiment IAM User
 
-This is the key that gets `"leaked"` in the demo diff text. It is **real but read-only** — zero damage possible.
+This is the key that gets "leaked" in the demo diff text. Read-only â€” zero damage possible.
 
-1. **IAM** → **Users** → **Create user**
+1. **IAM** â†’ **Users** â†’ **Create user**
 2. Username: `breachtrace-experiment`
-3. **Programmatic access only**
-4. **Permissions** — attach:
+3. **Attach policies directly**:
    - `AmazonS3ReadOnlyAccess`
    - `AmazonEC2ReadOnlyAccess`
    - `IAMReadOnlyAccess`
-5. Copy credentials:
+4. Create access key (same steps as above). Copy:
    ```
    EXPERIMENT_AWS_ACCESS_KEY_ID=AKIA...
    EXPERIMENT_AWS_SECRET_ACCESS_KEY=...
@@ -78,97 +87,316 @@ This is the key that gets `"leaked"` in the demo diff text. It is **real but rea
 
 ---
 
-### Step 1.4 — Enable CloudTrail (CRITICAL — Must Be Done Before Any Demo)
+### Step 1.4 â€” Enable CloudTrail
 
-Without this, no forensic events will be collected. CloudTrail must be active **before** you make the API calls in Part 7.
+Without this, no AWS forensic events are collected. Must be active **before** you make the API calls in Part 9.
 
-1. **AWS Console** → search **CloudTrail** → **Create trail**
+1. **AWS Console** â†’ **CloudTrail** â†’ **Create trail**
 2. Trail name: `breachtrace-trail`
-3. Storage: Create new S3 bucket (keep auto-generated name)
-4. SSE-KMS encryption: **No**
-5. CloudWatch Logs: **No**
-6. **Log events settings:**
-   - Management events: **ON**
-   - Read and Write events: **Both**
-   - Data events: **OFF** (costs money)
-   - Insights events: **OFF**
-7. **Create trail**
+3. Storage: **Create new S3 bucket** (keep auto-generated name)
+4. SSE-KMS encryption: **No** | CloudWatch Logs: **No**
+5. Management events: **ON** â€” Read + Write: **Both** â€” Data events: **OFF** â€” Insights: **OFF**
+6. **Create trail**
 
-> CloudTrail takes ~5 minutes to activate after creation. Events appear in `lookup_events` with up to a 15-minute delivery delay. Management events (all the IAM/S3/EC2 API calls) are **free**.
+> Events appear in `lookup_events` with up to a 15-minute delivery delay. Management events are **free**.
 
 ---
 
-## PART 2 — GitHub Token
+## PART 2 â€” GCP Setup
 
-1. GitHub → profile picture → **Settings** → scroll to bottom → **Developer settings**
-2. **Personal access tokens** → **Tokens (classic)** → **Generate new token (classic)**
-3. Note: `breachtrace-demo`, Expiration: 7 days
-4. Scopes: check only **`repo`**
-5. Copy: `GITHUB_TOKEN=ghp_...`
+You need two service accounts: an **admin** account (queries Audit Logs) and an **experiment** account (the one that gets "leaked").
 
-For the webhook secret, generate a random string right now:
+### Step 2.1 â€” Create a GCP Project
 
-```powershell
--join ((65..90) + (97..122) + (48..57) | Get-Random -Count 32 | ForEach-Object {[char]$_})
+1. Go to [https://console.cloud.google.com](https://console.cloud.google.com)
+2. Click the project dropdown (top-left) â†’ **New Project**
+3. Name: `breachtrace` â†’ **Create**
+4. Note your **Project ID** (e.g. `breachtrace-420819`) â€” this is `GCP_PROJECT_ID`
+
+---
+
+### Step 2.2 â€” Enable Required APIs
+
+In your project, go to **APIs & Services** â†’ **Enable APIs and Services** â†’ search for and enable:
+
+1. **Cloud Logging API** â€” mandatory for audit log queries
+2. **Cloud Resource Manager API** â€” needed for project metadata
+3. **Cloud Storage API** â€” so the experiment SA can make storable API calls
+4. **Identity and Access Management (IAM) API** â€” for service account operations
+
+Or enable them all at once in Cloud Shell:
+```bash
+gcloud services enable logging.googleapis.com cloudresourcemanager.googleapis.com storage.googleapis.com iam.googleapis.com
 ```
 
-Copy the output → this is your `GITHUB_WEBHOOK_SECRET`.
+---
+
+### Step 2.3 â€” Enable Data Access Audit Logs (CRITICAL)
+
+By default GCP only logs **Admin Activity** (free). To log what the experiment SA reads/writes you must enable **Data Access** logs.
+
+1. **IAM & Admin** â†’ **Audit Logs**
+2. Find **Cloud Storage** in the list â†’ check **DATA_READ** and **DATA_WRITE**
+3. Also enable **DATA_READ** + **DATA_WRITE** for **Identity and Access Management (IAM)**
+4. Click **Save**
+
+> Data Access audit logs are **free** for admin (IAM/resource manager) operations. Storage data access logs may count toward your free tier quota (~50 GiB/month free in Cloud Logging).
 
 ---
 
-## PART 3 — Gemini API Key
+### Step 2.4 â€” Create the Admin Service Account
 
-1. Go to [https://aistudio.google.com/app/apikey](https://aistudio.google.com/app/apikey)
-2. Sign in with Google → **Create API key** → **Create API key in new project**
-3. Copy: `GEMINI_API_KEY=AIza...`
+This SA's JSON key goes into `GCP_SERVICE_ACCOUNT_JSON`. It is used only for reading logs â€” never for making calls.
 
-Free tier: 1,500 requests/day — far more than needed.
+1. **IAM & Admin** â†’ **Service Accounts** â†’ **Create Service Account**
+2. Name: `breachtrace-admin` â†’ **Create and Continue**
+3. Roles â€” add both:
+   - `Logging Viewer` (roles/logging.viewer)
+   - `Viewer` (roles/viewer)
+4. **Done**
+5. Click on `breachtrace-admin@...` â†’ **Keys** tab â†’ **Add Key** â†’ **Create new key** â†’ **JSON** â†’ **Create**
+6. The browser downloads `breachtrace-admin-xxxx.json` â€” **keep this file safe**
 
-Test it immediately:
+---
+
+### Step 2.5 â€” Create the Experiment Service Account
+
+This SA's email is what gets "leaked" in the demo. It needs just enough permissions to actually generate audit log entries.
+
+1. **Service Accounts** â†’ **Create Service Account**
+2. Name: `breachtrace-experiment` â†’ **Create and Continue**
+3. Role: `Storage Object Viewer` (roles/storage.objectViewer)
+4. **Done**
+5. Click on `breachtrace-experiment@...` â†’ **Keys** tab â†’ **Add Key** â†’ **Create new key** â†’ **JSON** â†’ **Create**
+6. Save `breachtrace-experiment-xxxx.json`
+7. Note these values from the JSON file:
+   - `client_email` â†’ `GCP_EXPERIMENT_CLIENT_EMAIL`
+   - `private_key_id` â†’ `GCP_EXPERIMENT_PRIVATE_KEY_ID`
+   - `private_key` â†’ `GCP_EXPERIMENT_PRIVATE_KEY`
+
+---
+
+### Step 2.6 â€” Convert the Admin JSON Key for .env
+
+The `.env` file needs the admin SA key as a single-line JSON string. Run this in your BreachTrace `.venv`:
+
+```powershell
+cd C:\Users\ritwi\Downloads\BreachTrace
+.\.venv\Scripts\Activate.ps1
+python -c "
+import json
+with open(r'C:\Users\ritwi\Downloads\breachtrace-admin-xxxx.json') as f:
+    data = json.load(f)
+print('GCP_SERVICE_ACCOUNT_JSON=' + json.dumps(data))
+"
+```
+
+Copy the entire output line (starting with `GCP_SERVICE_ACCOUNT_JSON=`) and paste it into your `.env` file.
+
+> **Why this works:** `json.dumps()` converts actual newlines in the `private_key` value to `\n` escape sequences, producing a valid single-line JSON string that `json.loads()` in the backend can parse correctly.
+
+---
+
+### Step 2.7 â€” Verify GCP Admin Access
+
+```powershell
+cd C:\Users\ritwi\Downloads\BreachTrace
+.\.venv\Scripts\Activate.ps1
+cd backend
+python -c "
+import config, json
+from google.cloud import logging as gcp_logging
+from google.oauth2 import service_account
+
+creds_info = json.loads(config.GCP_SERVICE_ACCOUNT_JSON)
+credentials = service_account.Credentials.from_service_account_info(
+    creds_info, scopes=['https://www.googleapis.com/auth/logging.read'])
+client = gcp_logging.Client(project=config.GCP_PROJECT_ID, credentials=credentials)
+
+entries = list(client.list_entries(
+    filter_='logName:\"cloudaudit.googleapis.com\"',
+    max_results=3
+))
+print(f'GCP Audit Log connection: OK â€” {len(entries)} recent entries found')
+"
+```
+
+Expected: `GCP Audit Log connection: OK â€” N recent entries found` (N may be 0 if no activity yet)
+
+---
+
+## PART 3 â€” Azure Setup
+
+You need two app registrations: an **admin** app (queries Activity Logs) and an **experiment** app (the one that gets "leaked").
+
+### Step 3.1 â€” Azure Subscription
+
+You need an active Azure subscription. Options:
+- Free 12-month trial: [https://azure.microsoft.com/free](https://azure.microsoft.com/free) ($200 credit)
+- Students: [https://azure.microsoft.com/free/students](https://azure.microsoft.com/free/students) (no card required)
+- Existing subscription: any works
+
+Note your **Subscription ID** â€” visible in **Subscriptions** in the portal.
+
+---
+
+### Step 3.2 â€” Register the Admin App
+
+This app's credentials query Azure Monitor Activity Logs.
+
+1. **Azure Portal** â†’ **Azure Active Directory** â†’ **App registrations** â†’ **New registration**
+2. Name: `breachtrace-admin`
+3. Supported account types: **Accounts in this organizational directory only**
+4. Redirect URI: leave blank
+5. **Register**
+6. On the app overview page, note:
+   - **Application (client) ID** â†’ `AZURE_CLIENT_ID`
+   - **Directory (tenant) ID** â†’ `AZURE_TENANT_ID`
+7. **Certificates & secrets** â†’ **Client secrets** â†’ **New client secret**
+   - Description: `breachtrace-admin-secret`
+   - Expires: 6 months (or longest available)
+   - **Add** â†’ **copy the Value immediately** (shown only once) â†’ `AZURE_CLIENT_SECRET`
+
+---
+
+### Step 3.3 â€” Grant the Admin App Access to Activity Logs
+
+1. **Portal** â†’ **Subscriptions** â†’ select your subscription â†’ **Access control (IAM)** â†’ **Add** â†’ **Add role assignment**
+2. Role: **Reader** â†’ **Next**
+3. Assign access to: **User, group, or service principal** â†’ **Select members** â†’ search `breachtrace-admin` â†’ select it
+4. **Review + assign**
+5. Repeat the same process to also assign **Monitoring Reader** role:
+   - Role: **Monitoring Reader** â†’ **Next** â†’ same app â†’ **Review + assign**
+
+---
+
+### Step 3.4 â€” Register the Experiment App
+
+This app is the "leaked" service principal. Needs minimal permissions so it generates Activity Log entries.
+
+1. **App registrations** â†’ **New registration**
+2. Name: `breachtrace-experiment`
+3. **Register**
+4. Note:
+   - **Application (client) ID** â†’ `AZURE_EXPERIMENT_CLIENT_ID`
+5. **Certificates & secrets** â†’ **New client secret**
+   - Description: `experiment-secret`
+   - **Add** â†’ copy **Value** â†’ `AZURE_EXPERIMENT_CLIENT_SECRET`
+6. Assign a role on your subscription (so it can make ARM calls):
+   - **Subscriptions** â†’ subscription â†’ **Access control (IAM)** â†’ **Add role assignment**
+   - Role: **Reader** â†’ assign to `breachtrace-experiment` â†’ **Review + assign**
+
+---
+
+### Step 3.5 â€” Find the Experiment App's Service Principal Object ID
+
+> **Important:** Azure Activity Logs record the **Service Principal Object ID** as the `caller` field â€” this is **different** from the Application Client ID. You need the Object ID for the pipeline to match Activity Log events.
+
+1. **Azure Active Directory** â†’ **Enterprise applications**
+2. Search for `breachtrace-experiment`
+3. Click on it â†’ note the **Object ID** on the overview page
+
+This **Object ID** is what you use in the demo diff text and also set as `AZURE_EXPERIMENT_CLIENT_ID` in `.env`. It is what Azure records as `caller` in Activity Logs.
+
+> If you want revocation checking to also work, set `AZURE_EXPERIMENT_CLIENT_ID` to the **Application (client) ID** and use the Object ID in the diff text only. For simplicity in this demo, use the Object ID for both.
+
+---
+
+### Step 3.6 â€” Verify Azure Admin Access
+
 ```powershell
 cd C:\Users\ritwi\Downloads\BreachTrace
 .\.venv\Scripts\Activate.ps1
 cd backend
 python -c "
 import config
-import google.generativeai as genai
+from azure.identity import ClientSecretCredential
+from azure.mgmt.monitor import MonitorManagementClient
+from datetime import datetime, timezone, timedelta
+
+credential = ClientSecretCredential(
+    tenant_id=config.AZURE_TENANT_ID,
+    client_id=config.AZURE_CLIENT_ID,
+    client_secret=config.AZURE_CLIENT_SECRET,
+)
+client = MonitorManagementClient(credential, config.AZURE_SUBSCRIPTION_ID)
+
+end = datetime.now(timezone.utc)
+start = end - timedelta(hours=1)
+filter_str = f\"eventTimestamp ge '{start.isoformat()}' and eventTimestamp le '{end.isoformat()}'\"
+events = list(client.activity_logs.list(filter=filter_str, select='eventTimestamp,caller'))
+print(f'Azure Activity Log connection: OK â€” {len(events)} events in last hour')
+"
+```
+
+Expected: `Azure Activity Log connection: OK â€” N events in last hour`
+
+---
+
+## PART 4 â€” GitHub Token
+
+1. GitHub â†’ profile picture â†’ **Settings** â†’ **Developer settings** â†’ **Personal access tokens** â†’ **Tokens (classic)** â†’ **Generate new token (classic)**
+2. Note: `breachtrace-demo` | Expiration: 7 days | Scopes: **`repo`** only
+3. Copy: `GITHUB_TOKEN=ghp_...`
+
+Generate a webhook secret:
+```powershell
+-join ((65..90) + (97..122) + (48..57) | Get-Random -Count 32 | ForEach-Object {[char]$_})
+```
+Copy the output â†’ `GITHUB_WEBHOOK_SECRET`
+
+---
+
+## PART 5 â€” Gemini API Key
+
+1. Go to [https://aistudio.google.com/app/apikey](https://aistudio.google.com/app/apikey)
+2. Sign in with Google â†’ **Create API key** â†’ **Create API key in new project**
+3. Copy: `GEMINI_API_KEY=AIza...`
+
+Verify it works:
+```powershell
+cd C:\Users\ritwi\Downloads\BreachTrace
+.\.venv\Scripts\Activate.ps1
+cd backend
+python -c "
+import config, google.generativeai as genai
 genai.configure(api_key=config.GEMINI_API_KEY)
 m = genai.GenerativeModel('gemini-2.5-flash')
 print(m.generate_content('Respond with exactly: Gemini is working').text)
 "
 ```
-
-Expected output: `Gemini is working`
+Expected: `Gemini is working`
 
 ---
 
-## PART 4 — PostgreSQL Database
+## PART 6 â€” PostgreSQL Database (Local Install Only)
 
-### Option A — PostgreSQL Already Installed
+### Step 6.1 â€” Install PostgreSQL if not already installed
+
+Download from [https://www.postgresql.org/download/windows](https://www.postgresql.org/download/windows) â†’ run the installer â†’ remember the **postgres** user password you set.
+
+### Step 6.2 â€” Create the database
 
 ```powershell
-# Open psql as the postgres superuser:
+# Open psql as the postgres superuser
 psql -U postgres
 
-# Inside psql, create the database:
+# Inside psql:
 CREATE DATABASE breachtrace;
 \q
 ```
 
-Your database URL will be:
+Your DATABASE_URL:
 ```
 DATABASE_URL=postgresql://postgres:YOUR_PASSWORD@localhost:5432/breachtrace
 ```
 
-> If your password contains special characters (e.g. `@`, `#`, `!`), URL-encode them:
-> - `@` → `%40`
-> - `#` → `%23`
-> - `!` → `%21`
->
-> Example: password `madhu@2020` → `madhu%402020`
+> If your password contains special characters: `@` â†’ `%40`, `#` â†’ `%23`, `!` â†’ `%21`
+> Example: password `pass@123` â†’ `DATABASE_URL=postgresql://postgres:pass%40123@localhost:5432/breachtrace`
 
-Verify the connection works:
+Verify:
 ```powershell
+.\.venv\Scripts\Activate.ps1
 python -c "
 import psycopg2
 conn = psycopg2.connect('postgresql://postgres:YOUR_PASSWORD@localhost:5432/breachtrace')
@@ -177,220 +405,142 @@ conn.close()
 "
 ```
 
-### Option B — Docker (No PostgreSQL Install Required)
+### Step 6.3 â€” Start PostgreSQL service
 
 ```powershell
-docker run -d `
-  --name breachtrace-pg `
-  -e POSTGRES_USER=breachtrace `
-  -e POSTGRES_PASSWORD=breachtrace `
-  -e POSTGRES_DB=breachtrace `
-  -p 5432:5432 `
-  postgres:16
+# Check if running:
+Get-Service -Name postgresql*
 
-# Verify it started:
-docker ps
-```
-
-Your database URL:
-```
-DATABASE_URL=postgresql://breachtrace:breachtrace@localhost:5432/breachtrace
+# If stopped:
+Start-Service -Name postgresql*    # adjust the name to match what Get-Service shows
 ```
 
 ---
 
-## PART 5 — Fill in the `.env` File
+## PART 7 â€” Fill in the `.env` File
 
-The `.env` file lives at the **project root** (`C:\Users\ritwi\Downloads\BreachTrace\.env`). Every value must be filled in — the backend will print which keys are missing and refuse to start if any are absent.
+The `.env` lives at `C:\Users\ritwi\Downloads\BreachTrace\.env`. Create it now with all values filled in:
 
 ```env
-# AWS Admin (for CloudTrail queries)
-AWS_ACCESS_KEY_ID=AKIA...your-breachtrace-admin-key...
-AWS_SECRET_ACCESS_KEY=...your-breachtrace-admin-secret...
+# â”€â”€ AWS Admin (queries CloudTrail) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+AWS_ACCESS_KEY_ID=AKIA...your-admin-key...
+AWS_SECRET_ACCESS_KEY=...your-admin-secret...
 AWS_REGION=us-east-1
 
-# AWS Experiment User (the key that gets "leaked" in the demo)
+# â”€â”€ AWS Experiment (the "leaked" key) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 EXPERIMENT_AWS_ACCESS_KEY_ID=AKIA...your-experiment-key...
 EXPERIMENT_AWS_SECRET_ACCESS_KEY=...your-experiment-secret...
 
-# GitHub
-GITHUB_TOKEN=ghp_...your-token...
-GITHUB_WEBHOOK_SECRET=breachtrace-demo-secret-2026-group03
+# â”€â”€ GCP Admin (queries Cloud Audit Logs) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# Paste the single-line JSON string from Step 2.6
+GCP_PROJECT_ID=your-project-id
+GCP_SERVICE_ACCOUNT_JSON={"type":"service_account","project_id":"your-project-id",...}
+
+# â”€â”€ GCP Experiment (the "leaked" SA email) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+GCP_EXPERIMENT_CLIENT_EMAIL=breachtrace-experiment@your-project-id.iam.gserviceaccount.com
+GCP_EXPERIMENT_PRIVATE_KEY_ID=<40-char hex from experiment SA JSON key file>
+GCP_EXPERIMENT_PRIVATE_KEY=-----BEGIN RSA PRIVATE KEY-----\nMIIE...\n-----END RSA PRIVATE KEY-----\n
+
+# â”€â”€ Azure Admin (queries Activity Logs) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+AZURE_TENANT_ID=xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
+AZURE_CLIENT_ID=xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
+AZURE_CLIENT_SECRET=<breachtrace-admin app client secret>
+AZURE_SUBSCRIPTION_ID=xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
+
+# â”€â”€ Azure Experiment (the "leaked" service principal) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# Use the Service Principal OBJECT ID from Enterprise Applications (Step 3.5)
+AZURE_EXPERIMENT_CLIENT_ID=xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
+AZURE_EXPERIMENT_CLIENT_SECRET=<breachtrace-experiment app client secret>
+
+# â”€â”€ GitHub â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+GITHUB_TOKEN=ghp_...
+GITHUB_WEBHOOK_SECRET=<32-char random string from Part 4>
 GITHUB_TEST_REPO=yourusername/breachtrace-test-repo
 
-# Gemini
-GEMINI_API_KEY=AIza...your-key...
+# â”€â”€ Gemini â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+GEMINI_API_KEY=AIza...
 
-# Database
+# â”€â”€ Database â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 DATABASE_URL=postgresql://postgres:YOUR_PASSWORD@localhost:5432/breachtrace
 
-# App
+# â”€â”€ App â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 ENVIRONMENT=development
 ```
 
-> **Never commit `.env` to Git.** It is already listed in `.gitignore`.
+> **Never commit `.env` to Git.** It is in `.gitignore` already.
+
+### How to fill in GCP_EXPERIMENT_PRIVATE_KEY
+
+Open your `breachtrace-experiment-xxxx.json` file in a text editor. Find the `private_key` field:
+```json
+"private_key": "-----BEGIN RSA PRIVATE KEY-----\nMIIEowIB...\n-----END RSA PRIVATE KEY-----\n"
+```
+Copy just the **value** (the string between the outer `"` quotes) and paste it as:
+```env
+GCP_EXPERIMENT_PRIVATE_KEY=-----BEGIN RSA PRIVATE KEY-----\nMIIEowIB...\n-----END RSA PRIVATE KEY-----\n
+```
+The `\n` sequences must remain as literal backslash-n (not real newlines) in the `.env` file.
 
 ---
 
-## PART 6 — Run Database Migrations
+## PART 8 â€” Run Database Migrations
 
-This step creates all four tables in your PostgreSQL database: `incident_records`, `forensic_events`, `collection_status`, and `experiment_runs`. It must be run once before the backend can start.
-
-### Step 6.1 — Activate the virtual environment and navigate
+Run once before the first start. Creates tables: `incident_records`, `forensic_events`, `collection_status`, `experiment_runs`.
 
 ```powershell
 cd C:\Users\ritwi\Downloads\BreachTrace
 .\.venv\Scripts\Activate.ps1
 cd backend
-```
-
-Your prompt should now show `(.venv)` at the start.
-
-### Step 6.2 — Run Alembic migrations
-
-```powershell
 python -m alembic upgrade head
-```
-
-**Expected output (success):**
-```
-INFO  [alembic.runtime.migration] Context impl PostgreSQLImpl.
-INFO  [alembic.runtime.migration] Will assume transactional DDL.
-INFO  [alembic.runtime.migration] Running upgrade  -> e70a65e1a493, initial schema
-INFO  [alembic.runtime.migration] Running upgrade e70a65e1a493 -> a1b2c3d4e5f6, add principal_arn to forensic_events
-```
-
-### Step 6.3 — Verify the tables were created
-
-```powershell
-python -c "
-from db.models import Base
-from db.database import engine
-from sqlalchemy import inspect
-
-inspector = inspect(engine)
-tables = inspector.get_table_names()
-print('Tables in database:')
-for t in tables:
-    print(f'  ✓ {t}')
-"
 ```
 
 **Expected output:**
 ```
-Tables in database:
-  ✓ alembic_version
-  ✓ collection_status
-  ✓ experiment_runs
-  ✓ forensic_events
-  ✓ incident_records
+INFO  [alembic.runtime.migration] Running upgrade  -> e70a65e1a493, initial schema
+INFO  [alembic.runtime.migration] Running upgrade e70a65e1a493 -> a1b2c3d4e5f6, add principal_arn to forensic_events
 ```
 
-### Step 6.4 — Troubleshooting Migrations
-
-**Error: `Can't connect to PostgreSQL server`**
-
-Your PostgreSQL isn't running or the DATABASE_URL is wrong.
-
-```powershell
-# Check PostgreSQL is running (Windows Service):
-Get-Service -Name postgresql*
-
-# If stopped, start it:
-Start-Service -Name postgresql*        # adjust service name if different
-
-# Or if using Docker:
-docker start breachtrace-pg
-```
-
-Also double-check `DATABASE_URL` in `.env`:
-- No double `postgresql://postgresql://` prefix — only one `postgresql://`
-- Password special characters are URL-encoded (`@` → `%40`)
-- Port is `5432`
-- Database name `breachtrace` exists
-
-**Error: `database "breachtrace" does not exist`**
-
-```powershell
-psql -U postgres -c "CREATE DATABASE breachtrace;"
-```
-
-**Error: `role "postgres" does not exist`** (common on fresh installs)
-
-```powershell
-# Find your actual postgres username:
-psql -U $env:USERNAME breachtrace
-# Or try:
-psql -U $env:COMPUTERNAME breachtrace
-```
-
-Update `DATABASE_URL` with the correct username.
-
-**Error: `relation "alembic_version" already exists` or `Table already exists`**
-
-The database was partially migrated. Reset cleanly:
-
-```powershell
-# Drop and recreate the database (WARNING: deletes all data):
-psql -U postgres -c "DROP DATABASE IF EXISTS breachtrace;"
-psql -U postgres -c "CREATE DATABASE breachtrace;"
-python -m alembic upgrade head
-```
-
-**Error: `FATAL: password authentication failed`**
-
-Your password in DATABASE_URL is wrong. Test the exact connection string:
-
+Verify tables:
 ```powershell
 python -c "
-import psycopg2
-try:
-    conn = psycopg2.connect('YOUR_DATABASE_URL_HERE')
-    print('Connected OK')
-    conn.close()
-except Exception as e:
-    print(f'FAILED: {e}')
+from db.database import engine
+from sqlalchemy import inspect
+for t in inspect(engine).get_table_names():
+    print('  âœ“', t)
 "
 ```
 
-**Alternative: Skip Alembic entirely (nuclear option)**
-
-If Alembic refuses to cooperate, create all tables directly from the ORM models:
-
+**If Alembic fails entirely**, create tables directly:
 ```powershell
 python -c "
 from db.models import Base
 from db.database import engine
 Base.metadata.create_all(bind=engine)
-print('All tables created directly from ORM models.')
+print('All tables created.')
 "
 ```
 
-This bypasses Alembic migration history entirely. Use this only if Step 6.2 fails after trying the fixes above.
-
-### Step 6.5 — Clear old incidents before the demo
-
-If you ran any test incidents during setup, clear them so the evaluators see a clean dashboard:
-
+Clear any test incidents before the demo:
 ```powershell
 python -c "
 from db.database import SessionLocal
 from db.models import IncidentRecord
 db = SessionLocal()
-count = db.query(IncidentRecord).delete()
-db.commit()
-db.close()
-print(f'Deleted {count} incident(s). Dashboard is clean.')
+n = db.query(IncidentRecord).delete()
+db.commit(); db.close()
+print(f'Deleted {n} incident(s). Dashboard is clean.')
 "
 ```
 
 ---
 
-## PART 7 — Make the CloudTrail Events (20+ Minutes Before Demo)
+## PART 9 â€” Generate Real Cloud Activity (20+ Minutes Before Demo)
 
-**This is the most time-sensitive step.** CloudTrail has up to a 15-minute delivery delay. Run these API calls at least 20 minutes before you trigger the simulation.
+**Time-critical for AWS** (CloudTrail has ~15 min delivery delay). GCP and Azure are near-real-time.
 
-Open a new PowerShell terminal and set the experiment credentials for this session:
+### 9A â€” AWS (run at least 20 min before the demo)
+
+Open a terminal and set the experiment credentials for this session only:
 
 ```powershell
 $env:AWS_ACCESS_KEY_ID     = "AKIA...your-experiment-key..."
@@ -398,50 +548,149 @@ $env:AWS_SECRET_ACCESS_KEY = "...your-experiment-secret..."
 $env:AWS_DEFAULT_REGION    = "us-east-1"
 ```
 
-Now run these commands in order — this creates a realistic attacker scenario with multiple categories:
+Run these commands to create a realistic multi-stage attacker scenario:
 
 ```powershell
-# ── RECONNAISSANCE phase ──────────────────────────────────────────────────────
-# These will be classified as category: reconnaissance, severity: LOW (green dots)
+# RECONNAISSANCE â€” classified as LOW severity
 aws sts get-caller-identity
 aws iam get-user
 aws iam list-users
 aws iam list-roles
 aws iam list-policies --scope Local
 
-# ── DATA ACCESS phase ─────────────────────────────────────────────────────────
-# These will be classified as category: data_access, severity: MEDIUM (yellow dots)
+# DATA ACCESS â€” classified as MEDIUM severity
 aws s3 ls
 aws ec2 describe-instances --region us-east-1
-aws ec2 describe-security-groups --region ap-south-1
-aws ec2 describe-vpcs --region ap-south-1
+aws ec2 describe-security-groups
+aws ec2 describe-vpcs
 
-# ── BULK S3 ACCESS (triggers exfiltration detection) ─────────────────────────
-# The classifier escalates same action called 5+ times from same IP to exfiltration
-# This pushes overall severity to HIGH/CRITICAL
-aws s3 ls
-aws s3 ls
-aws s3 ls
-aws s3 ls
-aws s3 ls
-aws s3 ls
+# BULK S3 ACCESS â€” 6 identical calls trigger EXFILTRATION classification â†’ severity goes HIGH/CRITICAL
+aws s3 ls; aws s3 ls; aws s3 ls; aws s3 ls; aws s3 ls; aws s3 ls
 
-# ── IAM PRIVILEGE RECONNAISSANCE (makes GDPR banner appear) ──────────────────
+# IAM RECON â€” triggers GDPR banner in the UI
 aws iam list-access-keys --user-name breachtrace-experiment
 aws iam get-account-summary
 aws iam list-attached-user-policies --user-name breachtrace-experiment
-aws iam get-user
 ```
 
-> After running all commands, **set a 20-minute timer** and move on to Step 8. Do not trigger the simulation until the timer expires.
+**Set a 20-minute timer.** Do not trigger the simulation until it expires.
 
 ---
 
-## PART 8 — Start the Application
+### 9B â€” GCP (run 5 minutes before the demo â€” near-real-time)
 
-Open **two separate PowerShell windows** side by side.
+Activate the experiment service account and make a few Cloud Storage API calls so they appear in Audit Logs.
 
-### Terminal A — Backend
+**Option A: Using gcloud CLI** (install from [https://cloud.google.com/sdk/docs/install](https://cloud.google.com/sdk/docs/install) if not installed)
+
+```powershell
+# Activate the experiment SA
+gcloud auth activate-service-account --key-file="C:\Users\ritwi\Downloads\breachtrace-experiment-xxxx.json"
+gcloud config set project your-project-id
+
+# Make API calls that generate Cloud Audit Log entries
+gcloud storage buckets list   # lists all GCS buckets â€” generates DATA_READ audit log
+gcloud projects describe your-project-id   # project metadata â€” generates DATA_READ
+gcloud iam service-accounts list   # IAM list â€” generates DATA_READ
+gcloud storage buckets list   # repeat 3 times for exfiltration signal
+gcloud storage buckets list
+gcloud storage buckets list
+```
+
+**Option B: Python script** (no gcloud CLI needed â€” uses the .venv):
+
+```powershell
+cd C:\Users\ritwi\Downloads\BreachTrace
+.\.venv\Scripts\Activate.ps1
+python -c "
+from google.oauth2 import service_account
+from google.cloud import storage
+import json
+
+# Load experiment key
+with open(r'C:\Users\ritwi\Downloads\breachtrace-experiment-xxxx.json') as f:
+    info = json.load(f)
+
+creds = service_account.Credentials.from_service_account_info(info)
+client = storage.Client(project=info['project_id'], credentials=creds)
+
+# List buckets several times â€” generates DATA_READ audit log entries
+for i in range(6):
+    buckets = list(client.list_buckets())
+    print(f'Run {i+1}: {len(buckets)} buckets visible')
+
+print('GCP activity generated â€” audit logs will appear in ~30 seconds')
+"
+```
+
+> GCP Cloud Audit Logs appear within **30â€“60 seconds**, not 15 minutes like AWS CloudTrail. You can run these calls just before triggering the simulation.
+
+---
+
+### 9C â€” Azure (run 5 minutes before the demo â€” near-real-time)
+
+Make some ARM API calls using the experiment app so they appear in Activity Logs.
+
+**Using Azure CLI** (install from [https://aka.ms/installazurecliwindows](https://aka.ms/installazurecliwindows) if not installed):
+
+```powershell
+# Login as the experiment service principal
+az login --service-principal `
+  --username "AZURE_EXPERIMENT_APPLICATION_CLIENT_ID" `
+  --password "AZURE_EXPERIMENT_CLIENT_SECRET" `
+  --tenant "AZURE_TENANT_ID"
+
+# Make ARM calls that appear in Activity Logs
+az resource list --subscription "AZURE_SUBSCRIPTION_ID"
+az storage account list --subscription "AZURE_SUBSCRIPTION_ID"
+az group list
+az network vnet list --subscription "AZURE_SUBSCRIPTION_ID"
+az resource list  # repeat for exfiltration signal
+az resource list
+az resource list
+az resource list
+
+# Log out
+az logout
+```
+
+**Using Python** (no Azure CLI needed):
+
+```powershell
+cd C:\Users\ritwi\Downloads\BreachTrace
+.\.venv\Scripts\Activate.ps1
+python -c "
+import config
+from azure.identity import ClientSecretCredential
+from azure.mgmt.resource import ResourceManagementClient
+from azure.mgmt.storage import StorageManagementClient
+
+# Use the experiment app credentials directly
+cred = ClientSecretCredential(
+    tenant_id=config.AZURE_TENANT_ID,
+    client_id='PASTE_EXPERIMENT_APPLICATION_CLIENT_ID_HERE',
+    client_secret=config.AZURE_EXPERIMENT_CLIENT_SECRET,
+)
+
+# List resources â€” generates Activity Log entries
+rm_client = ResourceManagementClient(cred, config.AZURE_SUBSCRIPTION_ID)
+for i in range(4):
+    groups = list(rm_client.resource_groups.list())
+    print(f'Run {i+1}: {len(groups)} resource groups')
+
+print('Azure activity generated â€” Activity Logs appear within 1-2 minutes')
+"
+```
+
+> Azure Activity Logs appear within **1â€“2 minutes**. Run these calls just before triggering the simulation.
+
+---
+
+## PART 10 â€” Start the Application
+
+Open two separate PowerShell windows.
+
+### Terminal A â€” Backend
 
 ```powershell
 cd C:\Users\ritwi\Downloads\BreachTrace
@@ -450,301 +699,341 @@ cd backend
 python -m uvicorn main:app --reload --host 0.0.0.0 --port 8000
 ```
 
-**Expected output:**
+**Expected:**
 ```
-INFO:     Started reloader process [xxxxx]
-INFO:     Started server process [xxxxx]
-INFO:     Waiting for application startup.
 INFO:     Application startup complete.
-INFO:     Uvicorn running on http://0.0.0.0:8000 (Press CTRL+C to quit)
+INFO:     Uvicorn running on http://0.0.0.0:8000
 ```
 
-Verify in browser: `http://localhost:8000` → `{"status":"ok","message":"BreachTrace running"}`
+Verify: `http://localhost:8000` â†’ `{"status":"ok","message":"BreachTrace running"}`
+API docs: `http://localhost:8000/docs`
 
-API documentation (show evaluators this too): `http://localhost:8000/docs`
-
-### Terminal B — Frontend
+### Terminal B â€” Frontend
 
 ```powershell
 cd C:\Users\ritwi\Downloads\BreachTrace\client
 npm run dev
 ```
 
-**Expected output:**
+**Expected:**
 ```
-  VITE v8.0.2  ready in 312ms
-  ➜  Local:   http://localhost:5173/
+  VITE ready in 312ms
+  âžœ  Local:   http://localhost:5173/
 ```
 
-Open `http://localhost:5173` in Chrome. You should see:
-- Dashboard with "No incidents detected yet"
-- Stats cards showing all zeros
-- No mock data — this is hitting the real backend
+Open `http://localhost:5173` â€” should show empty dashboard (no mock data, hitting real backend).
 
 ---
 
-## PART 9 — Create the Demo Trigger Script
+## PART 11 â€” Run the Demo Trigger
 
-Create this file once, before demo day, with your real key pre-filled so nothing needs to be typed live:
+The `demo_trigger.py` file (already updated in the repo) can trigger incidents for all three platforms.
+
+**Before running, update the placeholder values at the top of `demo_trigger.py`:**
+
+```powershell
+# Open the file
+code C:\Users\ritwi\Downloads\BreachTrace\demo_trigger.py
+```
+
+Replace these values:
+```python
+# AWS
+AWS_KEY_ID = "AKIA...your-experiment-key..."        # from Step 1.3
+
+# GCP
+GCP_CLIENT_EMAIL = "breachtrace-experiment@your-project-id.iam.gserviceaccount.com"
+GCP_PRIVATE_KEY_ID = "abc123..."                    # 40-char hex from experiment SA JSON
+
+# Azure
+AZURE_CLIENT_ID = "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"  # Object ID from Step 3.5
+AZURE_CLIENT_SECRET = "AzureExperimentSecret~..."         # secret from Step 3.4
+```
+
+**Run all three platforms** (Terminal C, while backend is running):
 
 ```powershell
 cd C:\Users\ritwi\Downloads\BreachTrace
-```
-
-Create `demo_trigger.py`:
-
-```python
-import requests
-import json
-from datetime import datetime, timezone, timedelta
-
-# ── Fill these in once and save the file ──────────────────────────────────────
-KEY_ID     = "AKIA...your-experiment-key..."      # <-- your real experiment key
-REPO_URL   = "https://github.com/yourusername/student-project"
-# ─────────────────────────────────────────────────────────────────────────────
-
-# Set exposure_start to 25 minutes ago so all CloudTrail events fall inside the window
-exposure_start = (datetime.now(timezone.utc) - timedelta(minutes=25)).isoformat()
-
-# Construct the fake "leaked" diff — exactly what GitHub would send us
-diff_text = (
-    f"+  # WARNING: do not commit secrets\n"
-    f"+  AWS_ACCESS_KEY_ID={KEY_ID}\n"
-    f"+  AWS_SECRET_ACCESS_KEY=wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY\n"
-    f"+  AWS_REGION=us-east-1\n"
-)
-
-resp = requests.post("http://localhost:8000/test/simulate", json={
-    "repo_url": REPO_URL,
-    "diff_text": diff_text,
-    "access_key_id": KEY_ID,
-    "exposure_start": exposure_start,
-})
-
-if resp.status_code != 202:
-    print(f"ERROR {resp.status_code}: {resp.text}")
-else:
-    data = resp.json()
-    incident_id = data["incidents"][0]["incident_id"]
-    print(json.dumps(data, indent=2))
-    print()
-    print("=" * 60)
-    print(f"Incident created: {incident_id}")
-    print(f"Open in browser:  http://localhost:5173/incident/{incident_id}")
-    print("=" * 60)
-```
-
-To run it on demo day:
-```powershell
 python demo_trigger.py
 ```
 
+Or run a single platform:
+```powershell
+python demo_trigger.py aws
+python demo_trigger.py gcp
+python demo_trigger.py azure
+```
+
+Each run prints the incident ID and direct URL. Copy the URL and open it in the browser.
+
 ---
 
-## PART 10 — What Evaluators Will See (Second-by-Second)
+## PART 12 â€” What Evaluators Will See
 
-After running `demo_trigger.py`, here is exactly what happens:
+After triggering, here is the second-by-second progression for each platform:
 
 | Time | Backend | Dashboard |
 |------|---------|-----------|
-| 0s | Incident created, pipeline background task fires | New row appears in table, status **"collecting"** |
-| 1–5s | CloudTrail query fires using admin key | Duration counter ticking live |
-| 5–15s | CloudTrail returns events, saved to DB | Status → **"classifying"** |
-| 15–18s | Classifier tags each event with category + severity weight | Status → **"scoring"** |
-| 18–20s | score_incident() runs, GDPR flag checked, financial impact calculated | Status → **"reporting"**, **severity badge appears** |
-| 20–50s | Gemini API called, 4-section report generated | Status still "reporting" |
-| 50–60s | Report + remediation checklist parsed and saved | Status → **"complete" ✅** |
+| 0s | Incident created, background pipeline fires | Row appears with platform badge **(AWS / GCP / Azure)**, status **collecting** |
+| 1â€“5s | Cloud query fires (AWS: CloudTrail, GCP: Cloud Logging, Azure: Activity Logs) | Duration counter ticking |
+| 5â€“20s | Events returned and saved to DB | Status â†’ **classifying** |
+| 20â€“22s | Classifier tags each event; scorer runs | Status â†’ **scoring** â†’ **reporting**, severity badge appears |
+| 25â€“60s | Gemini generates 4-section report | Status still **reporting** |
+| 60s | Report + checklist saved | Status â†’ **complete âœ…** |
 
-**Best time to click the incident row:** At ~15 seconds, while it's classifying. The evaluators see the pipeline stepper advance in real time.
+**Best time to click the incident row:** at ~10â€“15 seconds while it is classifying â€” evaluators see the pipeline stepper advance in real time.
 
----
-
-## PART 11 — The Incident Detail Page — Section by Section
-
-Click any incident row in the Dashboard to open the Incident Detail page. Walk evaluators through each section:
-
-### 1. Pipeline Stepper (top right of header card)
-Six dots: `detecting → collecting → classifying → scoring → reporting → complete`
-Each lights up as its stage finishes. The active stage pulses.
-
-### 2. Severity Badge (top left, next to credential hint)
-Changes from `—` (pending) to a colour-coded badge:
-- 🔴 **CRITICAL** — if privilege escalation or exfiltration detected
-- 🟠 **HIGH** — if resource abuse or 5+ same calls from same IP
-- 🟡 **MEDIUM** — data access events
-- 🟢 **LOW** — reconnaissance only
-
-With the API calls from Part 7, expect **HIGH** or **CRITICAL**.
-
-### 3. GDPR Banner (inside header card, appears if PII accessed)
-Red left-border warning: `"GDPR notification may be required — potential PII access detected"`
-Appears if any `data_access` event touched a resource name containing `user`, `account`, `email`, or similar PII hints.
-
-### 4. Financial Impact (inside header card)
-Formatted string estimating cost — appears if `RunInstances`, large `GetObject` calls, or cluster creation was detected.
-
-### 5. Gemini Incident Summary (full-width section)
-Four sections generated by Gemini:
-1. **Executive Summary** — one plain-English paragraph
-2. **Chronological Narrative** — step-by-step attacker story
-3. **Business Impact Assessment**
-4. **Remediation Checklist** — numbered, each starting with ☐
-
-### 6. D3 Forensic Timeline (left panel, 2/3 width)
-- X-axis = time of each API call
-- Y-axis = AWS service (s3.amazonaws.com, iam.amazonaws.com, ec2.amazonaws.com, sts.amazonaws.com)
-- Each dot = one CloudTrail event, coloured by severity weight
-- **Hover over any dot** → tooltip shows: API action, exact time, source IP, affected resource, impact category
-
-### 7. Blast Radius Summary (right panel, top)
-- "AWS CloudTrail — N events"
-- Horizontal progress bars showing: Reconnaissance N%, Data Access N%, Exfiltration N%
-- Overall severity badge at top right
-
-### 8. Affected Resources (right panel, middle)
-- Grouped by resource type: bucket, instance, key
-- Each unique resource name shown in monospace
-- Event count per resource type
-
-### 9. Remediation Checklist (right panel, bottom)
-- Clickable checkboxes — **click them live** as you walk through remediation steps
-- Counter shows `0/N` → increments as you check each item
+**Dashboard platform filter tabs:** at the top of the dashboard, click **GCP** or **Azure** to filter the incident list by platform.
 
 ---
 
-## PART 12 — Troubleshooting
+## PART 13 â€” Incident Detail Page â€” What to Show
 
-### Pipeline completes but 0 events in timeline
+### For all platforms
 
-**Cause:** CloudTrail hasn't delivered the events yet (< 15 min since Part 7 commands).
-**Fix:** Wait. They will appear if you trigger again 20+ minutes after the API calls.
+1. **Pipeline Stepper** â€” six dots light up sequentially (detecting â†’ collecting â†’ classifying â†’ scoring â†’ reporting â†’ complete)
+2. **Platform Badge** â€” coloured chip next to credential hint: orange for AWS, blue for GCP, teal for Azure
+3. **Severity Badge** â€” colour-coded (CRITICAL / HIGH / MEDIUM / LOW)
+4. **GDPR Banner** â€” appears if PII-related resources were accessed
+5. **Gemini Report** â€” executive summary, chronological narrative, business impact, remediation checklist
 
-The system still runs — Gemini generates a report that says "No CloudTrail events were captured." The pipeline steps all complete. The forensic report and remediation checklist still display. Only the timeline will be empty.
+### Platform-specific differences
+
+| Section | AWS | GCP | Azure |
+|---------|-----|-----|-------|
+| Timeline shapes | Circles | Squares | Diamonds |
+| Timeline Y-axis | AWS service names | GCP service names | Azure resource providers |
+| Blast Radius card | AWS CloudTrail | GCP Cloud Audit Logs | Azure Activity Logs |
+| Identity tile | Access Key ID | Service Account Email | Service Principal Object ID |
+| Location tile | AWS Region | GCP Resource Type | Azure Resource Group |
+
+### Live interactions to demo
+
+- **Hover over timeline dots** â†’ tooltip shows: API action, exact time, source IP, affected resource, category
+- **Click checkboxes** in the Remediation Checklist â†’ counter increments (0/N â†’ 1/N â†’ ...)
+- **Platform filter tabs** on Dashboard â†’ show only GCP incidents, then only Azure
+
+---
+
+## PART 14 â€” Troubleshooting
+
+### AWS: Pipeline completes but 0 events in timeline
+
+CloudTrail hasn't delivered the events yet (<15 min since Part 9A).
+
+**Fix:** Wait, then hit the **Refresh** button on the incident detail page (re-runs the collection). Events will appear if you wait 20+ minutes after the API calls.
+
+The pipeline still completes â€” Gemini generates "no CloudTrail events were captured." The report, checklist, and all UI sections still display. Only the timeline dots are missing.
+
+### GCP: Status goes to "error"
+
+**Check 1:** Verify `GCP_SERVICE_ACCOUNT_JSON` is valid:
+```powershell
+cd backend
+python -c "
+import config, json
+data = json.loads(config.GCP_SERVICE_ACCOUNT_JSON)
+print('JSON valid â€” client_email:', data.get('client_email'))
+"
+```
+
+**Check 2:** Verify Cloud Logging API is enabled:
+```powershell
+python -c "
+import config, json
+from google.oauth2 import service_account
+from google.cloud import logging as gcp_logging
+creds = service_account.Credentials.from_service_account_info(
+    json.loads(config.GCP_SERVICE_ACCOUNT_JSON),
+    scopes=['https://www.googleapis.com/auth/logging.read'])
+client = gcp_logging.Client(project=config.GCP_PROJECT_ID, credentials=creds)
+print('GCP connected OK')
+"
+```
+
+If this throws `403 PERMISSION_DENIED`: the admin SA is missing `roles/logging.viewer`. Go back to Step 2.4 and add the role.
+
+If this throws `API not enabled`: go to GCP Console â†’ APIs & Services â†’ enable Cloud Logging API.
+
+### Azure: Status goes to "error"
+
+**Check admin credentials:**
+```powershell
+cd backend
+python -c "
+import config
+from azure.identity import ClientSecretCredential
+cred = ClientSecretCredential(
+    tenant_id=config.AZURE_TENANT_ID,
+    client_id=config.AZURE_CLIENT_ID,
+    client_secret=config.AZURE_CLIENT_SECRET)
+token = cred.get_token('https://management.azure.com/.default')
+print('Azure admin token OK â€” expires:', token.expires_on)
+"
+```
+
+If this throws `ClientAuthenticationError`: `AZURE_CLIENT_SECRET` is wrong or expired. Go back to Step 3.2 and create a new secret.
+
+If this throws `403`: the admin app is missing Reader/Monitoring Reader on the subscription. Go back to Step 3.3.
+
+### Azure: 0 events collected but no error
+
+This can happen because Azure Activity Logs record the service principal **Object ID** as `caller`, not the Application Client ID. If the `AZURE_EXPERIMENT_CLIENT_ID` in `.env` is the Application Client ID (not Object ID), the filter won't match.
+
+**Fix:** Get the correct Object ID:
+- Azure AD â†’ Enterprise Applications â†’ search `breachtrace-experiment` â†’ copy **Object ID**
+- Update `AZURE_EXPERIMENT_CLIENT_ID` in `.env` with this Object ID
+- Update `AZURE_CLIENT_ID` field in `demo_trigger.py` with this Object ID
+- Restart the backend
 
 ### Backend fails to start: `MISSING required env var: X`
 
-Open `.env` and confirm every one of the 11 keys has a non-empty value. The most commonly forgotten:
-- `GITHUB_TEST_REPO` → even `test/test-repo` works for now
-- `ENVIRONMENT` → set to `development`
+Open `.env` and confirm every key in this list has a non-empty value:
+`AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_REGION, EXPERIMENT_AWS_ACCESS_KEY_ID, EXPERIMENT_AWS_SECRET_ACCESS_KEY, GITHUB_TOKEN, GITHUB_WEBHOOK_SECRET, GITHUB_TEST_REPO, GEMINI_API_KEY, DATABASE_URL, ENVIRONMENT`
+
+Note: GCP and Azure vars are **optional** at startup â€” missing them will cause incidents for those platforms to fail with "error" status (gracefully), not prevent the backend from starting.
 
 ### Frontend shows "Could not reach the backend"
 
-- Confirm the backend terminal shows `Application startup complete` with no errors
-- Confirm backend is on port 8000 (`http://localhost:8000` returns `{"status":"ok"}`)
-- Check there is no `client/.env.local` file containing `VITE_USE_MOCK=true`
+- Confirm backend terminal shows `Application startup complete` with no errors
+- Confirm `http://localhost:8000` returns `{"status":"ok"}`
+- Check there is no `client/.env.local` file with `VITE_USE_MOCK=true`
 
 ### Gemini returns the fallback template instead of a real report
 
 ```powershell
 cd backend
 python -c "
-import config
-import google.generativeai as genai
+import config, google.generativeai as genai
 genai.configure(api_key=config.GEMINI_API_KEY)
-m = genai.GenerativeModel('gemini-2.5-flash')
-print(m.generate_content('Say OK').text)
+print(genai.GenerativeModel('gemini-2.5-flash').generate_content('Say OK').text)
 "
 ```
 
-If this fails, your `GEMINI_API_KEY` is wrong. Get a fresh key from [https://aistudio.google.com/app/apikey](https://aistudio.google.com/app/apikey).
+If this fails: get a new key from [https://aistudio.google.com/app/apikey](https://aistudio.google.com/app/apikey).
 
-### Status stuck on "collecting" indefinitely
+### GCP: Events detected but wrong SA email in diff
 
-**Cause:** CloudTrail query is failing (wrong admin credentials or CloudTrail not enabled).
-**Check backend logs** — you should see one of:
-- `CloudTrail returned 0 events` → no events yet, pipeline continues
-- `CloudTrail collection failed` → admin credentials are wrong
+The scanner looks for `*.iam.gserviceaccount.com` emails in the diff. The `GCP_CLIENT_EMAIL` in `demo_trigger.py` must exactly match the experiment SA's `client_email` in `.env`.
 
-Verify admin credentials work:
 ```powershell
-python -c "
-import boto3, config
-ct = boto3.client('cloudtrail',
-    region_name=config.AWS_REGION,
-    aws_access_key_id=config.AWS_ACCESS_KEY_ID,
-    aws_secret_access_key=config.AWS_SECRET_ACCESS_KEY)
-resp = ct.describe_trails()
-print('CloudTrail OK:', [t['Name'] for t in resp['trailList']])
-"
+python -c "import config; print('Watching for email:', config.GCP_EXPERIMENT_CLIENT_EMAIL)"
+```
+
+Make sure the same email is in the `GCP_DIFF` string in `demo_trigger.py`.
+
+---
+
+## PART 15 â€” Pre-Demo Checklist (Night Before)
+
+### AWS
+```
+â–¡ CloudTrail trail active in us-east-1 (AWS Console â†’ CloudTrail â†’ trail shows "Logging: ON")
+â–¡ Admin key in .env: AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY
+â–¡ Experiment key in .env: EXPERIMENT_AWS_ACCESS_KEY_ID / EXPERIMENT_AWS_SECRET_ACCESS_KEY
+â–¡ Made AWS API calls tonight with experiment key â†’ wait 20 min â†’ ran demo_trigger.py aws â†’ incident appeared
+```
+
+### GCP
+```
+â–¡ Cloud Logging API enabled in GCP project
+â–¡ Data Access audit logs enabled for Cloud Storage (Step 2.3)
+â–¡ Admin SA has Logging Viewer + Viewer roles
+â–¡ GCP_SERVICE_ACCOUNT_JSON in .env parses correctly (Step 2.7 verification command passes)
+â–¡ GCP_EXPERIMENT_CLIENT_EMAIL matches exactly what is in demo_trigger.py
+â–¡ Ran gcloud / Python script to generate GCP activity â†’ ran demo_trigger.py gcp â†’ incident appeared
+```
+
+### Azure
+```
+â–¡ Admin app has Reader + Monitoring Reader roles on subscription
+â–¡ AZURE_TENANT_ID, AZURE_CLIENT_ID, AZURE_CLIENT_SECRET, AZURE_SUBSCRIPTION_ID in .env
+â–¡ AZURE_EXPERIMENT_CLIENT_ID set to Service Principal OBJECT ID (from Enterprise Applications)
+â–¡ Azure admin credential verification command (Step 3.6) passes
+â–¡ Ran az / Python script to generate Azure activity â†’ ran demo_trigger.py azure â†’ incident appeared
+```
+
+### All Platforms
+```
+â–¡ Gemini test returns a response
+â–¡ PostgreSQL running, breachtrace database exists
+â–¡ python -m alembic upgrade head â†’ no errors
+â–¡ Backend starts: http://localhost:8000 returns {"status":"ok"}
+â–¡ Frontend starts: http://localhost:5173 shows empty dashboard
+â–¡ demo_trigger.py has real values filled in for all three platforms
+â–¡ Full end-to-end test: ran demo_trigger.py â†’ all 3 incidents appeared â†’ all reached "complete"
+   â†’ Gemini reports visible â†’ timelines have dots
+â–¡ CLEARED test incidents:
+     python -c "from db.database import SessionLocal; from db.models import IncidentRecord; db=SessionLocal(); db.query(IncidentRecord).delete(); db.commit()"
 ```
 
 ---
 
-## PART 13 — Pre-Demo Checklist (Night Before)
-
-Run through this the evening before:
-
-```
-□ Step 1.4: CloudTrail trail active in us-east-1 (check AWS Console — trail shows "Logging: ON")
-□ Step 1.2: Admin key (breachtrace-admin) in .env as AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY
-□ Step 1.3: Experiment key in .env as EXPERIMENT_AWS_ACCESS_KEY_ID / EXPERIMENT_AWS_SECRET_ACCESS_KEY
-□ Step 3:   Gemini test command returns "Gemini is working" (or any response)
-□ Step 4:   PostgreSQL running, breachtrace database exists
-□ Step 6.2: python -m alembic upgrade head  → exits without error
-□ Step 6.3: All 4 tables visible (incident_records, forensic_events, collection_status, experiment_runs)
-□ Step 8A:  uvicorn starts, http://localhost:8000 returns {"status":"ok"}
-□ Step 8B:  npm run dev starts, http://localhost:5173 shows empty dashboard
-□ Step 9:   demo_trigger.py file exists with REAL experiment KEY_ID filled in
-□           Full test run: ran demo_trigger.py → incident appeared → pipeline reached "complete"
-             → Gemini report visible → timeline has dots → remediation checklist populated
-□           Clear test incidents: python -c "from db.database import SessionLocal; from db.models import IncidentRecord; db=SessionLocal(); db.query(IncidentRecord).delete(); db.commit()"
-□ Step 7:   Made AWS API calls with experiment key TONIGHT (so CloudTrail has events ready)
-```
-
----
-
-## PART 14 — Demo Day Sequence (30 Minutes Before Evaluators Arrive)
+## PART 16 â€” Demo Day Sequence (30 Minutes Before Evaluators Arrive)
 
 ```powershell
-# ── 1. Start PostgreSQL (if using Docker) ─────────────────────────────────────
-docker start breachtrace-pg
-
-# ── 2. Make AWS API calls NOW ─────────────────────────────────────────────────
-#    (Gives 15-20 min for CloudTrail to deliver them)
-$env:AWS_ACCESS_KEY_ID     = "AKIA...experiment-key..."
-$env:AWS_SECRET_ACCESS_KEY = "...experiment-secret..."
-$env:AWS_DEFAULT_REGION    = "us-east-1"
-
-aws sts get-caller-identity
-aws iam get-user; aws iam list-users; aws iam list-roles
-aws s3 ls; aws s3 ls; aws s3 ls; aws s3 ls; aws s3 ls; aws s3 ls
-aws ec2 describe-instances --region us-east-1
-aws ec2 describe-security-groups
-aws iam list-access-keys --user-name breachtrace-experiment
-aws iam get-account-summary
-
-# ── 3. Start backend (Terminal A) ─────────────────────────────────────────────
+# â”€â”€ Terminal A: Backend â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 cd C:\Users\ritwi\Downloads\BreachTrace
 .\.venv\Scripts\Activate.ps1
 cd backend
 python -m uvicorn main:app --reload --host 0.0.0.0 --port 8000
 
-# ── 4. Start frontend (Terminal B) ────────────────────────────────────────────
+# â”€â”€ Terminal B: Frontend â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 cd C:\Users\ritwi\Downloads\BreachTrace\client
 npm run dev
 
-# ── 5. Open browser ───────────────────────────────────────────────────────────
-# Navigate to http://localhost:5173
-# Dashboard should show: "No incidents detected yet"
-# Have Incident Detail URL ready to open after trigger
+# â”€â”€ Terminal C: Generate cloud activity NOW (25 min before trigger for AWS) â”€â”€â”€
 
-# ── 6. When evaluators are watching, in Terminal C: ───────────────────────────
+# --- AWS (run now, wait ~20 min before triggering) ---
+$env:AWS_ACCESS_KEY_ID = "AKIA...experiment..."
+$env:AWS_SECRET_ACCESS_KEY = "...experiment-secret..."
+$env:AWS_DEFAULT_REGION = "us-east-1"
+aws sts get-caller-identity; aws iam get-user; aws iam list-users; aws iam list-roles
+aws s3 ls; aws s3 ls; aws s3 ls; aws s3 ls; aws s3 ls; aws s3 ls
+aws ec2 describe-instances; aws iam get-account-summary
+
+# --- GCP (can run just 5 min before trigger) ---
+.\.venv\Scripts\Activate.ps1
+python -c "
+from google.oauth2 import service_account
+from google.cloud import storage
+import json
+with open(r'C:\Users\ritwi\Downloads\breachtrace-experiment-xxxx.json') as f:
+    info = json.load(f)
+creds = service_account.Credentials.from_service_account_info(info)
+client = storage.Client(project=info['project_id'], credentials=creds)
+for i in range(6): list(client.list_buckets()); print(f'GCP run {i+1} done')
+"
+
+# --- Azure (can run just 5 min before trigger) ---
+az login --service-principal -u EXPERIMENT_APP_CLIENT_ID -p EXPERIMENT_SECRET --tenant TENANT_ID
+az resource list; az resource list; az resource list; az group list; az storage account list
+az logout
+
+# â”€â”€ Open browser at http://localhost:5173 â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# Dashboard should show: "No incidents detected yet"
+
+# â”€â”€ When evaluators are watching: Terminal D â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 cd C:\Users\ritwi\Downloads\BreachTrace
-python demo_trigger.py
+python demo_trigger.py          # fires all three platforms at once
+# OR one by one:
+python demo_trigger.py aws      # then show AWS incident
+python demo_trigger.py gcp      # then show GCP incident
+python demo_trigger.py azure    # then show Azure incident
 ```
 
 ---
 
-## PART 15 — Research Page (Track A + Track B)
+## PART 17 â€” Research Page
 
-Navigate to `/research` (`http://localhost:5173/research`) to show:
+Navigate to `http://localhost:5173/research` to show:
 
-- **Track A** — SecretBench detection accuracy panel (precision/recall/F1 targets)
-- **Track B** — Experiment run metrics (avg detection time, avg report time, severity distribution)
-- Experiment run table populates as you run more incidents
+- **Track A** â€” SecretBench detection accuracy panel (precision/recall/F1 for AWS/GCP/Azure patterns)
+- **Track B** â€” Experiment run metrics (avg detection time, avg report time, severity distribution across platforms)
 
-The Track B data only shows if `experiment_runs` rows exist. These are populated by the research harness (`backend/research/harness.py`) — not required for the demo, but if you have runs from SecretBench testing, they will appear here automatically.
+Track B data populates automatically as you run more incidents through `demo_trigger.py`. Each simulation run is recorded as an experiment run.
 
 ---
 
-*BreachTrace — Group 03 · KJSCE IT · 2026*
+*BreachTrace â€” Group 03 Â· KJSCE IT Â· 2026*
+

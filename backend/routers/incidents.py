@@ -61,6 +61,10 @@ class ForensicEventOut(BaseModel):
     is_denied: bool
     impact_category: Optional[str]
     severity_weight: Optional[int]
+    # GCP / Azure identity and location
+    principal_id: Optional[str] = None
+    location: Optional[str] = None
+    raw_data: dict = Field(default_factory=dict)
 
     class Config:
         from_attributes = True
@@ -79,6 +83,12 @@ class IncidentSummaryOut(BaseModel):
     overall_severity: Optional[str]
     gdpr_flag: bool
     created_at: datetime
+    # Multi-platform fields
+    platform: str = "aws"
+    principal_id: Optional[str] = None
+    gcp_project_id: Optional[str] = None
+    azure_tenant_id: Optional[str] = None
+    azure_subscription_id: Optional[str] = None
 
     @field_validator("overall_severity", mode="before")
     @classmethod
@@ -206,6 +216,16 @@ def get_incident_timeline(
 # Manual CloudTrail refresh endpoint
 # ---------------------------------------------------------------------------
 
+def _derive_platform(incident) -> str:
+    """Derive cloud platform string from credential_type."""
+    ctype = (incident.credential_type or "").lower()
+    if "gcp" in ctype:
+        return "gcp"
+    if "azure" in ctype:
+        return "azure"
+    return "aws"
+
+
 def _queue_incident_refresh(
     incident_id: str,
     background_tasks: BackgroundTasks,
@@ -215,25 +235,45 @@ def _queue_incident_refresh(
     if incident is None:
         raise HTTPException(status_code=404, detail="Incident not found")
 
-    if not incident.access_key_id:
-        raise HTTPException(
-            status_code=422,
-            detail="Incident does not have an AWS access key ID to query CloudTrail.",
-        )
+    platform = _derive_platform(incident)
+
+    # Pick the right credential for collection:
+    # AWS uses access_key_id; GCP/Azure use principal_id (email / client ID)
+    if platform == "aws":
+        credential = incident.access_key_id
+        if not credential:
+            raise HTTPException(
+                status_code=422,
+                detail="Incident does not have an AWS access key ID to query CloudTrail.",
+            )
+    else:
+        credential = incident.principal_id
+        if not credential:
+            raise HTTPException(
+                status_code=422,
+                detail=f"Incident does not have a principal ID to query {platform.upper()} logs.",
+            )
+
+    platform_msg = {
+        "aws": "CloudTrail can take up to 15 minutes to surface fresh events.",
+        "gcp": "GCP Cloud Audit Logs query started.",
+        "azure": "Azure Activity Log query started.",
+    }.get(platform, "Log query started.")
 
     reset_incident_for_refresh(db, incident_id)
     background_tasks.add_task(
         run_collection_pipeline,
         incident.incident_id,
-        incident.access_key_id,
+        credential,
         incident.exposure_start,
+        platform=platform,
         refresh_existing=True,
     )
 
     return RefreshResponse(
         incident_id=incident.incident_id,
         status="collecting",
-        message="Forensics refresh started. CloudTrail can take up to 15 minutes to surface fresh events.",
+        message=f"Forensics refresh started. {platform_msg}",
     )
 
 

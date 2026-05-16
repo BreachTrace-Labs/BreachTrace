@@ -78,6 +78,22 @@ const STATUS_LABELS: Record<string, string> = {
   error:        'Needs Attention',
 }
 
+const PLATFORM_STYLES: Record<string, { label: string; className: string }> = {
+  gcp:   { label: 'GCP',   className: 'bg-blue-500/10 text-blue-700 dark:text-blue-300 border-blue-500/20' },
+  azure: { label: 'Azure', className: 'bg-teal-500/10 text-teal-700 dark:text-teal-300 border-teal-500/20' },
+  aws:   { label: 'AWS',   className: 'bg-orange-500/10 text-orange-700 dark:text-orange-300 border-orange-500/20' },
+}
+
+function PlatformBadge({ platform }: { platform: string | undefined }) {
+  if (!platform) return null
+  const style = PLATFORM_STYLES[platform.toLowerCase()] ?? PLATFORM_STYLES.aws
+  return (
+    <span className={`inline-flex items-center px-2.5 py-1 rounded-sm border text-xs font-bold uppercase tracking-wide ${style.className}`}>
+      {style.label}
+    </span>
+  )
+}
+
 type RefreshResponse = {
   incident_id: string
   status: IncidentRecord['status'] | string
@@ -276,6 +292,7 @@ const IncidentDetail: React.FC = () => {
                     <span className="inline-flex items-center px-2.5 py-1 rounded-sm bg-secondary text-secondary-foreground font-medium">
                       {incident.credential_type}
                     </span>
+                    <PlatformBadge platform={incident.platform} />
                     <span className="text-muted-foreground">•</span>
                     <a href={incident.repo_url} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1.5 text-primary hover:text-primary/80 hover:underline font-medium transition-colors">
                       {repoDisplay}
@@ -326,6 +343,11 @@ const IncidentDetail: React.FC = () => {
                 <SummaryTile icon={KeyRound} label="Credential Type">
                   <span className="break-words">{incident.credential_type}</span>
                 </SummaryTile>
+                {incident.principal_id && (
+                  <SummaryTile icon={ShieldAlert} label="Identity">
+                    <span className="font-mono break-all text-xs">{incident.principal_id}</span>
+                  </SummaryTile>
+                )}
               </div>
             </div>
             
