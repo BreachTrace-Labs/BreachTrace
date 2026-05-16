@@ -167,8 +167,8 @@ def run_collection_pipeline(
             return
 
         t0 = time.monotonic()
-        collector = collector_cls()
         try:
+            collector = collector_cls()
             events = collector.collect(
                 credential=credential,
                 start_time=collection_start,

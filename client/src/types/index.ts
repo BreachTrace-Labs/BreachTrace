@@ -47,3 +47,11 @@ export interface IncidentRecord {
   soc2_flag?: boolean
   compliance_reasons?: string[]
 }
+
+// IncidentSummary matches the list endpoint response (no events/report fields)
+export type IncidentSummary = Omit<IncidentRecord, 'events' | 'report_text' | 'remediation_steps' | 'estimated_financial_impact'> & {
+  events?: ForensicEvent[]
+  report_text?: string | null
+  remediation_steps?: string[]
+  estimated_financial_impact?: string | null
+}
