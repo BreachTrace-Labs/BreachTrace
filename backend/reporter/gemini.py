@@ -40,21 +40,15 @@ def _build_prompt(
     exposure_duration_seconds: int,
     affected_resources: list[str],
     source_ips: list[str],
-    platform: str = 'aws',
+    platform: str = "aws",
 ) -> str:
     event_lines = ["- " + _format_event_line(e) for e in events]
-    # Handle platform specific text
-    if platform == 'gcp':
-        event_source_text = "Cloud Audit Log"
-    elif platform == 'azure':
-        event_source_text = "Activity Log"
-    else:
-        event_source_text = "CloudTrail"
-    
-    events_block = "\n".join(event_lines) if event_lines else f"- No {event_source_text} events were captured."
+    platform_label = platform.upper()
+    no_events_msg = f"- No {platform_label} cloud audit log events were captured."
+    events_block = "\n".join(event_lines) if event_lines else no_events_msg
 
     stats = [
-        f"Platform: {platform.upper()}",
+        f"Platform: {platform_label}",
         f"Overall severity: {overall_severity or 'UNKNOWN'}",
         f"Exposure duration: {exposure_duration_seconds}s",
         f"Unique affected resources: {', '.join(affected_resources) if affected_resources else 'none recorded'}",
@@ -78,7 +72,7 @@ Context:
 - {stats[3]}
 - {stats[4]}
 
-Events:
+Cloud audit log events:
 {events_block}
 """
 
@@ -89,7 +83,7 @@ def generate_report(
     exposure_duration_seconds: int,
     affected_resources: list[str],
     source_ips: list[str],
-    platform: str = 'aws',
+    platform: str = "aws",
 ) -> str:
     """
     Call Gemini API to generate a plain-English forensic incident report.
@@ -105,9 +99,10 @@ def generate_report(
         platform=platform,
     )
 
+    platform_label = platform.upper()
     if not config.GEMINI_API_KEY:
         return (
-            "Gemini not configured — fallback summary\n\n"
+            f"Gemini not configured — fallback summary ({platform_label})\n\n"
             + prompt.replace("Generate a forensic incident report in four sections:", "Context")
         )
 
