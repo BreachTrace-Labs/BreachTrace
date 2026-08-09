@@ -12,12 +12,14 @@ import {
   Clock3,
   GitCommitHorizontal,
   KeyRound,
+  Fingerprint,
   Radio,
   RefreshCw,
   Timer,
 } from 'lucide-react'
 import client from '@/api/client'
 import type { IncidentRecord } from '@/types'
+import { derivePlatform, PLATFORM_META, platformIdentity } from '@/lib/platform'
 import SeverityBadge from '@/components/SeverityBadge'
 import ForensicTimeline from '@/components/ForensicTimeline'
 import BlastRadiusSummary from '@/components/BlastRadiusSummary'
@@ -213,6 +215,9 @@ const IncidentDetail: React.FC = () => {
 
   const dur = duration(incident.exposure_start, incident.exposure_end)
   const repoDisplay = incident.repo_url.replace('https://github.com/', '')
+  const platform = derivePlatform(incident)
+  const platformMeta = PLATFORM_META[platform]
+  const identity = platformIdentity(incident, incident.events ?? [])
 
   return (
     <div className="max-w-7xl mx-auto space-y-8 pb-12 animate-in fade-in duration-500">
@@ -273,6 +278,20 @@ const IncidentDetail: React.FC = () => {
                     </p>
                   </div>
                   <div className="flex flex-wrap items-center gap-3 text-sm">
+                    <span
+                      className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-sm font-bold uppercase tracking-wider text-xs"
+                      style={{
+                        backgroundColor: `color-mix(in srgb, ${platformMeta.color} 14%, transparent)`,
+                        color: platformMeta.color,
+                      }}
+                      title={`Forensic events collected from ${platformMeta.auditLog}`}
+                    >
+                      <span
+                        className="w-1.5 h-1.5 rounded-full shrink-0"
+                        style={{ backgroundColor: platformMeta.color }}
+                      />
+                      {platformMeta.label}
+                    </span>
                     <span className="inline-flex items-center px-2.5 py-1 rounded-sm bg-secondary text-secondary-foreground font-medium">
                       {incident.credential_type}
                     </span>
@@ -327,6 +346,22 @@ const IncidentDetail: React.FC = () => {
                   <span className="break-words">{incident.credential_type}</span>
                 </SummaryTile>
               </div>
+
+              {/* Leaked principal — named per platform. AWS reports an access key
+                  ID, GCP a service account email, Azure a client ID; showing an
+                  empty "Access Key ID" on a GCP incident reads as a bug. */}
+              {identity && (
+                <div className="mt-4">
+                  <SummaryTile icon={Fingerprint} label={identity.label}>
+                    <span className="font-mono text-xs break-all">{identity.value}</span>
+                    {identity.context && (
+                      <span className="mt-1 block text-xs font-normal text-muted-foreground">
+                        {identity.context}
+                      </span>
+                    )}
+                  </SummaryTile>
+                </div>
+              )}
             </div>
             
             {(incident.gdpr_flag || incident.pcidss_flag || incident.soc2_flag) && (

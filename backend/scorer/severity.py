@@ -138,26 +138,50 @@ def score_incident(events: list[ForensicEvent]) -> str:
 
 def compute_financial_impact(events: list[ForensicEvent]) -> str:
     """
-    Estimate financial impact from detected resource abuse patterns.
+    Estimate financial impact from detected resource abuse, across every platform.
 
-    Scans for:
-    - RunInstances calls → EC2 instance launch costs
-    - GetObject calls with large resource indicators → data transfer costs
-    - CreateCluster, CreateDBInstance → infrastructure costs
+    Each platform contributes its own cost lines and they are concatenated, so a
+    single leak that exposed both an AWS key and a Stripe key reports both.
+    Events with no platform default to 'aws', matching the schema default.
 
-    Returns a human-readable impact string with estimated costs and affected resources.
-
-    Args:
-        events: List of ForensicEvent objects
+    Stripe is the outlier and the most valuable: its events carry a real
+    transacted amount, so its figure is actual money moved, not a rate estimate.
 
     Returns:
-        str: Formatted impact description, e.g.
-             'EC2: 2x t2.micro at $0.02/hr. Data transfer: estimated $0.20'
+        str: e.g. 'EC2: 2x t2.micro at $0.02/hr. Stripe: $412.50 charged (3 charges)'
              or 'No financial impact detected'
     """
     if not events:
         return "No financial impact detected"
 
+    by_platform: dict[str, list[ForensicEvent]] = {}
+    for event in events:
+        platform = (getattr(event, "platform", None) or "aws").lower()
+        by_platform.setdefault(platform, []).append(event)
+
+    handlers = {
+        "aws": _aws_impacts,
+        "gcp": _gcp_impacts,
+        "azure": _azure_impacts,
+        "stripe": _stripe_impacts,
+        "twilio": _twilio_impacts,
+    }
+
+    impacts: list[str] = []
+    # Stable ordering so report text does not churn between runs.
+    for platform in ("aws", "gcp", "azure", "stripe", "twilio"):
+        platform_events = by_platform.get(platform)
+        if platform_events:
+            impacts.extend(handlers[platform](platform_events))
+
+    if not impacts:
+        return "No financial impact detected"
+
+    return ". ".join(impacts)
+
+
+def _aws_impacts(events: list[ForensicEvent]) -> list[str]:
+    """AWS cost lines. Output format is pinned by tests — do not reword."""
     # Count resource abuse patterns
     ec2_launches = sum(1 for e in events if e.api_action == "RunInstances")
     get_objects = sum(
@@ -203,10 +227,200 @@ def compute_financial_impact(events: list[ForensicEvent]) -> str:
         cluster_cost = cluster_creates * 0.10
         impacts.append(f"EKS: {cluster_creates} cluster(s) at ${cluster_cost:.2f}/hr")
 
-    if not impacts:
-        return "No financial impact detected"
+    return impacts
 
-    return ". ".join(impacts)
+
+# ---------------------------------------------------------------------------
+# Per-platform cost models
+#
+# Rates are public list prices for the cheapest common instance class, captured
+# 2026-08. They are order-of-magnitude estimates for a developer-facing report,
+# not billing-accurate figures — the report says "estimated" for exactly this
+# reason. Stripe and Twilio are the exceptions: those are real transacted
+# amounts and real per-message rates.
+# ---------------------------------------------------------------------------
+
+_GCP_E2_MICRO_HOURLY = 0.0084
+_GCP_EGRESS_PER_GB = 0.12
+_GCP_GKE_CLUSTER_HOURLY = 0.10
+_GCP_CLOUDSQL_DAILY = 1.50
+
+_AZURE_B1S_HOURLY = 0.0104
+_AZURE_EGRESS_PER_GB = 0.087
+_AZURE_AKS_CLUSTER_HOURLY = 0.10
+_AZURE_SQL_DAILY = 1.50
+
+_TWILIO_SMS_COST = 0.0079
+_TWILIO_CALL_COST = 0.014
+_TWILIO_NUMBER_MONTHLY = 1.15
+
+# Assumed payload size per bulk read, mirroring the AWS estimate of 100 MB.
+_ASSUMED_OBJECT_GB = 0.1
+
+
+def _count(events: list[ForensicEvent], *actions: str) -> int:
+    return sum(1 for e in events if e.api_action in actions)
+
+
+def _gcp_impacts(events: list[ForensicEvent]) -> list[str]:
+    """GCP Cloud Audit Log method names are dot-separated: 'compute.instances.insert'."""
+    impacts: list[str] = []
+
+    vm_creates = _count(events, "compute.instances.insert", "v1.compute.instances.insert")
+    bulk_reads = sum(
+        1
+        for e in events
+        if e.api_action in ("storage.objects.get", "storage.objects.list")
+        and e.affected_resource
+        and _is_large_object(e.affected_resource)
+    )
+    gke_creates = _count(events, "container.clusters.create")
+    sql_creates = _count(events, "cloudsql.instances.create", "sqladmin.instances.create")
+
+    if vm_creates > 0:
+        impacts.append(
+            f"Compute Engine: {vm_creates}x e2-micro at ${vm_creates * _GCP_E2_MICRO_HOURLY:.2f}/hr"
+        )
+    if bulk_reads > 0:
+        cost = bulk_reads * _ASSUMED_OBJECT_GB * _GCP_EGRESS_PER_GB
+        impacts.append(f"Cloud Storage egress: estimated ${cost:.2f}")
+    if gke_creates > 0:
+        impacts.append(
+            f"GKE: {gke_creates} cluster(s) at ${gke_creates * _GCP_GKE_CLUSTER_HOURLY:.2f}/hr"
+        )
+    if sql_creates > 0:
+        impacts.append(
+            f"Cloud SQL: {sql_creates} instance(s) at ${sql_creates * _GCP_CLOUDSQL_DAILY:.2f}/day"
+        )
+
+    return impacts
+
+
+def _azure_impacts(events: list[ForensicEvent]) -> list[str]:
+    """
+    Azure operation names are slash-separated resource provider paths, e.g.
+    'Microsoft.Compute/virtualMachines/write'. Matching is case-insensitive
+    because the Activity Log is inconsistent about casing.
+    """
+    impacts: list[str] = []
+    actions = [(e.api_action or "").lower() for e in events]
+
+    vm_creates = sum(1 for a in actions if a.endswith("microsoft.compute/virtualmachines/write"))
+    aks_creates = sum(
+        1 for a in actions if a.endswith("microsoft.containerservice/managedclusters/write")
+    )
+    sql_creates = sum(1 for a in actions if "microsoft.sql/servers/databases/write" in a)
+    bulk_reads = sum(
+        1
+        for e in events
+        if "microsoft.storage" in (e.api_action or "").lower()
+        and (e.api_action or "").lower().endswith("/read")
+        and e.affected_resource
+        and _is_large_object(e.affected_resource)
+    )
+
+    if vm_creates > 0:
+        impacts.append(
+            f"Virtual Machines: {vm_creates}x B1s at ${vm_creates * _AZURE_B1S_HOURLY:.2f}/hr"
+        )
+    if bulk_reads > 0:
+        cost = bulk_reads * _ASSUMED_OBJECT_GB * _AZURE_EGRESS_PER_GB
+        impacts.append(f"Blob Storage egress: estimated ${cost:.2f}")
+    if aks_creates > 0:
+        impacts.append(
+            f"AKS: {aks_creates} cluster(s) at ${aks_creates * _AZURE_AKS_CLUSTER_HOURLY:.2f}/hr"
+        )
+    if sql_creates > 0:
+        impacts.append(
+            f"Azure SQL: {sql_creates} database(s) at ${sql_creates * _AZURE_SQL_DAILY:.2f}/day"
+        )
+
+    return impacts
+
+
+def _stripe_amount(event: ForensicEvent) -> tuple[float, str] | None:
+    """
+    Pull the transacted amount out of a Stripe event.
+
+    Stripe reports amounts in the currency's minor unit (cents for USD), nested
+    at data.object.amount in the raw event payload.
+    """
+    raw = getattr(event, "raw_data", None)
+    if not isinstance(raw, dict):
+        return None
+
+    obj = raw.get("data", {})
+    if isinstance(obj, dict):
+        obj = obj.get("object", {})
+    if not isinstance(obj, dict):
+        return None
+
+    amount = obj.get("amount", obj.get("amount_captured"))
+    if not isinstance(amount, (int, float)) or isinstance(amount, bool):
+        return None
+
+    currency = str(obj.get("currency", "usd")).upper()
+    return float(amount) / 100.0, currency
+
+
+def _stripe_impacts(events: list[ForensicEvent]) -> list[str]:
+    """
+    Stripe reports real money, not an estimated rate. This is the single most
+    concrete financial figure BreachTrace can produce, so charges and refunds
+    are reported separately rather than netted — they are different harms.
+    """
+    impacts: list[str] = []
+    charged: dict[str, float] = {}
+    refunded: dict[str, float] = {}
+    charge_count = refund_count = 0
+
+    for event in events:
+        action = (event.api_action or "").lower()
+        parsed = _stripe_amount(event)
+        if parsed is None:
+            continue
+        amount, currency = parsed
+
+        if "refund" in action:
+            refunded[currency] = refunded.get(currency, 0.0) + amount
+            refund_count += 1
+        elif "charge" in action or "payment_intent" in action or "payout" in action:
+            charged[currency] = charged.get(currency, 0.0) + amount
+            charge_count += 1
+
+    for currency, total in sorted(charged.items()):
+        impacts.append(
+            f"Stripe: {total:,.2f} {currency} charged ({charge_count} transaction(s))"
+        )
+    for currency, total in sorted(refunded.items()):
+        impacts.append(
+            f"Stripe: {total:,.2f} {currency} refunded ({refund_count} refund(s))"
+        )
+
+    return impacts
+
+
+def _twilio_impacts(events: list[ForensicEvent]) -> list[str]:
+    """Twilio abuse is billed per message/call, so volume maps directly to cost."""
+    impacts: list[str] = []
+    actions = [(e.api_action or "").lower() for e in events]
+
+    messages = sum(1 for a in actions if "message" in a)
+    calls = sum(1 for a in actions if "call" in a)
+    numbers = sum(1 for a in actions if "number" in a and ("purchase" in a or "create" in a))
+
+    if messages > 0:
+        impacts.append(
+            f"Twilio: {messages} message(s) at ${messages * _TWILIO_SMS_COST:.2f}"
+        )
+    if calls > 0:
+        impacts.append(f"Twilio: {calls} call(s) at ${calls * _TWILIO_CALL_COST:.2f}")
+    if numbers > 0:
+        impacts.append(
+            f"Twilio: {numbers} number(s) purchased at ${numbers * _TWILIO_NUMBER_MONTHLY:.2f}/month"
+        )
+
+    return impacts
 
 
 def check_gdpr_flag(events: list[ForensicEvent]) -> bool:

@@ -1,0 +1,52 @@
+# BreachTrace local stack (S3-R10).
+#
+#   docker compose up --build
+#
+# Backend on http://localhost:8000, Postgres on localhost:5432.
+# Reads secrets from .env in the repo root — see .env.example. Nothing here
+# hardcodes a credential; the Postgres password comes from the environment with
+# a local-only fallback.
+
+services:
+  db:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-breachtrace}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-breachtrace_local_only}
+      POSTGRES_DB: ${POSTGRES_DB:-breachtrace}
+    ports:
+      - "5432:5432"
+    volumes:
+      - breachtrace_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      # Backend must wait for Postgres to accept connections, not merely for the
+      # container to start, or the first migration races the database.
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-breachtrace} -d ${POSTGRES_DB:-breachtrace}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    depends_on:
+      db:
+        condition: service_healthy
+    env_file:
+      - .env
+    environment:
+      # Overrides .env so the container reaches the db service rather than the
+      # host's localhost, which inside a container is the container itself.
+      DATABASE_URL: postgresql://${POSTGRES_USER:-breachtrace}:${POSTGRES_PASSWORD:-breachtrace_local_only}@db:5432/${POSTGRES_DB:-breachtrace}
+    ports:
+      - "8000:8000"
+    volumes:
+      # Live reload during development.
+      - ./backend:/app/backend
+    command: >
+      sh -c "alembic upgrade head &&
+             uvicorn main:app --host 0.0.0.0 --port 8000 --reload"
+
+volumes:
+  breachtrace_pgdata:

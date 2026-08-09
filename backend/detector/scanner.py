@@ -7,10 +7,16 @@ from detector.patterns import (
     AzureCredentialMatch,
     CredentialMatch,
     GCPCredentialMatch,
+    SaaSCredentialMatch,
     find_azure_credentials,
     find_gcp_credentials,
+    find_saas_credentials,
     has_nearby_secret,
     mask_access_key_id,
+)
+
+AnyCredentialMatch = (
+    CredentialMatch | GCPCredentialMatch | AzureCredentialMatch | SaaSCredentialMatch
 )
 
 _DIFF_METADATA_PREFIXES = ("diff --git", "index ", "@@")
@@ -79,15 +85,24 @@ def _has_nearby_secret(lines: list[_DiffLine], index: int) -> bool:
     return has_nearby_secret([line.text for line in lines], index)
 
 
-def scan(diff_text: str) -> list[CredentialMatch | GCPCredentialMatch | AzureCredentialMatch]:
+def scan(diff_text: str, *, include_saas: bool = False) -> list[AnyCredentialMatch]:
     """
     Scan unified diff text for leaked credentials across AWS, GCP, and Azure.
 
     AWS: only added lines are checked (candidate lines).
     GCP/Azure: all stripped lines are passed so multi-line JSON key files and
     context windows spanning unchanged lines are handled correctly.
+
+    ``include_saas`` adds the Stripe/Twilio/Tier-2 families. It defaults to
+    **off** deliberately: every current caller (``routers/webhook.py``,
+    ``routers/simulate.py``) reads ``match.access_key_id``, which only the AWS
+    match type defines, so returning new match types by default would raise
+    AttributeError mid-pipeline. Those routers gain per-match-type dispatch when
+    `ritwik-current` merges; flip this default to ``True`` in the same change and
+    route ``SaaSCredentialMatch`` by ``forensic_tier`` (Tier 1 → collector,
+    Tier 2 → incident with ``unavailable_reason``, no collection attempt).
     """
-    matches: list[CredentialMatch | GCPCredentialMatch | AzureCredentialMatch] = []
+    matches: list[AnyCredentialMatch] = []
     seen: set[str] = set()
     lines = _normalize_diff_lines(diff_text)
 
@@ -124,9 +139,12 @@ def scan(diff_text: str) -> list[CredentialMatch | GCPCredentialMatch | AzureCre
     matches.extend(find_gcp_credentials(stripped_text))
     matches.extend(find_azure_credentials(stripped_text))
 
+    if include_saas:
+        matches.extend(find_saas_credentials(stripped_text))
+
     return matches
 
 
-def scan_diff(diff_text: str) -> list[CredentialMatch | GCPCredentialMatch | AzureCredentialMatch]:
+def scan_diff(diff_text: str, *, include_saas: bool = False) -> list[AnyCredentialMatch]:
     """Backward-compatible alias while the rest of the pipeline switches to `scan()`."""
-    return scan(diff_text)
+    return scan(diff_text, include_saas=include_saas)
