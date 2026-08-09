@@ -41,7 +41,10 @@ breachtrace/
 
 ### Prerequisites
 
-- Python 3.12+
+- **Python 3.12+ — this is a hard requirement, not a suggestion.** The codebase uses
+  PEP 604 unions (`int | None`) in runtime-evaluated dataclass annotations. On Python
+  3.9 (the macOS system default) *every* test file fails at import with
+  `TypeError: unsupported operand type(s) for |`. Check with `python3 --version`.
 - Node.js 20+
 - PostgreSQL (local or Docker)
 - AWS account with CloudTrail enabled in `us-east-1`
@@ -57,9 +60,18 @@ cp .env.example .env
 
 ### 2. Backend
 
+Create the virtualenv from the repo root (`.venv/` is gitignored):
+
 ```bash
-cd backend
-pip install -r requirements.txt
+uv venv --python 3.12 .venv
+```
+
+No `uv`? `python3.12 -m venv .venv` works identically — only the interpreter matters.
+
+Install runtime + dev dependencies:
+
+```bash
+uv pip install -r backend/requirements.txt -r backend/requirements-dev.txt
 ```
 
 Start the server:
@@ -75,6 +87,24 @@ uvicorn main:app --reload --port 8000
 Verify: `GET http://localhost:8000/` → `{"status":"ok","message":"BreachTrace running"}`
 
 > `config.py` validates all required env vars at startup and exits with a clear error if any are missing.
+
+### 2a. Running the tests
+
+From the **repo root** (not `backend/`) — `pytest.ini` sets `pythonpath = .`, so
+imports like `from detector.scanner import scan` resolve only from the root:
+
+```bash
+.venv/bin/python -m pytest backend/tests -q
+```
+
+No AWS, GCP, Azure, or database credentials are needed — the suite is fully offline.
+Tests marked `integration` require live services and are excluded by default:
+
+```bash
+.venv/bin/python -m pytest backend/tests -q -m "not integration"
+```
+
+`test_secretbench.py` self-skips until `data/secretbench_aws_200.csv` exists (Track A, S3-Y1).
 
 ### 3. Frontend
 

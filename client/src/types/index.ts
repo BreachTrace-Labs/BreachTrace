@@ -36,6 +36,10 @@ export interface IncidentSummary {
   credential_type: string
   credential_hint: string
   access_key_id: string | null
+  // Unified identity for non-AWS platforms: GCP service account email or Azure
+  // client ID. Optional until the multi-platform API fields ship — see
+  // IncidentSummaryOut in backend/routers/incidents.py.
+  principal_id?: string | null
   gcp_project_id: string | null
   azure_tenant_id: string | null
   azure_subscription_id: string | null

@@ -204,8 +204,28 @@ AZURE_CLIENT_ID_PATTERN = re.compile(
 )
 AZURE_CLIENT_ID_CONTEXT_KEYWORDS = (
     'client_id', 'clientid', 'azure_client_id', 'appid', 'applicationid',
+    # Hyphenated CLI flag forms. Credentials appear in shell scripts and CI
+    # configs as `--client-id <uuid>`, which the underscore-only list missed
+    # entirely (S3-Y3 measured this as 2 of 2 Azure false negatives).
+    'client-id', 'app-id', 'azure-client-id',
+    # `az ad sp create-for-rbac` prints a service principal to stdout and is a
+    # strong Azure signal on its own, even when the flag is only `--id`.
+    'create-for-rbac', 'az ad sp',
 )
-AZURE_CLIENT_SECRET_PATTERN = re.compile(r'[A-Za-z0-9\.\-_~]{34,}')
+# Azure AD client secrets issued since 2021 carry a distinctive shape: a short
+# prefix, a literal '~', then ~30 more characters (commonly '<3 chars>8Q~...').
+# Requiring the tilde is what makes this pattern specific.
+#
+# The previous form, `[A-Za-z0-9.\-_~]{34,}` gated only on a nearby keyword,
+# matched ANY long string sitting near the word "password" — JWTs, bcrypt
+# hashes, SMTP and Redis passwords, even other vendors' API keys. S3-Y3 measured
+# that at 8 false positives on 8 adversarial samples: precision 0.714.
+#
+# Tradeoff, stated rather than hidden: legacy pre-2021 Azure secrets were plain
+# base64 with no tilde and are no longer matched. That is a deliberate recall
+# sacrifice — a missed credential yields no incident, while a false positive
+# yields a bogus one and corrupts the Track A accuracy numbers.
+AZURE_CLIENT_SECRET_PATTERN = re.compile(r'[A-Za-z0-9._~-]{2,8}~[A-Za-z0-9._~-]{25,40}')
 AZURE_CLIENT_SECRET_CONTEXT_KEYWORDS = (
     'client_secret', 'clientsecret', 'azure_client_secret', 'password',
 )
@@ -291,4 +311,244 @@ def find_azure_credentials(text: str) -> list[AzureCredentialMatch]:
                 line_number=i + 1,
             ))
 
+    return matches
+
+
+# =============================================================================
+# SaaS + TIER-2 CREDENTIALS — Sprint 3 (S3-Y5 / S3-Y6)
+# =============================================================================
+#
+# Two-tier model (see plan.md §1). Not every credential type has an audit-log
+# API a third party can query, so detection coverage and forensic coverage are
+# deliberately different numbers:
+#
+#   Tier 1 — detected AND blast radius reconstructable from an audit log.
+#   Tier 2 — detected only. No queryable per-credential audit log exists, so
+#            BreachTrace reports the exposure window, credential class and a
+#            remediation checklist, and states plainly why reconstruction is
+#            impossible. `unavailable_reason` carries that text to the UI.
+#
+# All patterns below are anchored on a vendor-specific literal prefix, so
+# unlike the Azure client-secret pattern they need no keyword context check.
+# =============================================================================
+
+TIER_FORENSIC = 1
+TIER_DETECTION_ONLY = 2
+
+# ── Tier 1 ────────────────────────────────────────────────────────────────────
+STRIPE_SECRET_KEY_PATTERN = re.compile(r"\b((?:sk|rk)_(?:live|test)_[0-9a-zA-Z]{24,})\b")
+TWILIO_ACCOUNT_SID_PATTERN = re.compile(r"\b(AC[0-9a-f]{32})\b")
+TWILIO_AUTH_TOKEN_PATTERN = re.compile(r"(?<![0-9a-zA-Z])([0-9a-f]{32})(?![0-9a-zA-Z])")
+TWILIO_CONTEXT_KEYWORDS = ("twilio", "auth_token", "authtoken", "account_sid", "accountsid")
+
+# ── Tier 2 ────────────────────────────────────────────────────────────────────
+GITHUB_PAT_PATTERN = re.compile(r"\b(gh[pousr]_[A-Za-z0-9]{36})\b")
+GITHUB_FINE_GRAINED_PAT_PATTERN = re.compile(r"\b(github_pat_[A-Za-z0-9]{22}_[A-Za-z0-9]{59})\b")
+SLACK_WEBHOOK_PATTERN = re.compile(
+    r"(https://hooks\.slack\.com/services/T[A-Za-z0-9_]+/B[A-Za-z0-9_]+/[A-Za-z0-9]{20,})"
+)
+SLACK_TOKEN_PATTERN = re.compile(r"\b(xox[baprs]-[0-9A-Za-z-]{10,})\b")
+NPM_TOKEN_PATTERN = re.compile(r"\b(npm_[A-Za-z0-9]{36})\b")
+SENDGRID_API_KEY_PATTERN = re.compile(r"\b(SG\.[A-Za-z0-9_-]{22}\.[A-Za-z0-9_-]{43})\b")
+HUGGINGFACE_TOKEN_PATTERN = re.compile(r"\b(hf_[A-Za-z0-9]{34})\b")
+# Requires embedded credentials — a bare `postgres://localhost/db` is not a leak.
+DB_CONNECTION_STRING_PATTERN = re.compile(
+    r"\b((?:postgres|postgresql|mysql|mariadb|mongodb\+srv|mongodb|redis|amqp)://"
+    r"[^:@/\s]+:[^@/\s]+@[^\s/\"']+)"
+)
+
+# Values that look like credentials but are documentation placeholders. Checked
+# case-insensitively as substrings of the *secret* portion of a match.
+_PLACEHOLDER_MARKERS = (
+    "xxxx", "your", "example", "placeholder", "changeme", "redacted",
+    "insert", "dummy", "sample", "<", ">", "abcdef123456", "0123456789",
+)
+
+# Passwords compared by exact match, not substring: a real password may legitimately
+# contain "pass" or "test", and a real username may contain "user" ("appuser").
+_PLACEHOLDER_PASSWORDS = frozenset({
+    "password", "passwd", "pass", "secret", "changeme", "change_me", "changeit",
+    "yourpassword", "your_password", "mypassword", "test", "admin", "root",
+    "letmein", "hunter2", "todo", "fixme", "none", "null", "empty",
+})
+
+_REASON_NO_TOKEN_AUDIT_LOG = (
+    "GitHub exposes per-token audit logs only to Enterprise organisations. "
+    "Activity performed with a personal access token cannot be reconstructed."
+)
+_REASON_SLACK = (
+    "Slack records incoming-webhook and bot activity in audit logs only on "
+    "Enterprise Grid plans. Messages sent with this credential cannot be listed."
+)
+_REASON_NPM = "npm publishes no per-token audit API, so package actions cannot be listed."
+_REASON_SENDGRID = (
+    "SendGrid's Email Activity API is a paid add-on and is not queryable on the "
+    "free tier, so sent mail cannot be enumerated."
+)
+_REASON_HUGGINGFACE = "Hugging Face exposes no audit API for access tokens."
+_REASON_DB = (
+    "Forensic reconstruction depends on audit logging inside the target database, "
+    "which BreachTrace does not control and usually cannot reach."
+)
+
+
+@dataclass
+class SaaSCredentialMatch:
+    """
+    Uniform match type for every credential family added after AWS/GCP/Azure.
+
+    Deliberately one shape for all of them. The three original match classes each
+    use a different identifier field (`access_key_id`, `client_email`, `client_id`),
+    which is exactly why callers doing `match.access_key_id` raise AttributeError
+    on a GCP match. New types share one contract so that cannot recur.
+    """
+
+    credential_type: str          # e.g. 'stripe_secret_key'
+    platform: str                 # e.g. 'stripe' — selects collector + taxonomy
+    principal: str | None         # identifier a collector queries by; None for Tier 2
+    credential_hint: str          # masked, safe to log and display
+    forensic_tier: int            # TIER_FORENSIC | TIER_DETECTION_ONLY
+    raw_match: str
+    line_number: int | None = None
+    unavailable_reason: str | None = None   # populated for Tier 2 only
+
+
+def mask_secret(value: str, *, keep_prefix: int = 8, keep_suffix: int = 4) -> str:
+    """
+    Mask a secret for display: keep a short leading prefix (which identifies the
+    vendor) and the last few characters (which let a developer recognise *which*
+    of their keys leaked), and elide everything in between.
+    """
+    if len(value) <= keep_prefix + keep_suffix:
+        return value[:keep_prefix] + "****"
+    return f"{value[:keep_prefix]}****{value[-keep_suffix:]}"
+
+
+_URI_CREDENTIALS_PATTERN = re.compile(
+    r"^[a-z+]+://([^:@/\s]+):([^@/\s]+)@", re.IGNORECASE
+)
+
+
+def _looks_like_filler(value: str) -> bool:
+    lowered = value.lower()
+    if any(marker in lowered for marker in _PLACEHOLDER_MARKERS):
+        return True
+    # Long runs of a single repeated character, e.g. 'sk_live_aaaaaaaa…'
+    body = re.sub(r"^[a-zA-Z]+_(?:live_|test_)?", "", value)
+    return len(set(body)) <= 2 and len(body) >= 8
+
+
+def _is_placeholder(value: str) -> bool:
+    """
+    True when a syntactically valid match is obviously documentation filler.
+
+    For connection strings only the password is judged. Judging the whole URI
+    gets it backwards in both directions: a hostname like `db.internal.example`
+    would reject a genuine credential, while the real giveaway — a password of
+    literally "password" — sits outside any marker.
+    """
+    uri = _URI_CREDENTIALS_PATTERN.match(value)
+    if uri:
+        password = uri.group(2)
+        return password.lower() in _PLACEHOLDER_PASSWORDS or _looks_like_filler(password)
+    return _looks_like_filler(value)
+
+
+# (credential_type, platform, pattern, tier, unavailable_reason)
+_SAAS_PATTERN_SPECS: tuple[tuple[str, str, re.Pattern[str], int, str | None], ...] = (
+    ("stripe_secret_key",     "stripe",      STRIPE_SECRET_KEY_PATTERN,        TIER_FORENSIC,       None),
+    ("github_pat",            "github",      GITHUB_PAT_PATTERN,               TIER_DETECTION_ONLY, _REASON_NO_TOKEN_AUDIT_LOG),
+    ("github_pat",            "github",      GITHUB_FINE_GRAINED_PAT_PATTERN,  TIER_DETECTION_ONLY, _REASON_NO_TOKEN_AUDIT_LOG),
+    ("slack_webhook",         "slack",       SLACK_WEBHOOK_PATTERN,            TIER_DETECTION_ONLY, _REASON_SLACK),
+    ("slack_token",           "slack",       SLACK_TOKEN_PATTERN,              TIER_DETECTION_ONLY, _REASON_SLACK),
+    ("npm_token",             "npm",         NPM_TOKEN_PATTERN,                TIER_DETECTION_ONLY, _REASON_NPM),
+    ("sendgrid_api_key",      "sendgrid",    SENDGRID_API_KEY_PATTERN,         TIER_DETECTION_ONLY, _REASON_SENDGRID),
+    ("huggingface_token",     "huggingface", HUGGINGFACE_TOKEN_PATTERN,        TIER_DETECTION_ONLY, _REASON_HUGGINGFACE),
+    ("db_connection_string",  "db",          DB_CONNECTION_STRING_PATTERN,     TIER_DETECTION_ONLY, _REASON_DB),
+)
+
+
+def _find_twilio_credentials(lines: Sequence[str]) -> list[SaaSCredentialMatch]:
+    """
+    Twilio Account SIDs are self-identifying (`AC` + 32 hex), so the SID anchors
+    the match. The auth token is a bare 32-char hex string with no prefix of its
+    own — it is only reported when it sits near Twilio context keywords, the same
+    discipline the AWS secret-key detector uses.
+    """
+    matches: list[SaaSCredentialMatch] = []
+    seen: set[str] = set()
+
+    for index, line in enumerate(lines):
+        for match in TWILIO_ACCOUNT_SID_PATTERN.finditer(line):
+            account_sid = match.group(1)
+            if account_sid in seen or _is_placeholder(account_sid):
+                continue
+            seen.add(account_sid)
+
+            lo = max(0, index - SECRET_CONTEXT_RADIUS)
+            hi = min(len(lines), index + SECRET_CONTEXT_RADIUS + 1)
+            context = "\n".join(lines[lo:hi])
+            context_lower = context.lower()
+
+            has_keyword = any(kw in context_lower for kw in TWILIO_CONTEXT_KEYWORDS)
+            token_found = any(
+                token_match.group(1) != account_sid[2:]
+                for token_match in TWILIO_AUTH_TOKEN_PATTERN.finditer(context)
+            )
+            paired = has_keyword and token_found
+
+            raw = f"{account_sid} @ line {index + 1}"
+            if paired:
+                raw += " (auth token nearby)"
+
+            matches.append(
+                SaaSCredentialMatch(
+                    credential_type="twilio_account_sid",
+                    platform="twilio",
+                    principal=account_sid,
+                    credential_hint=mask_secret(account_sid),
+                    forensic_tier=TIER_FORENSIC,
+                    raw_match=raw,
+                    line_number=index + 1,
+                )
+            )
+
+    return matches
+
+
+def find_saas_credentials(text: str) -> list[SaaSCredentialMatch]:
+    """
+    Scan text for every credential family beyond AWS/GCP/Azure.
+
+    Each pattern is anchored on a vendor-specific literal prefix, so no keyword
+    context check is needed — the prefix alone is the evidence. Twilio is the one
+    exception and is handled separately.
+    """
+    matches: list[SaaSCredentialMatch] = []
+    seen: set[str] = set()
+    lines = text.splitlines()
+
+    for index, line in enumerate(lines):
+        for cred_type, platform, pattern, tier, reason in _SAAS_PATTERN_SPECS:
+            for match in pattern.finditer(line):
+                value = match.group(1)
+                if value in seen or _is_placeholder(value):
+                    continue
+                seen.add(value)
+
+                matches.append(
+                    SaaSCredentialMatch(
+                        credential_type=cred_type,
+                        platform=platform,
+                        # Tier 2 has nothing to query, so it carries no principal.
+                        principal=value if tier == TIER_FORENSIC else None,
+                        credential_hint=mask_secret(value),
+                        forensic_tier=tier,
+                        raw_match=f"{cred_type} @ line {index + 1}",
+                        line_number=index + 1,
+                        unavailable_reason=reason,
+                    )
+                )
+
+    matches.extend(_find_twilio_credentials(lines))
     return matches

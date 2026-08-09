@@ -41,17 +41,132 @@ def compute_metrics(runs: list[dict]) -> dict:
 
 
 # =============================================================================
-# STUB — Shashank implements these (Day 6, Task 6.5)
+# Cross-platform comparison (S3-S3)
 #
-# compare_platforms: per-platform breakdown of all metrics
-# latency_by_platform: single mean detection latency per platform for paper table
+# These feed the paper's headline result — "does forensic observability differ
+# measurably by platform?" — and the Research page's per-platform latency chart.
+#
+# Run dicts reach these functions from two sources with DIFFERENT field names:
+#
+#   1. research/harness.py in-memory results — 'platform', 'first_use_time_s',
+#      'overall_severity', 'events_collected'
+#   2. GET /research/export (DB-backed) — 'actual_severity', 'first_external_use_s',
+#      'event_count', and today NO platform field at all
+#
+# Rather than force one convention retroactively, every read goes through _first()
+# and accepts either spelling. Runs with no platform key are attributed to 'aws',
+# matching the default used across the pipeline and schema.
 # =============================================================================
 
+DEFAULT_PLATFORM = "aws"
+
+_PLATFORM_KEYS = ("platform",)
+_DETECTION_KEYS = ("detection_time_s",)
+_REPORT_KEYS = ("report_time_s",)
+_FIRST_USE_KEYS = ("first_use_time_s", "first_external_use_s")
+_SEVERITY_KEYS = ("overall_severity", "actual_severity")
+_EVENT_COUNT_KEYS = ("events_collected", "event_count")
+
+
+def _first(run: dict, keys: tuple[str, ...], default=None):
+    """Return the first non-None value among `keys`, tolerating both schemas."""
+    for key in keys:
+        value = run.get(key)
+        if value is not None:
+            return value
+    return default
+
+
+def _numeric(runs: list[dict], keys: tuple[str, ...]) -> list[float]:
+    """Collect numeric values for a metric, silently dropping nulls and junk."""
+    values: list[float] = []
+    for run in runs:
+        value = _first(run, keys)
+        if value is None or isinstance(value, bool):
+            continue
+        try:
+            values.append(float(value))
+        except (TypeError, ValueError):
+            continue
+    return values
+
+
+def _summarize(values: list[float]) -> dict:
+    """
+    Mean/median/p95/min/max for one metric.
+
+    Returns None values rather than 0.0 when there is no data — a platform that
+    recorded no timings must not appear in the paper as "0 seconds to detect".
+    """
+    if not values:
+        return {"n": 0, "mean": None, "median": None, "p95": None, "min": None, "max": None}
+    return {
+        "n": len(values),
+        "mean": round(statistics.fmean(values), 2),
+        "median": round(statistics.median(values), 2),
+        "p95": round(_p95(values), 2),
+        "min": round(min(values), 2),
+        "max": round(max(values), 2),
+    }
+
+
+def group_by_platform(runs: list[dict]) -> dict[str, list[dict]]:
+    """Bucket runs by platform, defaulting missing/blank platform values to 'aws'."""
+    grouped: dict[str, list[dict]] = {}
+    for run in runs:
+        platform = _first(run, _PLATFORM_KEYS, DEFAULT_PLATFORM)
+        platform = str(platform).strip().lower() or DEFAULT_PLATFORM
+        grouped.setdefault(platform, []).append(run)
+    return grouped
+
+
 def compare_platforms(runs: list[dict]) -> dict:
-    """Per-platform breakdown: avg detection, avg report, severity distribution, event count stats."""
-    raise NotImplementedError
+    """
+    Per-platform breakdown of every experiment metric.
+
+    Returns ``{platform: {...}}`` with, for each platform: run/completion counts,
+    detection / report / first-use timing summaries, severity distribution and
+    event-count statistics. An empty input returns ``{}``.
+    """
+    result: dict[str, dict] = {}
+
+    for platform, platform_runs in sorted(group_by_platform(runs).items()):
+        completed = [r for r in platform_runs if r.get("status") == "complete"]
+
+        severity_counts: dict[str, int] = {}
+        for run in platform_runs:
+            severity = _first(run, _SEVERITY_KEYS) or "unknown"
+            severity = str(severity).upper() if severity != "unknown" else "unknown"
+            severity_counts[severity] = severity_counts.get(severity, 0) + 1
+
+        total = len(platform_runs)
+        result[platform] = {
+            "total_runs": total,
+            "completed_runs": len(completed),
+            "completion_rate": round(len(completed) / total, 3) if total else 0.0,
+            "detection_time_s": _summarize(_numeric(platform_runs, _DETECTION_KEYS)),
+            "report_time_s": _summarize(_numeric(platform_runs, _REPORT_KEYS)),
+            "first_use_time_s": _summarize(_numeric(platform_runs, _FIRST_USE_KEYS)),
+            "events_collected": _summarize(_numeric(platform_runs, _EVENT_COUNT_KEYS)),
+            "severity_distribution": severity_counts,
+        }
+
+    return result
 
 
 def latency_by_platform(runs: list[dict]) -> dict[str, float]:
-    """Returns {aws: X.X, gcp: X.X, azure: X.X} mean detection latency in seconds."""
-    raise NotImplementedError
+    """
+    Mean detection latency in seconds per platform — the paper's summary table
+    and the Research page's grouped bar chart.
+
+    Platforms with no usable timing are omitted entirely rather than reported as
+    0.0, so an unprovisioned platform cannot masquerade as an instant one.
+    """
+    latencies: dict[str, float] = {}
+
+    for platform, platform_runs in group_by_platform(runs).items():
+        values = _numeric(platform_runs, _DETECTION_KEYS)
+        if values:
+            latencies[platform] = round(statistics.fmean(values), 2)
+
+    return latencies
