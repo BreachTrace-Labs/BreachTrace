@@ -1,5 +1,10 @@
 import axios from 'axios'
-import { MOCK_INCIDENTS, MOCK_EXPERIMENT_RUNS, MOCK_STATS } from './mockData'
+import {
+  MOCK_EXPERIMENT_RUNS,
+  MOCK_INCIDENTS,
+  MOCK_PLATFORM_COMPARISON,
+  MOCK_STATS,
+} from './mockData'
 
 /* ─── mock client ─────────────────────────────────────────────── */
 
@@ -39,6 +44,11 @@ const MOCK_ROUTES: Array<{ pattern: RegExp; handler: MockHandler }> = [
     // GET /incidents
     pattern: /^\/incidents$/,
     handler: () => MOCK_INCIDENTS,
+  },
+  {
+    // GET /research/platforms — per-platform comparison for the headline chart
+    pattern: /^\/research\/platforms$/,
+    handler: () => MOCK_PLATFORM_COMPARISON,
   },
   {
     // GET /research/export

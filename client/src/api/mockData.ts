@@ -1,4 +1,13 @@
-import type { IncidentRecord, ForensicEvent } from '@/types'
+import type {
+  ExperimentRun,
+  ForensicEvent,
+  IncidentRecord,
+  MetricSummary,
+  PlatformComparison,
+  PlatformStats,
+} from '@/types'
+
+export type { ExperimentRun }
 
 /* ─── shared events for incident 1 ────────────────────────────── */
 
@@ -479,7 +488,13 @@ export const MOCK_INCIDENTS: IncidentRecord[] = [
       'Run git-secrets or trufflehog across full commit history',
     ],
     gdpr_flag: true,
-    estimated_financial_impact: 'EC2 instances: $0.02/hr × 2 (running since exposure). Data transfer: ~$0.21 (2.3 GB egress). Total accruing: ~$0.25+',
+    estimated_financial_impact: 'EC2: 2x t2.micro at $0.02/hr. Data transfer: estimated $0.01',
+    financial_impact_lines: [
+      { platform: 'aws', kind: 'compute', label: 'EC2', text: 'EC2: 2x t2.micro at $0.02/hr',
+        amount: 0.0232, currency: 'USD', unit: 'hour', quantity: 2, actual: false },
+      { platform: 'aws', kind: 'egress', label: 'Data transfer', text: 'Data transfer: estimated $0.01',
+        amount: 0.009, currency: 'USD', unit: null, quantity: 1, actual: false },
+    ],
   },
   {
     incident_id: 'inc-002',
@@ -527,7 +542,11 @@ export const MOCK_INCIDENTS: IncidentRecord[] = [
       'File GDPR / data breach notification with your supervisory authority',
     ],
     gdpr_flag: true,
-    estimated_financial_impact: 'Data transfer: ~$0.08 (800 MB egress). Potential regulatory fines: €10M–€20M under GDPR Article 83(5) if personal data confirmed.',
+    estimated_financial_impact: 'Data transfer: estimated $0.02',
+    financial_impact_lines: [
+      { platform: 'aws', kind: 'egress', label: 'Data transfer', text: 'Data transfer: estimated $0.02',
+        amount: 0.018, currency: 'USD', unit: null, quantity: 2, actual: false },
+    ],
   },
   {
     incident_id: 'inc-004',
@@ -565,7 +584,11 @@ export const MOCK_INCIDENTS: IncidentRecord[] = [
       'Audit GCP Cloud Audit Logs for further unauthorized access'
     ],
     gdpr_flag: false,
-    estimated_financial_impact: 'Compute instances: $0.10/hr. Total accruing: ~$0.50+',
+    estimated_financial_impact: 'Compute Engine: 1x e2-micro at $0.01/hr',
+    financial_impact_lines: [
+      { platform: 'gcp', kind: 'compute', label: 'Compute Engine', text: 'Compute Engine: 1x e2-micro at $0.01/hr',
+        amount: 0.0084, currency: 'USD', unit: 'hour', quantity: 1, actual: false },
+    ],
   },
   {
     incident_id: 'inc-006',
@@ -586,7 +609,11 @@ export const MOCK_INCIDENTS: IncidentRecord[] = [
       'Rotate storage account keys that were listed by the attacker'
     ],
     gdpr_flag: true,
-    estimated_financial_impact: 'Virtual machines: $0.20/hr. Total accruing: ~$1.00+',
+    estimated_financial_impact: 'Virtual Machines: 1x B1s at $0.01/hr',
+    financial_impact_lines: [
+      { platform: 'azure', kind: 'compute', label: 'Virtual Machines', text: 'Virtual Machines: 1x B1s at $0.01/hr',
+        amount: 0.0104, currency: 'USD', unit: 'hour', quantity: 1, actual: false },
+    ],
   },
   {
     incident_id: 'inc-007',
@@ -614,7 +641,13 @@ export const MOCK_INCIDENTS: IncidentRecord[] = [
       'Purge the credential from git history and force-push the rewritten branch',
     ],
     gdpr_flag: true,
-    estimated_financial_impact: 'Data transfer: estimated $0.27. Persistence risk outweighs direct cost.',
+    estimated_financial_impact: 'Data transfer: estimated $0.01. Cloud Storage egress: estimated $0.04',
+    financial_impact_lines: [
+      { platform: 'aws', kind: 'egress', label: 'Data transfer', text: 'Data transfer: estimated $0.01',
+        amount: 0.009, currency: 'USD', unit: null, quantity: 1, actual: false },
+      { platform: 'gcp', kind: 'egress', label: 'Cloud Storage egress', text: 'Cloud Storage egress: estimated $0.04',
+        amount: 0.036, currency: 'USD', unit: null, quantity: 3, actual: false },
+    ],
   },
 
   /* ─── incident 8 (Stripe — real money on the timeline) ────────── */
@@ -647,6 +680,14 @@ export const MOCK_INCIDENTS: IncidentRecord[] = [
     ],
     gdpr_flag: false,
     estimated_financial_impact: 'Stripe: 1,240.00 USD charged (2 transaction(s))',
+    // Byte-identical to compute_financial_impact_lines() output for the two
+    // charge events above (74000 + 50000 cents). If this drifts, mock mode
+    // stops exercising the shape live mode produces.
+    financial_impact_lines: [
+      { platform: 'stripe', kind: 'charge', label: 'Stripe',
+        text: 'Stripe: 1,240.00 USD charged (2 transaction(s))',
+        amount: 1240, currency: 'USD', unit: null, quantity: 2, actual: true },
+    ],
   },
 
   /* ─── incident 9 (Tier 2 — the honest "we cannot know" case) ──── */
@@ -689,30 +730,36 @@ export const MOCK_INCIDENTS: IncidentRecord[] = [
 
 /* ─── research experiments ─────────────────────────────────────── */
 
-export interface ExperimentRun {
-  run_id: string
-  access_key_id: string | null
-  detection_time_s: number | null
-  report_time_s: number | null
-  api_calls: string[]
-  expected_severity: string | null
-  actual_severity: string | null
-  status: string | null
-  created_at: string
+/**
+ * Experiment-run factories.
+ *
+ * The three previous copies (makeRun / makeGcpRun / makeAzureRun) differed only
+ * by the credential-id prefix. One factory with a platform argument keeps the
+ * `platform` field — which the per-platform chart groups on — impossible to
+ * forget on a new run.
+ */
+const KEY_PREFIX: Record<string, string> = {
+  aws: 'AKIA',
+  gcp: 'gcp-sa-',
+  azure: 'az-sp-',
+  stripe: 'sk_live_',
+  twilio: 'AC',
 }
 
 function makeRun(
   i: number,
+  platform: string,
   key: string,
   detMs: number,
   repMs: number,
   calls: string[],
   expSev: string,
-  actSev: string
+  actSev: string,
+  eventCount = 3,
 ): ExperimentRun {
   return {
     run_id: `run-${String(i).padStart(3, '0')}`,
-    access_key_id: `AKIA${key}`,
+    access_key_id: `${KEY_PREFIX[platform] ?? ''}${key}`,
     detection_time_s: detMs,
     report_time_s: repMs,
     api_calls: calls,
@@ -720,94 +767,59 @@ function makeRun(
     actual_severity: actSev,
     status: 'complete',
     created_at: `2026-03-29T${String(8 + Math.floor(i / 4)).padStart(2, '0')}:${String((i * 7) % 60).padStart(2, '0')}:00Z`,
+    platform,
+    run_number: i,
+    event_count: eventCount,
+    external_use_detected: false,
   }
 }
 
-function makeGcpRun(
-  i: number,
-  key: string,
-  detMs: number,
-  repMs: number,
-  calls: string[],
-  expSev: string,
-  actSev: string
-): ExperimentRun {
-  return {
-    run_id: `run-${String(i).padStart(3, '0')}`,
-    access_key_id: `gcp-sa-${key}`,
-    detection_time_s: detMs,
-    report_time_s: repMs,
-    api_calls: calls,
-    expected_severity: expSev,
-    actual_severity: actSev,
-    status: 'complete',
-    created_at: `2026-03-29T${String(8 + Math.floor(i / 4)).padStart(2, '0')}:${String((i * 7) % 60).padStart(2, '0')}:00Z`,
-  }
-}
-
-function makeAzureRun(
-  i: number,
-  key: string,
-  detMs: number,
-  repMs: number,
-  calls: string[],
-  expSev: string,
-  actSev: string
-): ExperimentRun {
-  return {
-    run_id: `run-${String(i).padStart(3, '0')}`,
-    access_key_id: `az-sp-${key}`,
-    detection_time_s: detMs,
-    report_time_s: repMs,
-    api_calls: calls,
-    expected_severity: expSev,
-    actual_severity: actSev,
-    status: 'complete',
-    created_at: `2026-03-29T${String(8 + Math.floor(i / 4)).padStart(2, '0')}:${String((i * 7) % 60).padStart(2, '0')}:00Z`,
-  }
-}
+const makeGcpRun = (i: number, key: string, det: number, rep: number, calls: string[], exp: string, act: string) =>
+  makeRun(i, 'gcp', key, det, rep, calls, exp, act)
+const makeAzureRun = (i: number, key: string, det: number, rep: number, calls: string[], exp: string, act: string) =>
+  makeRun(i, 'azure', key, det, rep, calls, exp, act)
 
 export const MOCK_EXPERIMENT_RUNS: ExperimentRun[] = [
   // Group A — ListBuckets + DescribeInstances + GetCallerIdentity → LOW
-  makeRun(1, 'IOSFODNN7A001', 12.3, 28.1, ['ListBuckets', 'DescribeInstances', 'GetCallerIdentity'], 'LOW', 'LOW'),
-  makeRun(2, 'IOSFODNN7A002', 14.7, 31.4, ['ListBuckets', 'DescribeInstances', 'GetCallerIdentity'], 'LOW', 'LOW'),
-  makeRun(3, 'IOSFODNN7A003', 11.8, 29.7, ['ListBuckets', 'DescribeInstances', 'GetCallerIdentity'], 'LOW', 'LOW'),
-  makeRun(4, 'IOSFODNN7A004', 16.2, 34.8, ['ListBuckets', 'DescribeInstances', 'GetCallerIdentity'], 'LOW', 'LOW'),
-  makeRun(5, 'IOSFODNN7A005', 13.1, 27.9, ['ListBuckets', 'DescribeInstances', 'GetCallerIdentity'], 'LOW', 'LOW'),
-  makeRun(6, 'IOSFODNN7A006', 15.4, 33.2, ['ListBuckets', 'DescribeInstances', 'GetCallerIdentity'], 'LOW', 'LOW'),
-  makeRun(7, 'IOSFODNN7A007', 10.9, 26.5, ['ListBuckets', 'DescribeInstances', 'GetCallerIdentity'], 'LOW', 'LOW'),
-  makeRun(8, 'IOSFODNN7A008', 18.3, 38.1, ['ListBuckets', 'DescribeInstances', 'GetCallerIdentity'], 'LOW', 'LOW'),
-  makeRun(9, 'IOSFODNN7A009', 12.7, 30.3, ['ListBuckets', 'DescribeInstances', 'GetCallerIdentity'], 'LOW', 'LOW'),
-  makeRun(10, 'IOSFODNN7A010', 14.1, 31.8, ['ListBuckets', 'DescribeInstances', 'GetCallerIdentity'], 'LOW', 'LOW'),
-  makeRun(11, 'IOSFODNN7A011', 13.5, 28.9, ['ListBuckets', 'DescribeInstances', 'GetCallerIdentity'], 'LOW', 'LOW'),
-  makeRun(12, 'IOSFODNN7A012', 15.9, 35.7, ['ListBuckets', 'DescribeInstances', 'GetCallerIdentity'], 'LOW', 'LOW'),
+  makeRun(1, 'aws', 'IOSFODNN7A001', 12.3, 28.1, ['ListBuckets', 'DescribeInstances', 'GetCallerIdentity'], 'LOW', 'LOW'),
+  makeRun(2, 'aws', 'IOSFODNN7A002', 14.7, 31.4, ['ListBuckets', 'DescribeInstances', 'GetCallerIdentity'], 'LOW', 'LOW'),
+  makeRun(3, 'aws', 'IOSFODNN7A003', 11.8, 29.7, ['ListBuckets', 'DescribeInstances', 'GetCallerIdentity'], 'LOW', 'LOW'),
+  makeRun(4, 'aws', 'IOSFODNN7A004', 16.2, 34.8, ['ListBuckets', 'DescribeInstances', 'GetCallerIdentity'], 'LOW', 'LOW'),
+  makeRun(5, 'aws', 'IOSFODNN7A005', 13.1, 27.9, ['ListBuckets', 'DescribeInstances', 'GetCallerIdentity'], 'LOW', 'LOW'),
+  makeRun(6, 'aws', 'IOSFODNN7A006', 15.4, 33.2, ['ListBuckets', 'DescribeInstances', 'GetCallerIdentity'], 'LOW', 'LOW'),
+  makeRun(7, 'aws', 'IOSFODNN7A007', 10.9, 26.5, ['ListBuckets', 'DescribeInstances', 'GetCallerIdentity'], 'LOW', 'LOW'),
+  makeRun(8, 'aws', 'IOSFODNN7A008', 18.3, 38.1, ['ListBuckets', 'DescribeInstances', 'GetCallerIdentity'], 'LOW', 'LOW'),
+  makeRun(9, 'aws', 'IOSFODNN7A009', 12.7, 30.3, ['ListBuckets', 'DescribeInstances', 'GetCallerIdentity'], 'LOW', 'LOW'),
+  makeRun(10, 'aws', 'IOSFODNN7A010', 14.1, 31.8, ['ListBuckets', 'DescribeInstances', 'GetCallerIdentity'], 'LOW', 'LOW'),
+  makeRun(11, 'aws', 'IOSFODNN7A011', 13.5, 28.9, ['ListBuckets', 'DescribeInstances', 'GetCallerIdentity'], 'LOW', 'LOW'),
+  makeRun(12, 'aws', 'IOSFODNN7A012', 15.9, 35.7, ['ListBuckets', 'DescribeInstances', 'GetCallerIdentity'], 'LOW', 'LOW'),
 
   // Group B — GetObject + RunInstances → HIGH
-  makeRun(13, 'IOSFODNN7B001', 11.2, 42.6, ['GetObject', 'RunInstances'], 'HIGH', 'HIGH'),
-  makeRun(14, 'IOSFODNN7B002', 19.8, 51.3, ['GetObject', 'RunInstances'], 'HIGH', 'HIGH'),
-  makeRun(15, 'IOSFODNN7B003', 13.4, 44.9, ['GetObject', 'RunInstances'], 'HIGH', 'HIGH'),
-  makeRun(16, 'IOSFODNN7B004', 17.6, 48.2, ['GetObject', 'RunInstances'], 'HIGH', 'HIGH'),
-  makeRun(17, 'IOSFODNN7B005', 12.0, 40.7, ['GetObject', 'RunInstances'], 'HIGH', 'HIGH'),
-  makeRun(18, 'IOSFODNN7B006', 21.3, 54.1, ['GetObject', 'RunInstances'], 'HIGH', 'HIGH'),
-  makeRun(19, 'IOSFODNN7B007', 14.8, 43.5, ['GetObject', 'RunInstances'], 'HIGH', 'HIGH'),
-  makeRun(20, 'IOSFODNN7B008', 16.5, 47.0, ['GetObject', 'RunInstances'], 'HIGH', 'MEDIUM'),  // misclassification
-  makeRun(21, 'IOSFODNN7B009', 11.9, 41.3, ['GetObject', 'RunInstances'], 'HIGH', 'HIGH'),
-  makeRun(22, 'IOSFODNN7B010', 18.2, 49.8, ['GetObject', 'RunInstances'], 'HIGH', 'HIGH'),
-  makeRun(23, 'IOSFODNN7B011', 13.7, 45.6, ['GetObject', 'RunInstances'], 'HIGH', 'HIGH'),
-  makeRun(24, 'IOSFODNN7B012', 20.1, 52.9, ['GetObject', 'RunInstances'], 'HIGH', 'HIGH'),
-  makeRun(25, 'IOSFODNN7B013', 15.3, 46.4, ['GetObject', 'RunInstances'], 'HIGH', 'HIGH'),
+  makeRun(13, 'aws', 'IOSFODNN7B001', 11.2, 42.6, ['GetObject', 'RunInstances'], 'HIGH', 'HIGH'),
+  makeRun(14, 'aws', 'IOSFODNN7B002', 19.8, 51.3, ['GetObject', 'RunInstances'], 'HIGH', 'HIGH'),
+  makeRun(15, 'aws', 'IOSFODNN7B003', 13.4, 44.9, ['GetObject', 'RunInstances'], 'HIGH', 'HIGH'),
+  makeRun(16, 'aws', 'IOSFODNN7B004', 17.6, 48.2, ['GetObject', 'RunInstances'], 'HIGH', 'HIGH'),
+  makeRun(17, 'aws', 'IOSFODNN7B005', 12.0, 40.7, ['GetObject', 'RunInstances'], 'HIGH', 'HIGH'),
+  makeRun(18, 'aws', 'IOSFODNN7B006', 21.3, 54.1, ['GetObject', 'RunInstances'], 'HIGH', 'HIGH'),
+  makeRun(19, 'aws', 'IOSFODNN7B007', 14.8, 43.5, ['GetObject', 'RunInstances'], 'HIGH', 'HIGH'),
+  makeRun(20, 'aws', 'IOSFODNN7B008', 16.5, 47.0, ['GetObject', 'RunInstances'], 'HIGH', 'MEDIUM'),  // misclassification
+  makeRun(21, 'aws', 'IOSFODNN7B009', 11.9, 41.3, ['GetObject', 'RunInstances'], 'HIGH', 'HIGH'),
+  makeRun(22, 'aws', 'IOSFODNN7B010', 18.2, 49.8, ['GetObject', 'RunInstances'], 'HIGH', 'HIGH'),
+  makeRun(23, 'aws', 'IOSFODNN7B011', 13.7, 45.6, ['GetObject', 'RunInstances'], 'HIGH', 'HIGH'),
+  makeRun(24, 'aws', 'IOSFODNN7B012', 20.1, 52.9, ['GetObject', 'RunInstances'], 'HIGH', 'HIGH'),
+  makeRun(25, 'aws', 'IOSFODNN7B013', 15.3, 46.4, ['GetObject', 'RunInstances'], 'HIGH', 'HIGH'),
 
   // Group C — GetCallerIdentity only → LOW
-  makeRun(26, 'IOSFODNN7C001', 9.8, 22.3, ['GetCallerIdentity'], 'LOW', 'LOW'),
-  makeRun(27, 'IOSFODNN7C002', 10.2, 24.1, ['GetCallerIdentity'], 'LOW', 'LOW'),
-  makeRun(28, 'IOSFODNN7C003', 11.5, 25.8, ['GetCallerIdentity'], 'LOW', 'LOW'),
-  makeRun(29, 'IOSFODNN7C004', 8.9, 21.7, ['GetCallerIdentity'], 'LOW', 'LOW'),
-  makeRun(30, 'IOSFODNN7C005', 12.1, 26.4, ['GetCallerIdentity'], 'LOW', 'LOW'),
-  makeRun(31, 'IOSFODNN7C006', 9.4, 23.0, ['GetCallerIdentity'], 'LOW', 'LOW'),
-  makeRun(32, 'IOSFODNN7C007', 10.8, 24.9, ['GetCallerIdentity'], 'LOW', 'LOW'),
-  makeRun(33, 'IOSFODNN7C008', 11.3, 25.2, ['GetCallerIdentity'], 'LOW', 'LOW'),
-  makeRun(34, 'IOSFODNN7C009', 9.1, 22.8, ['GetCallerIdentity'], 'LOW', 'LOW'),
-  makeRun(35, 'IOSFODNN7C010', 10.5, 23.6, ['GetCallerIdentity'], 'LOW', 'LOW'),
+  makeRun(26, 'aws', 'IOSFODNN7C001', 9.8, 22.3, ['GetCallerIdentity'], 'LOW', 'LOW'),
+  makeRun(27, 'aws', 'IOSFODNN7C002', 10.2, 24.1, ['GetCallerIdentity'], 'LOW', 'LOW'),
+  makeRun(28, 'aws', 'IOSFODNN7C003', 11.5, 25.8, ['GetCallerIdentity'], 'LOW', 'LOW'),
+  makeRun(29, 'aws', 'IOSFODNN7C004', 8.9, 21.7, ['GetCallerIdentity'], 'LOW', 'LOW'),
+  makeRun(30, 'aws', 'IOSFODNN7C005', 12.1, 26.4, ['GetCallerIdentity'], 'LOW', 'LOW'),
+  makeRun(31, 'aws', 'IOSFODNN7C006', 9.4, 23.0, ['GetCallerIdentity'], 'LOW', 'LOW'),
+  makeRun(32, 'aws', 'IOSFODNN7C007', 10.8, 24.9, ['GetCallerIdentity'], 'LOW', 'LOW'),
+  makeRun(33, 'aws', 'IOSFODNN7C008', 11.3, 25.2, ['GetCallerIdentity'], 'LOW', 'LOW'),
+  makeRun(34, 'aws', 'IOSFODNN7C009', 9.1, 22.8, ['GetCallerIdentity'], 'LOW', 'LOW'),
+  makeRun(35, 'aws', 'IOSFODNN7C010', 10.5, 23.6, ['GetCallerIdentity'], 'LOW', 'LOW'),
 
   // Group D — GCP storage.buckets.list + compute.instances.insert → HIGH
   makeGcpRun(36, 'GCP001', 14.2, 38.6, ['storage.buckets.list', 'compute.instances.insert'], 'HIGH', 'HIGH'),
@@ -850,3 +862,88 @@ export const MOCK_STATS = {
   public_dataset_avg_detection_time_s: 12.4,
   public_dataset_avg_report_time_s: 29.8,
 }
+
+
+/* ─── platform comparison ──────────────────────────────────────── */
+
+/**
+ * TypeScript mirror of `compare_platforms()` + `latency_by_platform()` in
+ * backend/research/analysis.py, so mock mode exercises the same shape the live
+ * endpoint returns.
+ *
+ * Three invariants must not drift from the Python:
+ *   1. Empty metrics are `null`, never 0 — analysis.py is explicit that a
+ *      platform with no timings must not appear as "0 seconds to detect".
+ *   2. Severity keys are uppercased.
+ *   3. Platforms with no timing data are OMITTED from
+ *      detection_latency_by_platform rather than included as 0.
+ */
+function summarize(values: number[]): MetricSummary {
+  if (values.length === 0) {
+    return { n: 0, mean: null, median: null, p95: null, min: null, max: null }
+  }
+  const sorted = [...values].sort((a, b) => a - b)
+  const round2 = (v: number) => Math.round(v * 100) / 100
+  const mid = Math.floor(sorted.length / 2)
+  return {
+    n: sorted.length,
+    mean: round2(sorted.reduce((a, b) => a + b, 0) / sorted.length),
+    median: round2(
+      sorted.length % 2 === 0 ? (sorted[mid - 1] + sorted[mid]) / 2 : sorted[mid],
+    ),
+    p95: round2(sorted[Math.min(Math.floor(sorted.length * 0.95), sorted.length - 1)]),
+    min: round2(sorted[0]),
+    max: round2(sorted[sorted.length - 1]),
+  }
+}
+
+export function computePlatformComparison(runs: ExperimentRun[]): PlatformComparison {
+  const grouped = new Map<string, ExperimentRun[]>()
+  for (const run of runs) {
+    const platform = (run.platform || 'aws').trim().toLowerCase()
+    grouped.set(platform, [...(grouped.get(platform) ?? []), run])
+  }
+
+  const byPlatform: Record<string, PlatformStats> = {}
+  const latency: Record<string, number> = {}
+
+  for (const [platform, platformRuns] of [...grouped.entries()].sort()) {
+    const nums = (pick: (r: ExperimentRun) => number | null | undefined) =>
+      platformRuns.map(pick).filter((v): v is number => typeof v === 'number')
+
+    const detection = summarize(nums(r => r.detection_time_s))
+    const completed = platformRuns.filter(r => r.status === 'complete')
+
+    const severity: Record<string, number> = {}
+    for (const run of platformRuns) {
+      const key = run.actual_severity ? run.actual_severity.toUpperCase() : 'unknown'
+      severity[key] = (severity[key] ?? 0) + 1
+    }
+
+    byPlatform[platform] = {
+      total_runs: platformRuns.length,
+      completed_runs: completed.length,
+      completion_rate:
+        platformRuns.length > 0
+          ? Math.round((completed.length / platformRuns.length) * 1000) / 1000
+          : 0,
+      detection_time_s: detection,
+      report_time_s: summarize(nums(r => r.report_time_s)),
+      first_use_time_s: summarize(nums(r => r.first_external_use_s)),
+      events_collected: summarize(nums(r => r.event_count)),
+      severity_distribution: severity,
+    }
+
+    // Omitted, not zeroed, when there is nothing to report.
+    if (detection.mean !== null) latency[platform] = detection.mean
+  }
+
+  return {
+    total_runs: runs.length,
+    by_platform: byPlatform,
+    detection_latency_by_platform: latency,
+  }
+}
+
+export const MOCK_PLATFORM_COMPARISON: PlatformComparison =
+  computePlatformComparison(MOCK_EXPERIMENT_RUNS)

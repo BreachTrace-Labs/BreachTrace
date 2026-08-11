@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import logging
 import os
 import random
 import string
@@ -23,6 +24,8 @@ from azure.mgmt.resource import ResourceManagementClient
 from azure.mgmt.storage import StorageManagementClient
 
 import requests
+
+LOG = logging.getLogger(__name__)
 
 
 def _now_utc() -> datetime:
@@ -265,7 +268,12 @@ def _print_result(result: ScenarioResult) -> None:
 
 
 def run_experiment(run_number: int) -> dict:
-    """Legacy placeholder for Day-6 loop integration."""
+    """
+    DEPRECATED — use run_aws_experiment(), which actually runs the pipeline.
+
+    Kept only so any existing caller fails loudly with a pointer rather than
+    silently recording a "not_implemented" row.
+    """
     return {
         "run_number": run_number,
         "status": "not_implemented",
@@ -314,7 +322,87 @@ def _simulate_gcp_attacker_activity(client_email: str, private_key: str) -> list
     return calls_made
 
 
-def run_gcp_experiment(experiment_number: int) -> dict:
+
+# =============================================================================
+# RESULT RECORDING (B3)
+#
+# Until this existed nothing ever wrote an ExperimentRun row: the harness only
+# POSTed to /test/simulate, which creates an incident. Every run's metrics were
+# returned to the caller and then discarded, so /research/export and
+# /research/platforms were permanently empty.
+# =============================================================================
+
+def _build_record_payload(result: dict) -> dict:
+    """
+    Map a harness result dict onto the POST /research/record body.
+
+    Pure and free of cloud SDK calls so it is importable in tests — the rest of
+    this module imports boto3/google/azure at the top level and cannot be loaded
+    without them.
+
+    On first_external_use_s: the column means "seconds to first NON-TEAM IP
+    usage" and is the paper's Contribution 3. The harness's `first_use_time_s`
+    is just how long its own scripted calls took, which is a different quantity.
+    It is only mapped across when an external user was actually detected;
+    otherwise the field stays null rather than polluting the headline metric
+    with our own traffic.
+    """
+    external = bool(result.get("external_use_detected"))
+
+    payload = {
+        "incident_id": result.get("incident_id"),
+        "run_number": result.get("run_number"),
+        "experiment_group": result.get("experiment_group"),
+        "platform": result.get("platform", "aws"),
+        "detection_time_s": result.get("detection_time_s"),
+        "report_time_s": result.get("report_time_s"),
+        "api_calls_made": result.get("api_calls_made") or [],
+        "impact_categories": result.get("impact_categories") or [],
+        "overall_severity": result.get("overall_severity"),
+        "external_use_detected": external,
+        "notes": result.get("notes"),
+    }
+    if external:
+        payload["first_external_use_s"] = result.get("first_use_time_s")
+    return payload
+
+
+def record_run(result: dict, api_base: str | None = None) -> str | None:
+    """
+    Persist a completed run via POST /research/record.
+
+    Never raises. A recorder outage must not discard an experiment that already
+    cost real API calls and a key rotation — the caller still gets its metrics
+    dict back, and `result["recorded"]` records whether the write landed.
+
+    Returns the stored run id, or None on failure.
+    """
+    base = api_base or os.getenv("API_BASE_URL", "http://localhost:8000")
+    payload = _build_record_payload(result)
+
+    try:
+        resp = requests.post(f"{base}/research/record", json=payload, timeout=30)
+        resp.raise_for_status()
+        run_id = resp.json().get("run_id")
+        result["recorded"] = True
+        return run_id
+    except Exception as exc:  # noqa: BLE001 — deliberately broad, see docstring
+        LOG.error(
+            "Failed to record run %s (%s): %s. Metrics: %s",
+            result.get("run_number"),
+            result.get("platform"),
+            exc,
+            payload,
+        )
+        result["recorded"] = False
+        return None
+
+
+def run_gcp_experiment(
+    experiment_number: int,
+    experiment_group: str = "A",
+    record: bool = True,
+) -> dict:
     """
     Complete GCP forensic pipeline experiment:
       1. Simulate attacker activity using experiment GCP service account
@@ -332,6 +420,7 @@ def run_gcp_experiment(experiment_number: int) -> dict:
 
     result: dict = {
         "run_number": experiment_number,
+        "experiment_group": experiment_group,
         "platform": "gcp",
         "credential": client_email,
         "started_at": _now_utc().isoformat(),
@@ -361,6 +450,7 @@ def run_gcp_experiment(experiment_number: int) -> dict:
     )
     resp.raise_for_status()
     incident_id = resp.json().get("incident_id")
+    result["incident_id"] = incident_id
     result["detection_time_s"] = round(time.time() - t_start, 1)
 
     for _ in range(36):  # 36 × 5s = 3 minutes max
@@ -374,6 +464,8 @@ def run_gcp_experiment(experiment_number: int) -> dict:
             break
 
     result["ended_at"] = _now_utc().isoformat()
+    if record:
+        record_run(result, api_base)
     return result
 
 
@@ -417,7 +509,11 @@ def _simulate_azure_attacker_activity(client_id: str, client_secret: str) -> lis
     return calls_made
 
 
-def run_azure_experiment(experiment_number: int) -> dict:
+def run_azure_experiment(
+    experiment_number: int,
+    experiment_group: str = "A",
+    record: bool = True,
+) -> dict:
     """
     Complete Azure forensic pipeline experiment:
       1. Simulate attacker activity using experiment Azure service principal
@@ -435,6 +531,7 @@ def run_azure_experiment(experiment_number: int) -> dict:
 
     result: dict = {
         "run_number": experiment_number,
+        "experiment_group": experiment_group,
         "platform": "azure",
         "credential": client_id,
         "started_at": _now_utc().isoformat(),
@@ -464,6 +561,7 @@ def run_azure_experiment(experiment_number: int) -> dict:
     )
     resp.raise_for_status()
     incident_id = resp.json().get("incident_id")
+    result["incident_id"] = incident_id
     result["detection_time_s"] = round(time.time() - t_start, 1)
 
     for _ in range(36):  # 36 × 5s = 3 minutes max
@@ -477,7 +575,106 @@ def run_azure_experiment(experiment_number: int) -> dict:
             break
 
     result["ended_at"] = _now_utc().isoformat()
+    if record:
+        record_run(result, api_base)
     return result
+
+
+
+def run_aws_experiment(
+    experiment_number: int,
+    experiment_group: str = "A",
+    record: bool = True,
+) -> dict:
+    """
+    Complete AWS forensic pipeline experiment, mirroring the GCP and Azure shape.
+
+    Without this the headline per-platform figure has no AWS bar — and AWS is
+    the platform with the most planned runs. Reuses the existing `scenario_*`
+    functions rather than re-scripting attacker activity, so the AWS experiment
+    exercises the same calls the CLI scenarios do.
+
+    experiment_group selects attacker behaviour, matching the plan's design:
+      A — reconnaissance only            → expect Low
+      B — bulk data access               → expect Critical (bulk escalation)
+      C — minimal (identity probe only)  → expect Low
+    """
+    api_base = os.getenv("API_BASE_URL", "http://localhost:8000")
+    region = os.getenv("AWS_REGION", "us-east-1")
+    access_key_id = _pick_env("EXPERIMENT_AWS_ACCESS_KEY_ID", "AWS_ACCESS_KEY_ID")
+
+    result: dict = {
+        "run_number": experiment_number,
+        "experiment_group": experiment_group,
+        "platform": "aws",
+        "credential": access_key_id,
+        "started_at": _now_utc().isoformat(),
+        "api_calls_made": [],
+        "first_use_time_s": None,
+        "detection_time_s": None,
+        "report_time_s": None,
+        "events_collected": None,
+        "overall_severity": None,
+        "status": "failed",
+    }
+
+    t_start = time.time()
+
+    session = _build_session(region)
+    if experiment_group == "B":
+        scenario = _run_safe(
+            "data_access",
+            lambda: scenario_data_access(session, region, 1.0, None, False),
+        )
+    elif experiment_group == "C":
+        scenario = _run_safe(
+            "minimal",
+            lambda: scenario_reconnaissance(session, region, 0.0),
+        )
+    else:
+        scenario = _run_safe(
+            "reconnaissance",
+            lambda: scenario_reconnaissance(session, region, 1.0),
+        )
+
+    result["api_calls_made"] = scenario.api_calls
+    result["first_use_time_s"] = round(time.time() - t_start, 1)
+
+    diff_text = f"AWS_ACCESS_KEY_ID={access_key_id}\nAWS_SECRET_ACCESS_KEY=<redacted>"
+    resp = requests.post(
+        f"{api_base}/test/simulate",
+        json={"platform": "aws", "diff_text": diff_text, "credential": access_key_id},
+        timeout=30,
+    )
+    resp.raise_for_status()
+    incident_id = resp.json().get("incident_id")
+    result["incident_id"] = incident_id
+    result["detection_time_s"] = round(time.time() - t_start, 1)
+
+    for _ in range(36):  # 36 × 5s = 3 minutes max
+        time.sleep(5)
+        incident = requests.get(f"{api_base}/incidents/{incident_id}", timeout=10).json()
+        if incident.get("status") == "complete":
+            result["report_time_s"] = round(time.time() - t_start, 1)
+            result["events_collected"] = len(incident.get("events", []))
+            result["overall_severity"] = incident.get("overall_severity")
+            result["impact_categories"] = sorted(
+                {e.get("impact_category") for e in incident.get("events", []) if e.get("impact_category")}
+            )
+            result["status"] = "complete"
+            break
+
+    result["ended_at"] = _now_utc().isoformat()
+    if record:
+        record_run(result, api_base)
+    return result
+
+
+PLATFORM_RUNNERS = {
+    "aws": run_aws_experiment,
+    "gcp": run_gcp_experiment,
+    "azure": run_azure_experiment,
+}
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -507,11 +704,74 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Do not cleanup created resources. Use only for temporary debugging.",
     )
+
+    # ── Full experiment mode ────────────────────────────────────────────────
+    # `--scenario` fires raw API calls for demo evidence. `--platform` runs the
+    # complete pipeline experiment (attack -> detect -> collect -> report) and
+    # records the result, which is what produces the research dataset.
+    parser.add_argument(
+        "--platform",
+        choices=sorted(PLATFORM_RUNNERS),
+        default=None,
+        help="Run full pipeline experiments for this platform instead of raw scenarios.",
+    )
+    parser.add_argument(
+        "--runs",
+        type=int,
+        default=1,
+        help="How many experiments to run in --platform mode.",
+    )
+    parser.add_argument(
+        "--group",
+        choices=["A", "B", "C"],
+        default="A",
+        help="Attacker behaviour group: A=recon, B=bulk access, C=minimal.",
+    )
+    parser.add_argument(
+        "--no-record",
+        action="store_true",
+        help="Run experiments without POSTing results to /research/record.",
+    )
     return parser
+
+
+def _run_platform_experiments(args: argparse.Namespace) -> None:
+    """Full pipeline experiments for one platform, recording each result."""
+    runner = PLATFORM_RUNNERS[args.platform]
+    record = not args.no_record
+
+    print(f"Running {args.runs} {args.platform.upper()} experiment(s), group {args.group}")
+    if not record:
+        print("  recording DISABLED (--no-record)")
+
+    completed = 0
+    for run_number in range(1, args.runs + 1):
+        try:
+            result = runner(run_number, experiment_group=args.group, record=record)
+        except Exception as exc:  # noqa: BLE001 — one bad run must not end the campaign
+            print(f"  run {run_number}: FAILED ({exc})")
+            continue
+
+        status = result.get("status")
+        completed += status == "complete"
+        print(
+            f"  run {run_number}: {status} "
+            f"detect={result.get('detection_time_s')}s "
+            f"report={result.get('report_time_s')}s "
+            f"severity={result.get('overall_severity')} "
+            f"recorded={result.get('recorded')}"
+        )
+
+    print(f"\n{completed}/{args.runs} run(s) completed")
 
 
 def main() -> None:
     args = build_parser().parse_args()
+
+    if args.platform:
+        _run_platform_experiments(args)
+        return
+
     session = _build_session(region=args.region)
 
     print("Starting BreachTrace AWS event harness")

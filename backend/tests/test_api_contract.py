@@ -209,3 +209,67 @@ def test_export_fields_feed_compare_platforms():
     result = compare_platforms(rows)
     assert set(result) == {"aws", "gcp", "azure"}
     assert result["aws"]["detection_time_s"]["mean"] == 10.0
+
+
+# ==========================================================================
+# Financial impact lines (A2)
+# ==========================================================================
+
+def _stripe_event(amount, currency="usd", api_action="charge.succeeded"):
+    from normalizer.schema import ForensicEvent
+
+    return ForensicEvent(
+        platform="stripe",
+        timestamp=datetime(2026, 8, 1, tzinfo=timezone.utc),
+        api_action=api_action,
+        raw_data={"data": {"object": {"amount": amount, "currency": currency}}},
+    )
+
+
+def test_detail_serves_structured_financial_lines():
+    """
+    The panel branches on `actual` to decide whether to present a figure as
+    money that moved or as a list-price estimate. Losing this field silently
+    would make every estimate read as a confirmed loss.
+    """
+    from dataclasses import asdict
+
+    from routers.incidents import FinancialImpactLineOut
+    from scorer.severity import compute_financial_impact_lines
+
+    events = [_stripe_event(124000)]
+    lines = [
+        FinancialImpactLineOut(**asdict(line))
+        for line in compute_financial_impact_lines(events)
+    ]
+
+    assert len(lines) == 1
+    assert lines[0].currency == "USD"
+    assert lines[0].amount == 1240.0
+    assert lines[0].actual is True
+    assert lines[0].quantity == 1
+
+
+def test_financial_lines_default_to_empty():
+    """An incident with no events must not fail validation on the new field."""
+    out = IncidentDetailOut.model_validate(_FakeIncident())
+    assert out.financial_impact_lines == []
+
+
+def test_estimated_financial_impact_still_resolves_from_its_alias():
+    """
+    Backward-compat pin. The structured field is additive; the existing string
+    is still stored in the `financial_impact` column and read via its alias.
+    """
+    out = IncidentDetailOut.model_validate(
+        _FakeIncident(financial_impact="EC2: 2x t2.micro at $0.02/hr")
+    )
+    assert out.estimated_financial_impact == "EC2: 2x t2.micro at $0.02/hr"
+
+
+def test_summary_does_not_carry_financial_lines():
+    """
+    Detail-only by design: putting them on the list response would trigger an
+    N+1 event load per row in list_incidents.
+    """
+    assert "financial_impact_lines" not in IncidentSummaryOut.model_fields

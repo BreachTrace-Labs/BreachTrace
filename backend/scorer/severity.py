@@ -14,6 +14,8 @@ Severity Rules (in order of precedence):
 - Otherwise: map max_weight (4->Critical, 3->High, 2->Medium, 1->Low, 0->Low)
 """
 
+from dataclasses import dataclass
+
 from normalizer.schema import ForensicEvent
 
 # Map severity weights to human-readable labels
@@ -136,23 +138,47 @@ def score_incident(events: list[ForensicEvent]) -> str:
     return _WEIGHT_TO_LABEL.get(max_weight, "Low")
 
 
-def compute_financial_impact(events: list[ForensicEvent]) -> str:
-    """
-    Estimate financial impact from detected resource abuse, across every platform.
+NO_FINANCIAL_IMPACT = "No financial impact detected"
 
-    Each platform contributes its own cost lines and they are concatenated, so a
+
+@dataclass(frozen=True)
+class FinancialImpactLine:
+    """
+    One costed finding, in structured form.
+
+    ``text`` is the human-readable sentence and is the single source of truth for
+    the joined string ``compute_financial_impact()`` returns — the two views can
+    never drift because one is derived from the other.
+
+    The distinction that matters most is ``actual``. Stripe events carry a real
+    transacted amount, so that figure is money that actually moved. Every other
+    platform is an order-of-magnitude estimate from public list prices. A report
+    that blurs the two is worse than one that omits the estimate entirely.
+    """
+
+    platform: str            # aws | gcp | azure | stripe | twilio
+    kind: str                # compute|egress|database|cluster|charge|refund|messaging|number
+    label: str               # 'EC2' | 'Cloud Storage egress' | 'Stripe'
+    text: str                # the rendered sentence
+    amount: float | None     # numeric magnitude, in major currency units
+    currency: str | None     # ISO code — set only where the amount is real money
+    unit: str | None         # None | 'hour' | 'day' | 'month' — rate denominator
+    quantity: int | None     # 2 instances / 2 transactions / 14 messages
+    actual: bool             # True only where money demonstrably moved
+
+
+def compute_financial_impact_lines(
+    events: list[ForensicEvent],
+) -> list[FinancialImpactLine]:
+    """
+    Structured financial impact, one line per costed finding.
+
+    Each platform contributes its own lines and they are concatenated, so a
     single leak that exposed both an AWS key and a Stripe key reports both.
     Events with no platform default to 'aws', matching the schema default.
-
-    Stripe is the outlier and the most valuable: its events carry a real
-    transacted amount, so its figure is actual money moved, not a rate estimate.
-
-    Returns:
-        str: e.g. 'EC2: 2x t2.micro at $0.02/hr. Stripe: $412.50 charged (3 charges)'
-             or 'No financial impact detected'
     """
     if not events:
-        return "No financial impact detected"
+        return []
 
     by_platform: dict[str, list[ForensicEvent]] = {}
     for event in events:
@@ -167,20 +193,35 @@ def compute_financial_impact(events: list[ForensicEvent]) -> str:
         "twilio": _twilio_impacts,
     }
 
-    impacts: list[str] = []
+    lines: list[FinancialImpactLine] = []
     # Stable ordering so report text does not churn between runs.
     for platform in ("aws", "gcp", "azure", "stripe", "twilio"):
         platform_events = by_platform.get(platform)
         if platform_events:
-            impacts.extend(handlers[platform](platform_events))
+            lines.extend(handlers[platform](platform_events))
 
-    if not impacts:
-        return "No financial impact detected"
-
-    return ". ".join(impacts)
+    return lines
 
 
-def _aws_impacts(events: list[ForensicEvent]) -> list[str]:
+def compute_financial_impact(events: list[ForensicEvent]) -> str:
+    """
+    Estimate financial impact from detected resource abuse, across every platform.
+
+    The joined-string view of ``compute_financial_impact_lines()``. Kept as the
+    stored/report-facing form; its output is pinned by tests and unchanged.
+
+    Returns:
+        str: e.g. 'EC2: 2x t2.micro at $0.02/hr. Stripe: $412.50 charged (3 charges)'
+             or 'No financial impact detected'
+    """
+    lines = compute_financial_impact_lines(events)
+    if not lines:
+        return NO_FINANCIAL_IMPACT
+
+    return ". ".join(line.text for line in lines)
+
+
+def _aws_impacts(events: list[ForensicEvent]) -> list[FinancialImpactLine]:
     """AWS cost lines. Output format is pinned by tests — do not reword."""
     # Count resource abuse patterns
     ec2_launches = sum(1 for e in events if e.api_action == "RunInstances")
@@ -203,29 +244,49 @@ def _aws_impacts(events: list[ForensicEvent]) -> list[str]:
         and getattr(e, "event_source", None) == "eks.amazonaws.com"
     )
 
-    impacts = []
+    impacts: list[FinancialImpactLine] = []
 
     # EC2 cost estimate: assume t2.micro at $0.0116/hour
     if ec2_launches > 0:
         hourly_cost = ec2_launches * 0.0116
-        impacts.append(f"EC2: {ec2_launches}x t2.micro at ${hourly_cost:.2f}/hr")
+        impacts.append(FinancialImpactLine(
+            platform="aws", kind="compute", label="EC2",
+            text=f"EC2: {ec2_launches}x t2.micro at ${hourly_cost:.2f}/hr",
+            amount=hourly_cost, currency="USD", unit="hour",
+            quantity=ec2_launches, actual=False,
+        ))
 
     # Data transfer cost: assume $0.09 per GB transferred
     if get_objects > 0:
         # Rough estimate: assume avg 100MB per GetObject = 0.1 GB
         gb_transferred = get_objects * 0.1
         transfer_cost = gb_transferred * 0.09
-        impacts.append(f"Data transfer: estimated ${transfer_cost:.2f}")
+        impacts.append(FinancialImpactLine(
+            platform="aws", kind="egress", label="Data transfer",
+            text=f"Data transfer: estimated ${transfer_cost:.2f}",
+            amount=transfer_cost, currency="USD", unit=None,
+            quantity=get_objects, actual=False,
+        ))
 
     # Database cost estimate: assume RDS multi-az at ~$1.50/day
     if db_creates > 0:
         db_cost = db_creates * 1.50
-        impacts.append(f"RDS: {db_creates} instance(s) at ${db_cost:.2f}/day")
+        impacts.append(FinancialImpactLine(
+            platform="aws", kind="database", label="RDS",
+            text=f"RDS: {db_creates} instance(s) at ${db_cost:.2f}/day",
+            amount=db_cost, currency="USD", unit="day",
+            quantity=db_creates, actual=False,
+        ))
 
     # EKS cluster cost: ~$0.10 per cluster hour
     if cluster_creates > 0:
         cluster_cost = cluster_creates * 0.10
-        impacts.append(f"EKS: {cluster_creates} cluster(s) at ${cluster_cost:.2f}/hr")
+        impacts.append(FinancialImpactLine(
+            platform="aws", kind="cluster", label="EKS",
+            text=f"EKS: {cluster_creates} cluster(s) at ${cluster_cost:.2f}/hr",
+            amount=cluster_cost, currency="USD", unit="hour",
+            quantity=cluster_creates, actual=False,
+        ))
 
     return impacts
 
@@ -262,9 +323,9 @@ def _count(events: list[ForensicEvent], *actions: str) -> int:
     return sum(1 for e in events if e.api_action in actions)
 
 
-def _gcp_impacts(events: list[ForensicEvent]) -> list[str]:
+def _gcp_impacts(events: list[ForensicEvent]) -> list[FinancialImpactLine]:
     """GCP Cloud Audit Log method names are dot-separated: 'compute.instances.insert'."""
-    impacts: list[str] = []
+    impacts: list[FinancialImpactLine] = []
 
     vm_creates = _count(events, "compute.instances.insert", "v1.compute.instances.insert")
     bulk_reads = sum(
@@ -278,31 +339,48 @@ def _gcp_impacts(events: list[ForensicEvent]) -> list[str]:
     sql_creates = _count(events, "cloudsql.instances.create", "sqladmin.instances.create")
 
     if vm_creates > 0:
-        impacts.append(
-            f"Compute Engine: {vm_creates}x e2-micro at ${vm_creates * _GCP_E2_MICRO_HOURLY:.2f}/hr"
-        )
+        cost = vm_creates * _GCP_E2_MICRO_HOURLY
+        impacts.append(FinancialImpactLine(
+            platform="gcp", kind="compute", label="Compute Engine",
+            text=f"Compute Engine: {vm_creates}x e2-micro at ${cost:.2f}/hr",
+            amount=cost, currency="USD", unit="hour",
+            quantity=vm_creates, actual=False,
+        ))
     if bulk_reads > 0:
         cost = bulk_reads * _ASSUMED_OBJECT_GB * _GCP_EGRESS_PER_GB
-        impacts.append(f"Cloud Storage egress: estimated ${cost:.2f}")
+        impacts.append(FinancialImpactLine(
+            platform="gcp", kind="egress", label="Cloud Storage egress",
+            text=f"Cloud Storage egress: estimated ${cost:.2f}",
+            amount=cost, currency="USD", unit=None,
+            quantity=bulk_reads, actual=False,
+        ))
     if gke_creates > 0:
-        impacts.append(
-            f"GKE: {gke_creates} cluster(s) at ${gke_creates * _GCP_GKE_CLUSTER_HOURLY:.2f}/hr"
-        )
+        cost = gke_creates * _GCP_GKE_CLUSTER_HOURLY
+        impacts.append(FinancialImpactLine(
+            platform="gcp", kind="cluster", label="GKE",
+            text=f"GKE: {gke_creates} cluster(s) at ${cost:.2f}/hr",
+            amount=cost, currency="USD", unit="hour",
+            quantity=gke_creates, actual=False,
+        ))
     if sql_creates > 0:
-        impacts.append(
-            f"Cloud SQL: {sql_creates} instance(s) at ${sql_creates * _GCP_CLOUDSQL_DAILY:.2f}/day"
-        )
+        cost = sql_creates * _GCP_CLOUDSQL_DAILY
+        impacts.append(FinancialImpactLine(
+            platform="gcp", kind="database", label="Cloud SQL",
+            text=f"Cloud SQL: {sql_creates} instance(s) at ${cost:.2f}/day",
+            amount=cost, currency="USD", unit="day",
+            quantity=sql_creates, actual=False,
+        ))
 
     return impacts
 
 
-def _azure_impacts(events: list[ForensicEvent]) -> list[str]:
+def _azure_impacts(events: list[ForensicEvent]) -> list[FinancialImpactLine]:
     """
     Azure operation names are slash-separated resource provider paths, e.g.
     'Microsoft.Compute/virtualMachines/write'. Matching is case-insensitive
     because the Activity Log is inconsistent about casing.
     """
-    impacts: list[str] = []
+    impacts: list[FinancialImpactLine] = []
     actions = [(e.api_action or "").lower() for e in events]
 
     vm_creates = sum(1 for a in actions if a.endswith("microsoft.compute/virtualmachines/write"))
@@ -320,20 +398,37 @@ def _azure_impacts(events: list[ForensicEvent]) -> list[str]:
     )
 
     if vm_creates > 0:
-        impacts.append(
-            f"Virtual Machines: {vm_creates}x B1s at ${vm_creates * _AZURE_B1S_HOURLY:.2f}/hr"
-        )
+        cost = vm_creates * _AZURE_B1S_HOURLY
+        impacts.append(FinancialImpactLine(
+            platform="azure", kind="compute", label="Virtual Machines",
+            text=f"Virtual Machines: {vm_creates}x B1s at ${cost:.2f}/hr",
+            amount=cost, currency="USD", unit="hour",
+            quantity=vm_creates, actual=False,
+        ))
     if bulk_reads > 0:
         cost = bulk_reads * _ASSUMED_OBJECT_GB * _AZURE_EGRESS_PER_GB
-        impacts.append(f"Blob Storage egress: estimated ${cost:.2f}")
+        impacts.append(FinancialImpactLine(
+            platform="azure", kind="egress", label="Blob Storage egress",
+            text=f"Blob Storage egress: estimated ${cost:.2f}",
+            amount=cost, currency="USD", unit=None,
+            quantity=bulk_reads, actual=False,
+        ))
     if aks_creates > 0:
-        impacts.append(
-            f"AKS: {aks_creates} cluster(s) at ${aks_creates * _AZURE_AKS_CLUSTER_HOURLY:.2f}/hr"
-        )
+        cost = aks_creates * _AZURE_AKS_CLUSTER_HOURLY
+        impacts.append(FinancialImpactLine(
+            platform="azure", kind="cluster", label="AKS",
+            text=f"AKS: {aks_creates} cluster(s) at ${cost:.2f}/hr",
+            amount=cost, currency="USD", unit="hour",
+            quantity=aks_creates, actual=False,
+        ))
     if sql_creates > 0:
-        impacts.append(
-            f"Azure SQL: {sql_creates} database(s) at ${sql_creates * _AZURE_SQL_DAILY:.2f}/day"
-        )
+        cost = sql_creates * _AZURE_SQL_DAILY
+        impacts.append(FinancialImpactLine(
+            platform="azure", kind="database", label="Azure SQL",
+            text=f"Azure SQL: {sql_creates} database(s) at ${cost:.2f}/day",
+            amount=cost, currency="USD", unit="day",
+            quantity=sql_creates, actual=False,
+        ))
 
     return impacts
 
@@ -363,16 +458,21 @@ def _stripe_amount(event: ForensicEvent) -> tuple[float, str] | None:
     return float(amount) / 100.0, currency
 
 
-def _stripe_impacts(events: list[ForensicEvent]) -> list[str]:
+def _stripe_impacts(events: list[ForensicEvent]) -> list[FinancialImpactLine]:
     """
     Stripe reports real money, not an estimated rate. This is the single most
     concrete financial figure BreachTrace can produce, so charges and refunds
     are reported separately rather than netted — they are different harms.
+
+    Counts are tracked per currency. They were previously two shared counters
+    emitted on every line, so a USD+EUR incident reported the same transaction
+    count twice — invisible while every test was single-currency.
     """
-    impacts: list[str] = []
+    impacts: list[FinancialImpactLine] = []
     charged: dict[str, float] = {}
     refunded: dict[str, float] = {}
-    charge_count = refund_count = 0
+    charge_counts: dict[str, int] = {}
+    refund_counts: dict[str, int] = {}
 
     for event in events:
         action = (event.api_action or "").lower()
@@ -383,26 +483,36 @@ def _stripe_impacts(events: list[ForensicEvent]) -> list[str]:
 
         if "refund" in action:
             refunded[currency] = refunded.get(currency, 0.0) + amount
-            refund_count += 1
+            refund_counts[currency] = refund_counts.get(currency, 0) + 1
         elif "charge" in action or "payment_intent" in action or "payout" in action:
             charged[currency] = charged.get(currency, 0.0) + amount
-            charge_count += 1
+            charge_counts[currency] = charge_counts.get(currency, 0) + 1
 
     for currency, total in sorted(charged.items()):
-        impacts.append(
-            f"Stripe: {total:,.2f} {currency} charged ({charge_count} transaction(s))"
-        )
+        count = charge_counts[currency]
+        impacts.append(FinancialImpactLine(
+            platform="stripe", kind="charge", label="Stripe",
+            text=f"Stripe: {total:,.2f} {currency} charged ({count} transaction(s))",
+            amount=total, currency=currency, unit=None,
+            quantity=count,
+            # The only place in the system where money demonstrably moved.
+            actual=True,
+        ))
     for currency, total in sorted(refunded.items()):
-        impacts.append(
-            f"Stripe: {total:,.2f} {currency} refunded ({refund_count} refund(s))"
-        )
+        count = refund_counts[currency]
+        impacts.append(FinancialImpactLine(
+            platform="stripe", kind="refund", label="Stripe",
+            text=f"Stripe: {total:,.2f} {currency} refunded ({count} refund(s))",
+            amount=total, currency=currency, unit=None,
+            quantity=count, actual=True,
+        ))
 
     return impacts
 
 
-def _twilio_impacts(events: list[ForensicEvent]) -> list[str]:
+def _twilio_impacts(events: list[ForensicEvent]) -> list[FinancialImpactLine]:
     """Twilio abuse is billed per message/call, so volume maps directly to cost."""
-    impacts: list[str] = []
+    impacts: list[FinancialImpactLine] = []
     actions = [(e.api_action or "").lower() for e in events]
 
     messages = sum(1 for a in actions if "message" in a)
@@ -410,15 +520,29 @@ def _twilio_impacts(events: list[ForensicEvent]) -> list[str]:
     numbers = sum(1 for a in actions if "number" in a and ("purchase" in a or "create" in a))
 
     if messages > 0:
-        impacts.append(
-            f"Twilio: {messages} message(s) at ${messages * _TWILIO_SMS_COST:.2f}"
-        )
+        cost = messages * _TWILIO_SMS_COST
+        impacts.append(FinancialImpactLine(
+            platform="twilio", kind="messaging", label="Twilio",
+            text=f"Twilio: {messages} message(s) at ${cost:.2f}",
+            amount=cost, currency="USD", unit=None,
+            quantity=messages, actual=False,
+        ))
     if calls > 0:
-        impacts.append(f"Twilio: {calls} call(s) at ${calls * _TWILIO_CALL_COST:.2f}")
+        cost = calls * _TWILIO_CALL_COST
+        impacts.append(FinancialImpactLine(
+            platform="twilio", kind="messaging", label="Twilio",
+            text=f"Twilio: {calls} call(s) at ${cost:.2f}",
+            amount=cost, currency="USD", unit=None,
+            quantity=calls, actual=False,
+        ))
     if numbers > 0:
-        impacts.append(
-            f"Twilio: {numbers} number(s) purchased at ${numbers * _TWILIO_NUMBER_MONTHLY:.2f}/month"
-        )
+        cost = numbers * _TWILIO_NUMBER_MONTHLY
+        impacts.append(FinancialImpactLine(
+            platform="twilio", kind="number", label="Twilio",
+            text=f"Twilio: {numbers} number(s) purchased at ${cost:.2f}/month",
+            amount=cost, currency="USD", unit="month",
+            quantity=numbers, actual=False,
+        ))
 
     return impacts
 

@@ -6,6 +6,7 @@ from sqlalchemy import (
     CheckConstraint,
     Column,
     DateTime,
+    Float,
     ForeignKey,
     Index,
     Integer,
@@ -509,17 +510,17 @@ class ExperimentRun(Base):
         comment="When simulate_attacker_activity() was called",
     )
     detection_time_s = Column(
-        Integer,
+        Float,
         nullable=True,
         comment="Seconds from credential push to webhook detection",
     )
     first_external_use_s = Column(
-        Integer,
+        Float,
         nullable=True,
         comment="Seconds from exposure_start to first non-team IP usage — key research metric",
     )
     report_time_s = Column(
-        Integer,
+        Float,
         nullable=True,
         comment="Seconds from credential push to status=complete",
     )

@@ -23,6 +23,7 @@ import { derivePlatform, isForensicTier, PLATFORM_META, platformIdentity } from 
 import SeverityBadge from '@/components/SeverityBadge'
 import ForensicTimeline from '@/components/ForensicTimeline'
 import ForensicsUnavailable from '@/components/ForensicsUnavailable'
+import FinancialImpactPanel from '@/components/FinancialImpactPanel'
 import BlastRadiusSummary from '@/components/BlastRadiusSummary'
 import AffectedResources from '@/components/AffectedResources'
 import SourceIPs from '@/components/SourceIPs'
@@ -434,14 +435,10 @@ const IncidentDetail: React.FC = () => {
               </div>
             )}
             
-            {incident.estimated_financial_impact && (
-              <div className="border-t px-6 sm:px-8 py-4 bg-muted/20 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-                 <span className="text-sm font-medium text-muted-foreground uppercase tracking-wider">Estimated Financial Impact</span>
-                 <span className="text-lg font-bold text-destructive flex items-center gap-2">
-                    {incident.estimated_financial_impact}
-                 </span>
-              </div>
-            )}
+            {/* Financial impact moved to FinancialImpactPanel in the sidebar.
+                It renders one figure per currency and separates money that
+                actually moved from list-price estimates, which this raw string
+                dump could not. Kept in one place so the two cannot disagree. */}
           </div>
 
           {/* AI Summary Report */}
@@ -482,6 +479,10 @@ const IncidentDetail: React.FC = () => {
         {/* Right Column (Sidebar) */}
         <div className="xl:col-span-4 space-y-6">
           <div className="sticky top-6 space-y-6">
+            {/* First in the stack: on a Stripe incident this is real money
+                moved, which should not sit below three other cards. Self-hides
+                when there is nothing to report. */}
+            <FinancialImpactPanel incident={incident} />
             <BlastRadiusSummary incident={incident} />
             <SourceIPs events={incident.events} />
             <AffectedResources events={incident.events} />

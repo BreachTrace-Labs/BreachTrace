@@ -11,6 +11,7 @@ Returns stored incidents and their forensic events.
 from __future__ import annotations
 
 from collections import Counter
+from dataclasses import asdict
 from datetime import datetime
 from typing import Optional
 
@@ -27,6 +28,7 @@ from scorer.severity import (
     check_gdpr_flag,
     check_pcidss_flag,
     check_soc2_flag,
+    compute_financial_impact_lines,
 )
 
 router = APIRouter(prefix="/incidents", tags=["incidents"])
@@ -107,6 +109,22 @@ class IncidentSummaryOut(BaseModel):
         from_attributes = True
 
 
+class FinancialImpactLineOut(BaseModel):
+    """One costed finding. Mirrors scorer.severity.FinancialImpactLine."""
+
+    platform: str
+    kind: str
+    label: str
+    text: str
+    amount: Optional[float] = None
+    currency: Optional[str] = None
+    unit: Optional[str] = None
+    quantity: Optional[int] = None
+    # True only where money demonstrably moved (Stripe). Everything else is a
+    # list-price estimate, and the UI must be able to tell them apart.
+    actual: bool = False
+
+
 class IncidentDetailOut(IncidentSummaryOut):
     events: list[ForensicEventOut] = []
     report_text: Optional[str] = None
@@ -116,6 +134,10 @@ class IncidentDetailOut(IncidentSummaryOut):
     pcidss_flag: bool = False
     soc2_flag: bool = False
     compliance_reasons: list[str] = []
+    # Structured view of estimated_financial_impact. Computed per request from
+    # the same events, following the precedent of the compliance flags above —
+    # so no migration is needed and existing incidents get it immediately.
+    financial_impact_lines: list[FinancialImpactLineOut] = []
 
     class Config:
         from_attributes = True
@@ -192,6 +214,10 @@ def get_incident_detail(
         soc2=soc2,
         events=incident.events,
     )
+    out.financial_impact_lines = [
+        FinancialImpactLineOut(**asdict(line))
+        for line in compute_financial_impact_lines(incident.events)
+    ]
     return out
 
 
