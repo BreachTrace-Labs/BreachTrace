@@ -35,6 +35,7 @@ dist/
 
 # ── Data files (SecretBench CSV and experiment outputs) ────────────────────────
 data/
+context/
 
 # ── OS ─────────────────────────────────────────────────────────────────────────
 .DS_Store

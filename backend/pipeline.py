@@ -24,6 +24,8 @@ from sqlalchemy.orm import Session
 
 from classifier.rules import classify_all_events
 from collectors.aws import AWSCloudTrailCollector
+from collectors.azure import AzureActivityLogCollector
+from collectors.gcp import GCPAuditLogCollector
 from db.crud import (
     reset_incident_for_refresh,
     save_collection_status,
@@ -41,6 +43,13 @@ from scorer.severity import (
 )
 
 logger = logging.getLogger(__name__)
+
+# Collector dispatch map — keyed by platform string
+_COLLECTOR_MAP = {
+    "aws": AWSCloudTrailCollector,
+    "gcp": GCPAuditLogCollector,
+    "azure": AzureActivityLogCollector,
+}
 
 # How far before the commit timestamp to look in CloudTrail.
 # 120 minutes covers the demo flow (API calls made up to ~1h before pushing)
@@ -82,9 +91,10 @@ def _extract_remediation_steps(report_text: str) -> list[str]:
 
 def run_collection_pipeline(
     incident_id: str,
-    access_key_id: str,
+    credential: str,
     exposure_start: datetime,
     *,
+    platform: str = "aws",
     refresh_existing: bool = False,
 ) -> None:
     """
@@ -95,7 +105,7 @@ def run_collection_pipeline(
 
     Stages and status transitions
     ------------------------------
-    collecting  → (CloudTrail lookup + persist events)
+    collecting  → (platform event lookup + persist events)
     classifying → (rule-based event classification)
     scoring     → (severity score + GDPR flag + financial impact)
     reporting   → (Gemini report generation)
@@ -105,10 +115,13 @@ def run_collection_pipeline(
     ----------
     incident_id : str
         UUID of the IncidentRecord just created.
-    access_key_id : str
-        The leaked AKIA… key ID passed to CloudTrail ``LookupEvents``.
+    credential : str
+        The leaked credential identifier: AKIA key (AWS), service account
+        email (GCP), or client_id (Azure).
     exposure_start : datetime
         Beginning of the exposure window (commit timestamp).
+    platform : str
+        One of 'aws', 'gcp', 'azure'.  Selects the event collector.
     """
     db: Session = SessionLocal()
     pipeline_start = time.monotonic()
@@ -123,37 +136,55 @@ def run_collection_pipeline(
         exposure_end = datetime.now(tz=timezone.utc)
 
         logger.info(
-            "%s pipeline started for incident %s (key=%s)",
+            "%s pipeline started for incident %s (platform=%s credential=%s)",
             "Refresh" if refresh_existing else "Collection",
             incident_id,
-            access_key_id,
+            platform,
+            credential[:30],
         )
 
-        # ── STAGE 1: Collect CloudTrail events ────────────────────────────
-        # Extend the window 30 minutes back from the commit timestamp so that
-        # API calls made just before the commit (pre-exposure reconnaissance,
-        # or demo-seeded activity) are included.
+        # ── STAGE 1: Collect events ────────────────────────────────────────
+        # Extend the window back from the commit timestamp so that API calls
+        # made just before the commit (pre-exposure recon) are included.
         collection_start = exposure_start - timedelta(minutes=_COLLECTION_LOOKBACK_MINUTES)
 
+        collector_cls = _COLLECTOR_MAP.get(platform)
+        if collector_cls is None:
+            logger.error(
+                "Unknown platform '%s' for incident %s — aborting pipeline",
+                platform,
+                incident_id,
+            )
+            save_collection_status(
+                db,
+                incident_id=incident_id,
+                platform=platform,
+                status="error",
+                event_count=0,
+                error_message=f"Unsupported platform: {platform}",
+            )
+            update_status(db, incident_id, "error")
+            return
+
         t0 = time.monotonic()
-        collector = AWSCloudTrailCollector()
         try:
+            collector = collector_cls()
             events = collector.collect(
-                credential=access_key_id,
+                credential=credential,
                 start_time=collection_start,
                 end_time=exposure_end,
             )
         except Exception:
             logger.exception(
-                "CloudTrail collection failed for incident %s", incident_id
+                "%s event collection failed for incident %s", platform.upper(), incident_id
             )
             save_collection_status(
                 db,
                 incident_id=incident_id,
-                platform="aws",
+                platform=platform,
                 status="error",
                 event_count=0,
-                error_message="CloudTrail lookup_events failed after retries",
+                error_message=f"{platform.upper()} event collection failed after retries",
             )
             update_status(db, incident_id, "error")
             return
@@ -170,7 +201,7 @@ def run_collection_pipeline(
             save_collection_status(
                 db,
                 incident_id=incident_id,
-                platform="aws",
+                platform=platform,
                 status="success",
                 event_count=len(events),
             )
@@ -178,7 +209,7 @@ def run_collection_pipeline(
             save_collection_status(
                 db,
                 incident_id=incident_id,
-                platform="aws",
+                platform=platform,
                 status="no_activity",
                 event_count=0,
             )
@@ -262,6 +293,7 @@ def run_collection_pipeline(
                 exposure_duration_seconds=exposure_duration_s,
                 affected_resources=affected_resources,
                 source_ips=source_ips,
+                platform=platform,
             )
             remediation_steps = _extract_remediation_steps(report_text)
 

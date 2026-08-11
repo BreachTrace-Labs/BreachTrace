@@ -13,53 +13,50 @@ export interface ForensicEvent {
   success: boolean
   error_code: string | null
   raw_data: Record<string, unknown>
-  principal_id: string | null
-  location: string | null
   impact_category: string | null
   severity_weight: 1 | 2 | 3 | 4 | null
+  // GCP / Azure identity and location
+  principal_id?: string | null
+  location?: string | null
 }
 
-export type IncidentStatus =
-  | 'detecting'
-  | 'collecting'
-  | 'classifying'
-  | 'scoring'
-  | 'reporting'
-  | 'complete'
-  | 'error'
-
-export type IncidentSeverity = 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL' | null
-
-export interface IncidentSummary {
+export interface IncidentRecord {
   incident_id: string
-  platform: string
   credential_type: string
   credential_hint: string
+  // Null for GCP/Azure/SaaS incidents — only AWS has an access key ID.
   access_key_id: string | null
   // Unified identity for non-AWS platforms: GCP service account email or Azure
-  // client ID. Optional until the multi-platform API fields ship — see
-  // IncidentSummaryOut in backend/routers/incidents.py.
-  principal_id?: string | null
+  // client ID. Served by IncidentSummaryOut in backend/routers/incidents.py.
+  principal_id: string | null
   gcp_project_id: string | null
   azure_tenant_id: string | null
   azure_subscription_id: string | null
   repo_url: string
-  commit_hash: string | null
+  commit_hash: string
   exposure_start: string
   exposure_end: string | null
-  status: IncidentStatus
-  overall_severity: IncidentSeverity
-  gdpr_flag: boolean
-  created_at?: string
-}
-
-export interface IncidentRecord extends IncidentSummary {
+  status: 'detecting' | 'collecting' | 'classifying' | 'scoring' | 'reporting' | 'complete'
   events: ForensicEvent[]
+  overall_severity: 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL' | null
   report_text: string | null
   remediation_steps: string[]
+  gdpr_flag: boolean
   estimated_financial_impact: string | null
+  // Optional rather than required: the API always sends it, but incidents cached
+  // from before the multi-platform fields shipped will not have it, and
+  // lib/platform.ts falls back to deriving it from credential_type.
+  platform?: string
   // Computed by the detail endpoint — may be absent on list responses
   pcidss_flag?: boolean
   soc2_flag?: boolean
   compliance_reasons?: string[]
+}
+
+// IncidentSummary matches the list endpoint response (no events/report fields)
+export type IncidentSummary = Omit<IncidentRecord, 'events' | 'report_text' | 'remediation_steps' | 'estimated_financial_impact'> & {
+  events?: ForensicEvent[]
+  report_text?: string | null
+  remediation_steps?: string[]
+  estimated_financial_impact?: string | null
 }

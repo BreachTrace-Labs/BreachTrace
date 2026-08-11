@@ -45,3 +45,22 @@ GEMINI_API_KEY: str = os.getenv("GEMINI_API_KEY", "")
 DATABASE_URL: str = os.getenv("DATABASE_URL", "")
 
 ENVIRONMENT: str = os.getenv("ENVIRONMENT", "development")
+
+# ---------------------------------------------------------------------------
+# GCP (optional — system operates AWS-only when absent)
+# ---------------------------------------------------------------------------
+GCP_PROJECT_ID: str = os.getenv("GCP_PROJECT_ID", "")
+GCP_SERVICE_ACCOUNT_JSON: str = os.getenv("GCP_SERVICE_ACCOUNT_JSON", "")
+GCP_EXPERIMENT_CLIENT_EMAIL: str = os.getenv("GCP_EXPERIMENT_CLIENT_EMAIL", "")
+GCP_EXPERIMENT_PRIVATE_KEY_ID: str = os.getenv("GCP_EXPERIMENT_PRIVATE_KEY_ID", "")
+GCP_EXPERIMENT_PRIVATE_KEY: str = os.getenv("GCP_EXPERIMENT_PRIVATE_KEY", "")
+
+# ---------------------------------------------------------------------------
+# Azure (optional — system operates AWS-only when absent)
+# ---------------------------------------------------------------------------
+AZURE_TENANT_ID: str = os.getenv("AZURE_TENANT_ID", "")
+AZURE_CLIENT_ID: str = os.getenv("AZURE_CLIENT_ID", "")
+AZURE_CLIENT_SECRET: str = os.getenv("AZURE_CLIENT_SECRET", "")
+AZURE_SUBSCRIPTION_ID: str = os.getenv("AZURE_SUBSCRIPTION_ID", "")
+AZURE_EXPERIMENT_CLIENT_ID: str = os.getenv("AZURE_EXPERIMENT_CLIENT_ID", "")
+AZURE_EXPERIMENT_CLIENT_SECRET: str = os.getenv("AZURE_EXPERIMENT_CLIENT_SECRET", "")

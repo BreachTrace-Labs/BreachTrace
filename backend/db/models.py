@@ -97,6 +97,29 @@ class IncidentRecord(Base):
         nullable=True,
         comment="Formatted string: e.g. 'EC2: 2x t2.micro at $0.02/hr'",
     )
+
+    # GCP / Azure multi-platform fields
+    gcp_project_id = Column(
+        VARCHAR(100),
+        nullable=True,
+        comment="GCP project where the leaked service account lives",
+    )
+    azure_tenant_id = Column(
+        VARCHAR(50),
+        nullable=True,
+        comment="Azure Active Directory tenant ID",
+    )
+    azure_subscription_id = Column(
+        VARCHAR(50),
+        nullable=True,
+        comment="Azure subscription ID",
+    )
+    principal_id = Column(
+        VARCHAR(300),
+        nullable=True,
+        comment="Unified identity: GCP service account email or Azure client ID",
+    )
+
     created_at = Column(
         DateTime(timezone=True),
         nullable=False,
@@ -127,6 +150,16 @@ class IncidentRecord(Base):
         Index("ix_incident_records_exposure_start", "exposure_start"),
         Index("ix_incident_records_status", "status"),
     )
+
+    @property
+    def platform(self) -> str:
+        """Derive cloud platform from credential_type (not a DB column)."""
+        ctype = (self.credential_type or "").lower()
+        if "gcp" in ctype:
+            return "gcp"
+        if "azure" in ctype:
+            return "azure"
+        return "aws"
 
     def __repr__(self) -> str:
         return (
@@ -224,12 +257,24 @@ class ForensicEvent(Base):
         comment="Full original CloudTrail event dict",
     )
 
-    # Filled by classifier (Day 4)
+    # GCP / Azure identity and location fields
+    principal_id = Column(
+        VARCHAR(300),
+        nullable=True,
+        comment="GCP service account email or Azure client ID (principalEmail / caller)",
+    )
+    location = Column(
+        VARCHAR(200),
+        nullable=True,
+        comment="GCP region/zone or Azure resource group",
+    )
+
+    # Filled by classifier
     impact_category = Column(
         VARCHAR(50),
         nullable=True,
-        comment="One of 7 AWS categories: reconnaissance, data_access, exfiltration, "
-                "resource_abuse, privilege_escalation, financial_abuse, communication_abuse",
+        comment="One of 8 categories: reconnaissance, data_access, exfiltration, "
+                "resource_abuse, privilege_escalation, financial_abuse, communication_abuse, code_compromise",
     )
     severity_weight = Column(
         Integer,
@@ -247,7 +292,7 @@ class ForensicEvent(Base):
             name="ck_forensic_events_severity_weight",
         ),
         CheckConstraint(
-            "platform IN ('aws', 'gcp', 'stripe', 'github', 'twilio', 'db', 'npm')",
+            "platform IN ('aws', 'gcp', 'azure', 'stripe', 'github', 'twilio', 'db', 'npm')",
             name="ck_forensic_events_platform_valid",
         ),
         Index("ix_forensic_events_incident_id", "incident_id"),
@@ -318,7 +363,7 @@ class CollectionStatus(Base):
 
     __table_args__ = (
         CheckConstraint(
-            "platform IN ('aws', 'gcp', 'stripe', 'github', 'twilio', 'db', 'npm')",
+            "platform IN ('aws', 'gcp', 'azure', 'stripe', 'github', 'twilio', 'db', 'npm')",
             name="ck_collection_status_platform_valid",
         ),
         CheckConstraint(
