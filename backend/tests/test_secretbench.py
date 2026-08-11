@@ -1,5 +1,35 @@
-# SecretBench Track A accuracy tests
-# TODO (Yash/Day 6): run detector against data/secretbench_aws_200.csv and compute P/R/F1.
+"""
+Track A — detector accuracy against the SecretBench labelled dataset.
+
+BLOCKED ON PROCUREMENT, NOT ON EFFORT. Read this before re-planning Track A.
+
+The sprint plan (and the original Week-1 doc) said: "git clone
+https://github.com/setu1421/SecretBench, filter the CSV for secret_type='AWS',
+export 200 rows." **That is not possible.** The repository contains no secrets
+data — only a regex spreadsheet, metadata folders and a roadmap.
+
+The labelled dataset (97,479 secrets, 15,084 true) lives in Google BigQuery, and
+the project README requires:
+
+    1. a Google Cloud account,
+    2. contacting the authors, and
+    3. signing a data protection agreement,
+
+after which access is granted per email address. Steps 2 and 3 have real lead
+time and must be started by a person — they cannot be automated.
+
+Until that lands there is NO external validation of detector accuracy. The
+numbers in test_gcp_azure_detection_accuracy.py come from a fixture this team
+wrote, and must be quoted with that caveat.
+
+What IS validated externally today: SecretBench's published regular expressions
+are MIT-licensed and public, and test_secretbench_pattern_parity.py compares our
+patterns against them. That found five real coverage gaps. It validates pattern
+DEFINITIONS, not accuracy on real code — it is not a substitute for this file.
+
+Reference: Basak et al., "SecretBench: A Dataset of Software Secrets", MSR 2023.
+DOI 10.5281/zenodo.7555981
+"""
 
 import csv
 import os
@@ -9,7 +39,7 @@ from detector import scan
 DATASET_PATH = os.path.join(os.path.dirname(__file__), "../../data/secretbench_aws_200.csv")
 
 
-@pytest.mark.skipif(not os.path.exists(DATASET_PATH), reason="SecretBench dataset not downloaded yet")
+@pytest.mark.skipif(not os.path.exists(DATASET_PATH), reason="SecretBench dataset requires a signed data protection agreement — see module docstring")
 def test_secretbench_precision_recall():
     true_positives = 0
     false_negatives = 0

@@ -53,8 +53,17 @@ from typing import Sequence
 #
 # =============================================================================
 
-# AWS Access Key ID: starts with AKIA, followed by 16 uppercase alphanumeric chars
-AWS_ACCESS_KEY_PATTERN = re.compile(r"(?<![A-Za-z0-9/])(AKIA[0-9A-Z]{16})\b")
+# AWS Access Key ID: a 4-char type prefix followed by 16 uppercase alphanumerics.
+#
+# The prefix set is taken from SecretBench's published pattern
+# (`\b((?:AKIA|ABIA|ACCA|ASIA)[0-9A-Z]{16})\b`, TruffleHog-sourced). We
+# previously matched AKIA only, which missed ASIA — STS temporary session
+# credentials — despite those appearing constantly in leaked CI configs.
+# CloudTrail LookupEvents queries by AccessKeyId identically for all of them.
+AWS_KEY_ID_PREFIXES = ("AKIA", "ABIA", "ACCA", "ASIA")
+AWS_ACCESS_KEY_PATTERN = re.compile(
+    r"(?<![A-Za-z0-9/])((?:" + "|".join(AWS_KEY_ID_PREFIXES) + r")[0-9A-Z]{16})\b"
+)
 
 # AWS Secret Access Key: 40-char base64-like string, often appearing after "=" or ":"
 AWS_SECRET_KEY_PATTERN = re.compile(r"(?<![A-Za-z0-9/+])[A-Za-z0-9/+=]{40}(?![A-Za-z0-9/+])")
@@ -429,20 +438,24 @@ TIER_FORENSIC = 1
 TIER_DETECTION_ONLY = 2
 
 # ── Tier 1 ────────────────────────────────────────────────────────────────────
-STRIPE_SECRET_KEY_PATTERN = re.compile(r"\b((?:sk|rk)_(?:live|test)_[0-9a-zA-Z]{24,})\b")
+# Published bound is 20-30; we required 24+, missing shorter live keys.
+STRIPE_SECRET_KEY_PATTERN = re.compile(r"\b((?:sk|rk)_(?:live|test)_[0-9a-zA-Z]{20,})\b")
 TWILIO_ACCOUNT_SID_PATTERN = re.compile(r"\b(AC[0-9a-f]{32})\b")
 TWILIO_AUTH_TOKEN_PATTERN = re.compile(r"(?<![0-9a-zA-Z])([0-9a-f]{32})(?![0-9a-zA-Z])")
 TWILIO_CONTEXT_KEYWORDS = ("twilio", "auth_token", "authtoken", "account_sid", "accountsid")
 
 # ── Tier 2 ────────────────────────────────────────────────────────────────────
-GITHUB_PAT_PATTERN = re.compile(r"\b(gh[pousr]_[A-Za-z0-9]{36})\b")
+# Published pattern allows a 36-255 char body; we had pinned exactly 36.
+GITHUB_PAT_PATTERN = re.compile(r"\b(gh[pousr]_[A-Za-z0-9]{36,255})\b")
 GITHUB_FINE_GRAINED_PAT_PATTERN = re.compile(r"\b(github_pat_[A-Za-z0-9]{22}_[A-Za-z0-9]{59})\b")
 SLACK_WEBHOOK_PATTERN = re.compile(
     r"(https://hooks\.slack\.com/services/T[A-Za-z0-9_]+/B[A-Za-z0-9_]+/[A-Za-z0-9]{20,})"
 )
-SLACK_TOKEN_PATTERN = re.compile(r"\b(xox[baprs]-[0-9A-Za-z-]{10,})\b")
+# Published patterns cover xapp- (app-level tokens) alongside xox[baprs]-.
+SLACK_TOKEN_PATTERN = re.compile(r"\b((?:xox[baprs]|xapp)-[0-9A-Za-z-]{10,})\b")
 NPM_TOKEN_PATTERN = re.compile(r"\b(npm_[A-Za-z0-9]{36})\b")
-SENDGRID_API_KEY_PATTERN = re.compile(r"\b(SG\.[A-Za-z0-9_-]{22}\.[A-Za-z0-9_-]{43})\b")
+# Published bounds are 20-24 and 39-50; we had pinned the exact 22/43 form.
+SENDGRID_API_KEY_PATTERN = re.compile(r"\b(SG\.[A-Za-z0-9_-]{20,24}\.[A-Za-z0-9_-]{39,50})\b")
 HUGGINGFACE_TOKEN_PATTERN = re.compile(r"\b(hf_[A-Za-z0-9]{34})\b")
 # Requires embedded credentials — a bare `postgres://localhost/db` is not a leak.
 DB_CONNECTION_STRING_PATTERN = re.compile(
