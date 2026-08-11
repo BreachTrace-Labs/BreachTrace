@@ -183,3 +183,112 @@ def test_gemini_failure_falls_back_instead_of_raising(monkeypatch):
 
     assert "Automated summary" in report
     assert "CloudTrail" in report
+
+
+# ==========================================================================
+# Empty results must never read as "nothing happened"
+# ==========================================================================
+
+def test_no_events_prompt_forbids_claiming_nothing_happened():
+    """
+    The most dangerous thing this report can do is describe an empty audit-log
+    result as "no unauthorised activity". Absence of logged activity is not
+    absence of activity: audit logs have documented blind spots and delivery
+    lag, and Stripe/Twilio record writes but not reads.
+
+    The prompt previously said only "No X events were captured" with no
+    instruction, leaving the model free to write exactly that reassurance.
+    """
+    from reporter.gemini import _build_prompt
+
+    prompt = _build_prompt(
+        events=[],
+        overall_severity="UNKNOWN",
+        exposure_duration_seconds=120,
+        affected_resources=[],
+        source_ips=[],
+        platform="aws",
+    )
+
+    assert "NO EVENTS WERE FOUND" in prompt
+    assert "must NOT write that nothing happened" in prompt
+    assert "no unauthorised activity occurred" in prompt
+    assert "Treat the credential as compromised" in prompt
+
+
+def test_no_events_prompt_explains_the_platform_blind_spot():
+    """The reason must be platform-specific, not a generic disclaimer."""
+    from reporter.gemini import _build_prompt
+
+    azure = _build_prompt(
+        events=[], overall_severity="UNKNOWN", exposure_duration_seconds=60,
+        affected_resources=[], source_ips=[], platform="azure",
+    )
+    gcp = _build_prompt(
+        events=[], overall_severity="UNKNOWN", exposure_duration_seconds=60,
+        affected_resources=[], source_ips=[], platform="gcp",
+    )
+
+    assert "control-plane operations only" in azure
+    assert "Data Access logs" in gcp
+    assert azure != gcp
+
+
+def test_instruction_absent_when_events_exist():
+    """It must not appear on incidents that DID find activity."""
+    from datetime import datetime, timezone
+
+    from normalizer.schema import ForensicEvent
+    from reporter.gemini import _build_prompt
+
+    event = ForensicEvent(
+        platform="aws",
+        timestamp=datetime(2026, 8, 1, tzinfo=timezone.utc),
+        api_action="GetObject",
+        raw_data={},
+    )
+    prompt = _build_prompt(
+        events=[event], overall_severity="HIGH", exposure_duration_seconds=60,
+        affected_resources=[], source_ips=[], platform="aws",
+    )
+
+    assert "NO EVENTS WERE FOUND" not in prompt
+
+
+def test_fallback_report_also_refuses_to_claim_nothing_happened():
+    """
+    The deterministic path runs during bulk experiment runs, so it is the
+    wording on most recorded incidents — it needs the same discipline.
+    """
+    from reporter.gemini import PLATFORM_PROFILES, _fallback_report
+
+    report = _fallback_report(
+        events=[],
+        overall_severity="UNKNOWN",
+        exposure_duration_seconds=90,
+        profile=PLATFORM_PROFILES["gcp"],
+    )
+
+    assert "NOT evidence that the credential went unused" in report
+    assert "Data Access logs" in report
+    assert "Treat the credential as compromised" in report
+
+
+def test_fallback_omits_the_caveat_when_events_exist():
+    from datetime import datetime, timezone
+
+    from normalizer.schema import ForensicEvent
+    from reporter.gemini import PLATFORM_PROFILES, _fallback_report
+
+    event = ForensicEvent(
+        platform="gcp",
+        timestamp=datetime(2026, 8, 1, tzinfo=timezone.utc),
+        api_action="storage.objects.get",
+        raw_data={},
+    )
+    report = _fallback_report(
+        events=[event], overall_severity="HIGH", exposure_duration_seconds=90,
+        profile=PLATFORM_PROFILES["gcp"],
+    )
+
+    assert "NOT evidence" not in report

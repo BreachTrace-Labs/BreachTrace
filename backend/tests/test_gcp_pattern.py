@@ -39,10 +39,28 @@ def test_context_confirmation_flag_set_when_sa_json_present():
     assert "(service_account context)" in matches[0].raw_match
 
 
-def test_no_context_confirmation_flag_without_sa_json():
+def test_service_account_email_without_key_material_is_not_a_leak():
+    """
+    A service-account email is an IDENTIFIER, not a secret — it appears in IAM
+    policy bindings, k8s manifests and documentation. The credential is the
+    private key.
+
+    This test previously asserted that a bare email still matched (merely
+    without the context flag), which encoded the bug: `context_confirmed` was
+    computed and then used only to decorate `raw_match`, so the documented
+    Pattern-2 defence never gated anything and every README mention became a
+    collectable Tier-1 incident.
+    """
+    prose = f"Grant the Storage Admin role to {VALID_EMAIL} before deploying."
+    assert find_gcp_credentials(prose) == []
+
+
+def test_key_material_context_is_flagged():
+    """`client_email` is itself a key-file field, so it counts as evidence."""
     text = f'client_email = "{VALID_EMAIL}"'
     matches = find_gcp_credentials(text)
-    assert "(service_account context)" not in matches[0].raw_match
+    assert len(matches) == 1
+    assert "(service_account context)" in matches[0].raw_match
 
 
 # ---------------------------------------------------------------------------

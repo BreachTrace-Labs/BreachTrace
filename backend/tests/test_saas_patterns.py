@@ -88,8 +88,25 @@ def test_twilio_flags_paired_auth_token():
     assert "(auth token nearby)" in matches[0].raw_match
 
 
-def test_twilio_sid_without_token_context_is_still_detected_but_unpaired():
-    matches = find_saas_credentials(f"resource id {TWILIO_SID}")
+def test_twilio_sid_without_twilio_context_is_not_a_credential():
+    """
+    `AC` + 32 hex characters is not distinctive on its own — correlation ids and
+    truncated hashes take the same shape.
+
+    This previously asserted the bare SID still matched, which encoded the bug:
+    `has_keyword` was computed and then only decorated `raw_match`, so any
+    AC-prefixed hex string produced a Twilio incident.
+    """
+    assert find_saas_credentials(f"resource id {TWILIO_SID}") == []
+
+
+def test_twilio_sid_with_keyword_but_no_token_is_detected_unpaired():
+    """
+    The keyword is the gate, not the token: a `.env` naming TWILIO_ACCOUNT_SID
+    is a genuine exposure even when the auth token lives in another file. The
+    pairing signal is still recorded for the report.
+    """
+    matches = find_saas_credentials(f"TWILIO_ACCOUNT_SID={TWILIO_SID}")
     assert len(matches) == 1
     assert "(auth token nearby)" not in matches[0].raw_match
 

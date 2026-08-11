@@ -34,6 +34,7 @@ class _PlatformProfile:
         vocabulary: str,
         revoke_command: str,
         review_command: str,
+        blind_spot: str = "",
     ) -> None:
         self.name = name
         self.audit_log = audit_log
@@ -41,12 +42,18 @@ class _PlatformProfile:
         self.vocabulary = vocabulary
         self.revoke_command = revoke_command
         self.review_command = review_command
+        # What this platform's audit log CANNOT see. Surfaced in the prompt so
+        # the model cannot describe an empty result as "nothing happened".
+        self.blind_spot = blind_spot
 
 
 PLATFORM_PROFILES: dict[str, _PlatformProfile] = {
     "aws": _PlatformProfile(
         name="AWS",
         audit_log="CloudTrail",
+        blind_spot=(
+            "CloudTrail records management events reliably, but S3 and Lambda data events are only logged when data-event logging is explicitly enabled, which it often is not."
+        ),
         identity_term="access key ID",
         vocabulary=(
             "Use AWS terms only: S3 buckets and objects, EC2 instances, IAM users, "
@@ -60,6 +67,9 @@ PLATFORM_PROFILES: dict[str, _PlatformProfile] = {
     "gcp": _PlatformProfile(
         name="Google Cloud",
         audit_log="Cloud Audit Logs",
+        blind_spot=(
+            "Admin Activity logs are always on, but Data Access logs — which cover object reads — must be explicitly enabled per service and are off by default."
+        ),
         identity_term="service account email",
         vocabulary=(
             "Use Google Cloud terms only: Cloud Storage buckets and objects, Compute "
@@ -75,6 +85,9 @@ PLATFORM_PROFILES: dict[str, _PlatformProfile] = {
     "azure": _PlatformProfile(
         name="Microsoft Azure",
         audit_log="Activity Log",
+        blind_spot=(
+            "The Azure Activity Log records control-plane operations only. Data-plane reads, such as downloading a blob, do not appear unless diagnostic settings were configured in advance."
+        ),
         identity_term="client ID (app registration)",
         vocabulary=(
             "Use Azure terms only: storage accounts and blobs, virtual machines, "
@@ -154,6 +167,27 @@ def _build_prompt(
         else f"- No {profile.audit_log} events were captured during the exposure window."
     )
 
+    # An empty result is the single most dangerous thing this report can
+    # mishandle. Absence of logged activity is NOT evidence the credential went
+    # unused: audit logs have documented blind spots, delivery delays, and in
+    # Stripe's and Twilio's case record writes but not reads. Left to itself the
+    # model writes "no unauthorised activity was detected", which is exactly the
+    # false reassurance the whole system exists to eliminate.
+    no_events_instruction = ""
+    if not event_lines:
+        no_events_instruction = (
+            "\nCRITICAL — NO EVENTS WERE FOUND.\n"
+            "You must NOT write that nothing happened, that the credential was "
+            "unused, or that no unauthorised activity occurred. That is not what "
+            "an empty result means.\n"
+            f"State plainly that no activity was RECORDED in {profile.audit_log}, "
+            "and that this is not the same as no activity having taken place. "
+            f"Explain the limitation in plain language: {profile.blind_spot} "
+            "Audit logs can also lag by several minutes.\n"
+            "Treat the credential as compromised and keep the remediation "
+            "checklist as urgent as it would be if activity had been found.\n"
+        )
+
     # A single leaked file can expose credentials for more than one platform.
     platforms_seen = sorted(
         {
@@ -219,6 +253,7 @@ Context:
 
 Events:
 {events_block}
+{no_events_instruction}
 """
 
 
@@ -236,13 +271,29 @@ def _fallback_report(
     is actively misleading, and this path runs during bulk experiment runs
     where Gemini is deliberately not called.
     """
-    return "\n".join(
-        [
-            f"Automated summary — {profile.name} credential exposure.",
+    lines = [
+        f"Automated summary — {profile.name} credential exposure.",
+        "",
+        f"Severity: {overall_severity or 'UNKNOWN'}",
+        f"Exposure duration: {exposure_duration_seconds}s",
+        f"Events recorded in {profile.audit_log}: {len(events)}",
+    ]
+
+    # Same rule as the Gemini path: an empty result must never read as
+    # "nothing happened". This branch runs during bulk experiment runs, so it
+    # is the wording that appears on most recorded incidents.
+    if not events:
+        lines += [
             "",
-            f"Severity: {overall_severity or 'UNKNOWN'}",
-            f"Exposure duration: {exposure_duration_seconds}s",
-            f"Events recorded in {profile.audit_log}: {len(events)}",
+            f"No activity was RECORDED in {profile.audit_log}. This is NOT evidence "
+            "that the credential went unused.",
+            profile.blind_spot,
+            "Treat the credential as compromised and complete every step below.",
+        ]
+
+    return "\n".join(
+        lines
+        + [
             "",
             "Remediation checklist:",
             f"☐ Revoke the exposed credential: {profile.revoke_command}",

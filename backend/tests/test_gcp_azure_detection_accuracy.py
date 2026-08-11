@@ -7,10 +7,25 @@ is a hand-built 60-sample set: 20 GCP positives, 20 Azure positives, 20 near-mis
 negatives drawn from things that genuinely appear in real repositories (trace
 IDs, git SHAs, ordinary emails, lookalike domains).
 
-The negatives are the point. The Azure client-secret pattern is
-`[A-Za-z0-9.\\-_~]{34,}` gated only on a nearby keyword, which is far broader
-than the AWS or GCP anchors. That breadth is a known false-positive risk, and
-the sprint plan calls for quantifying it rather than guessing at it.
+WHAT COUNTS AS A LEAK
+---------------------
+The detector reports GCP **key material**, not service-account identifiers. An
+email like `svc@proj.iam.gserviceaccount.com` is not secret: it appears in IAM
+policy bindings, Kubernetes manifests, Terraform outputs and documentation. The
+credential is the private key. A positive therefore requires key-material
+evidence in the context window.
+
+Six rows (G07, G08, G12, G15, G16, G19) were originally labelled positive and
+have been relabelled negative under that definition — they were a JS literal, an
+IAM binding, a k8s annotation, a prose mention, a YAML name and a policy
+principal. Recording this explicitly because relabelling ground truth to suit a
+detector is exactly the move that invalidates a benchmark; the justification is
+the definition above, not the score.
+
+The negatives are the point. N29–N33 contain a GENUINE `gserviceaccount.com`
+domain in prose, comments, logs, IAM lists and tables — the failure mode the
+earlier set never tested, and which the detector failed until the context gate
+was actually enforced. N34–N35 do the same for bare `AC`+hex Twilio strings.
 
 The fixture lives under tests/ rather than data/ because `data/` is gitignored —
 a dataset that cannot be committed cannot back a reproducible claim.
@@ -84,15 +99,16 @@ def _metrics(tp, fp, fn):
 # ==========================================================================
 
 def test_fixture_has_expected_composition():
-    assert len(SAMPLES) == 68
+    assert len(SAMPLES) == 81
     gcp = [s for s in SAMPLES if s["platform"] == "gcp" and s["ground_truth"]]
     azure = [s for s in SAMPLES if s["platform"] == "azure" and s["ground_truth"]]
     negatives = [s for s in SAMPLES if not s["ground_truth"]]
     assert len(gcp) == 20
     assert len(azure) == 20
-    # 20 ordinary near-misses (N01–N20) plus 8 adversarial ones (N21–N28) that
-    # specifically target the Azure client-secret pattern's keyword gate.
-    assert len(negatives) == 28
+    # 20 ordinary near-misses (N01–N20), 8 adversarial Azure-secret samples
+    # (N21–N28), 7 adversarial GCP/Twilio samples (N29–N35), and 6 rows
+    # relabelled from positive after review (see the module docstring).
+    assert len(negatives) == 41
 
 
 def test_adversarial_negatives_are_present():

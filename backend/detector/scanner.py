@@ -93,14 +93,11 @@ def scan(diff_text: str, *, include_saas: bool = False) -> list[AnyCredentialMat
     GCP/Azure: all stripped lines are passed so multi-line JSON key files and
     context windows spanning unchanged lines are handled correctly.
 
-    ``include_saas`` adds the Stripe/Twilio/Tier-2 families. It defaults to
-    **off** deliberately: every current caller (``routers/webhook.py``,
-    ``routers/simulate.py``) reads ``match.access_key_id``, which only the AWS
-    match type defines, so returning new match types by default would raise
-    AttributeError mid-pipeline. Those routers gain per-match-type dispatch when
-    `ritwik-current` merges; flip this default to ``True`` in the same change and
-    route ``SaaSCredentialMatch`` by ``forensic_tier`` (Tier 1 → collector,
-    Tier 2 → incident with ``unavailable_reason``, no collection attempt).
+    ``include_saas`` adds the Stripe/Twilio/Tier-2 families. Both routers pass
+    ``True``; they dispatch through ``detector.match_resolver.resolve_match`` and
+    handle every match type. The default stays ``False`` so that callers which
+    only expect the three cloud platforms — and the AWS-only unit tests — keep
+    their existing behaviour.
     """
     matches: list[AnyCredentialMatch] = []
     seen: set[str] = set()
@@ -133,14 +130,22 @@ def scan(diff_text: str, *, include_saas: bool = False) -> list[AnyCredentialMat
                 )
             )
 
-    # GCP + Azure — run on all diff lines stripped of markers so context windows
-    # spanning unchanged lines are preserved for multi-line key file detection
+    # GCP / Azure / SaaS — the full stripped text is passed so that context
+    # windows spanning UNCHANGED lines still resolve (a key file whose "type":
+    # "service_account" line is context, not an addition).
+    #
+    # `candidate_lines` restricts which lines may *produce* a match to added
+    # lines only. Without it the remediation commit that DELETES a leaked
+    # credential re-fires the alarm for every platform except AWS, which had
+    # always filtered correctly.
     stripped_text = "\n".join(line.text for line in lines)
-    matches.extend(find_gcp_credentials(stripped_text))
-    matches.extend(find_azure_credentials(stripped_text))
+    candidate_lines = {i for i, line in enumerate(lines) if line.is_candidate}
+
+    matches.extend(find_gcp_credentials(stripped_text, candidate_lines))
+    matches.extend(find_azure_credentials(stripped_text, candidate_lines))
 
     if include_saas:
-        matches.extend(find_saas_credentials(stripped_text))
+        matches.extend(find_saas_credentials(stripped_text, candidate_lines))
 
     return matches
 

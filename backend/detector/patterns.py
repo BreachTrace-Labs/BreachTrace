@@ -143,10 +143,41 @@ FIREBASE_SA_EMAIL_PATTERN = re.compile(
 GCP_CLIENT_EMAIL_PATTERN = re.compile(
     r'[a-z0-9\-\.]+@[a-z0-9\-]+\.iam\.gserviceaccount\.com'
 )
-# Keywords that confirm the surrounding JSON is a service account key file
-GCP_SERVICE_ACCOUNT_CONTEXT = ('"type"', 'service_account', 'private_key_id')
+# Evidence that the surrounding text carries KEY MATERIAL rather than merely
+# naming a service account.
+#
+# This distinction is the whole point. A service-account email is an identifier,
+# not a secret: it appears routinely in IAM policy bindings, Kubernetes
+# manifests, Terraform outputs and documentation. The credential is the private
+# key. Treating every `*.iam.gserviceaccount.com` string as a leak fires on
+# every README that documents which account to grant a role to.
+#
+# Matched case-insensitively, and with '-' normalised to '_' so that
+# `activate-service-account` and `service_account` both count.
+GCP_SERVICE_ACCOUNT_CONTEXT = (
+    '"type"',
+    'service_account',
+    'private_key',
+    'private_key_id',
+    'client_email',
+    'credentials',
+    # Environment-variable names that conventionally accompany a key file.
+    'sa_email',
+    'gcp_sa',
+)
 GCP_PRIVATE_KEY_ID_PATTERN = re.compile(
     r'"private_key_id"\s*:\s*"([a-f0-9]{40})"'
+)
+
+# Contexts that NAME a service account by well-known convention and never carry
+# key material. Checked against the matching line and take priority over the
+# key-material markers, because several of them literally contain the substring
+# "service-account" and would otherwise satisfy the gate.
+GCP_IDENTIFIER_ONLY_MARKERS = (
+    'iam.gke.io/gcp-service-account',   # GKE Workload Identity annotation
+    'serviceaccount:',                  # IAM policy binding member
+    'serviceaccountname:',              # Kubernetes pod spec
+    'iam.gke.io/service-account',       # older GKE annotation form
 )
 GCP_CONTEXT_RADIUS = 20
 
@@ -161,23 +192,61 @@ class GCPCredentialMatch:
     line_number: int | None = None
 
 
-def find_gcp_credentials(text: str) -> list[GCPCredentialMatch]:
+
+def _is_eligible(index: int, candidate_lines: set[int] | None) -> bool:
+    """
+    Whether a match found on line ``index`` should be reported.
+
+    ``None`` means every line is eligible, which is what direct callers and unit
+    tests want. The scanner passes the set of ADDED diff lines so that a commit
+    which *removes* a credential — the remediation commit — does not re-fire the
+    alarm. Context windows are still evaluated over the full text, so a key file
+    whose surrounding lines are unchanged is still recognised.
+
+    AWS already worked this way; GCP, Azure and the SaaS families did not.
+    """
+    return candidate_lines is None or index in candidate_lines
+
+
+def find_gcp_credentials(
+    text: str,
+    candidate_lines: set[int] | None = None,
+) -> list[GCPCredentialMatch]:
     matches = []
     seen: set[str] = set()
     lines = text.splitlines()
 
     for i, line in enumerate(lines):
+        if not _is_eligible(i, candidate_lines):
+            continue
         for m in GCP_CLIENT_EMAIL_PATTERN.finditer(line):
             email = m.group(0)
             if email in seen:
                 continue
             seen.add(email)
 
-            # Check surrounding lines for service_account context keywords
+            # Check surrounding lines for key-material evidence.
             lo = max(0, i - GCP_CONTEXT_RADIUS)
             hi = min(len(lines), i + GCP_CONTEXT_RADIUS + 1)
             context_block = "\n".join(lines[lo:hi])
-            context_confirmed = any(kw in context_block for kw in GCP_SERVICE_ACCOUNT_CONTEXT)
+            normalised_context = context_block.lower().replace("-", "_")
+            context_confirmed = any(
+                kw.lower().replace("-", "_") in normalised_context
+                for kw in GCP_SERVICE_ACCOUNT_CONTEXT
+            )
+
+            # Well-known identifier-only syntax wins over the marker check: a
+            # GKE Workload Identity annotation contains "gcp-service-account"
+            # and would otherwise satisfy the gate while naming, not leaking.
+            if any(marker in line.lower() for marker in GCP_IDENTIFIER_ONLY_MARKERS):
+                continue
+
+            # ENFORCE the gate. It was previously computed and then used only to
+            # decorate raw_match, which left the documented Pattern-2 defence
+            # completely inert: any service-account email anywhere — including a
+            # README line — produced a collectable Tier-1 incident.
+            if not context_confirmed:
+                continue
 
             # Extract private_key_id from the same context window if present
             key_id_match = GCP_PRIVATE_KEY_ID_PATTERN.search(context_block)
@@ -259,13 +328,18 @@ class AzureCredentialMatch:
     line_number: int | None = None
 
 
-def find_azure_credentials(text: str) -> list[AzureCredentialMatch]:
+def find_azure_credentials(
+    text: str,
+    candidate_lines: set[int] | None = None,
+) -> list[AzureCredentialMatch]:
     matches = []
     seen: set[str] = set()
     lines = text.splitlines()
 
     # Connection strings are self-identifying — no context check needed
     for i, line in enumerate(lines):
+        if not _is_eligible(i, candidate_lines):
+            continue
         for m in AZURE_CONN_STRING_PATTERN.finditer(line):
             conn_str = m.group(0)
             if conn_str in seen:
@@ -281,6 +355,8 @@ def find_azure_credentials(text: str) -> list[AzureCredentialMatch]:
 
     # UUID-format client IDs require nearby Azure context keywords to avoid false positives
     for i, line in enumerate(lines):
+        if not _is_eligible(i, candidate_lines):
+            continue
         for m in AZURE_CLIENT_ID_PATTERN.finditer(line):
             uuid = m.group(0).lower()
             if uuid in seen:
@@ -305,6 +381,8 @@ def find_azure_credentials(text: str) -> list[AzureCredentialMatch]:
 
     # Client secrets — require Azure keyword context; skip anything already caught as UUID/conn string
     for i, line in enumerate(lines):
+        if not _is_eligible(i, candidate_lines):
+            continue
         for m in AZURE_CLIENT_SECRET_PATTERN.finditer(line):
             secret = m.group(0)
             if secret.lower() in seen:
@@ -483,7 +561,10 @@ _SAAS_PATTERN_SPECS: tuple[tuple[str, str, re.Pattern[str], int, str | None], ..
 )
 
 
-def _find_twilio_credentials(lines: Sequence[str]) -> list[SaaSCredentialMatch]:
+def _find_twilio_credentials(
+    lines: Sequence[str],
+    candidate_lines: set[int] | None = None,
+) -> list[SaaSCredentialMatch]:
     """
     Twilio Account SIDs are self-identifying (`AC` + 32 hex), so the SID anchors
     the match. The auth token is a bare 32-char hex string with no prefix of its
@@ -494,6 +575,8 @@ def _find_twilio_credentials(lines: Sequence[str]) -> list[SaaSCredentialMatch]:
     seen: set[str] = set()
 
     for index, line in enumerate(lines):
+        if not _is_eligible(index, candidate_lines):
+            continue
         for match in TWILIO_ACCOUNT_SID_PATTERN.finditer(line):
             account_sid = match.group(1)
             if account_sid in seen or _is_placeholder(account_sid):
@@ -511,6 +594,19 @@ def _find_twilio_credentials(lines: Sequence[str]) -> list[SaaSCredentialMatch]:
                 for token_match in TWILIO_AUTH_TOKEN_PATTERN.finditer(context)
             )
             paired = has_keyword and token_found
+
+            # ENFORCE the keyword gate. It was previously computed and then used
+            # only to decorate raw_match, so any `AC` + 32 hex characters became
+            # a Twilio incident — a UUID-free correlation id, a truncated hash,
+            # any 34-char hex string beginning AC.
+            #
+            # The keyword is required, not the token: an Account SID is a public
+            # identifier and the auth token is the actual secret, but a `.env`
+            # naming TWILIO_ACCOUNT_SID is a genuine exposure even when the
+            # token lives in another file. `paired` still records the stronger
+            # signal for the report.
+            if not has_keyword:
+                continue
 
             raw = f"{account_sid} @ line {index + 1}"
             if paired:
@@ -531,7 +627,10 @@ def _find_twilio_credentials(lines: Sequence[str]) -> list[SaaSCredentialMatch]:
     return matches
 
 
-def find_saas_credentials(text: str) -> list[SaaSCredentialMatch]:
+def find_saas_credentials(
+    text: str,
+    candidate_lines: set[int] | None = None,
+) -> list[SaaSCredentialMatch]:
     """
     Scan text for every credential family beyond AWS/GCP/Azure.
 
@@ -544,6 +643,8 @@ def find_saas_credentials(text: str) -> list[SaaSCredentialMatch]:
     lines = text.splitlines()
 
     for index, line in enumerate(lines):
+        if not _is_eligible(index, candidate_lines):
+            continue
         for cred_type, platform, pattern, tier, reason in _SAAS_PATTERN_SPECS:
             for match in pattern.finditer(line):
                 value = match.group(1)
@@ -565,5 +666,5 @@ def find_saas_credentials(text: str) -> list[SaaSCredentialMatch]:
                     )
                 )
 
-    matches.extend(_find_twilio_credentials(lines))
+    matches.extend(_find_twilio_credentials(lines, candidate_lines))
     return matches
