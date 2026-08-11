@@ -134,6 +134,12 @@ def find_aws_credentials(text: str) -> list[CredentialMatch]:
 # GCP — regex constants, dataclass, implementation
 # =============================================================================
 
+# Firebase admin SDK service accounts are always named
+# `firebase-adminsdk-<5 chars>@<project>.iam.gserviceaccount.com`.
+FIREBASE_SA_EMAIL_PATTERN = re.compile(
+    r'firebase-adminsdk-[a-z0-9]+@[a-z0-9\-]+\.iam\.gserviceaccount\.com'
+)
+
 GCP_CLIENT_EMAIL_PATTERN = re.compile(
     r'[a-z0-9\-\.]+@[a-z0-9\-]+\.iam\.gserviceaccount\.com'
 )
@@ -183,7 +189,16 @@ def find_gcp_credentials(text: str) -> list[GCPCredentialMatch]:
                 raw_match += " (service_account context)"
 
             matches.append(GCPCredentialMatch(
-                credential_type="gcp_service_account",
+                # Firebase admin SDK keys ARE GCP service account keys — same
+                # file format, same Cloud Audit Logs. They are labelled
+                # separately so the report names the product the developer
+                # actually recognises, while CREDENTIAL_TYPE_TO_PLATFORM still
+                # routes them to the GCP collector. A free extra platform.
+                credential_type=(
+                    "firebase_service_account"
+                    if FIREBASE_SA_EMAIL_PATTERN.match(email)
+                    else "gcp_service_account"
+                ),
                 client_email=email,
                 private_key_id=private_key_id,
                 credential_hint=hint,

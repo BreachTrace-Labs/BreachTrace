@@ -19,9 +19,10 @@ import {
 } from 'lucide-react'
 import client from '@/api/client'
 import type { IncidentRecord } from '@/types'
-import { derivePlatform, PLATFORM_META, platformIdentity } from '@/lib/platform'
+import { derivePlatform, isForensicTier, PLATFORM_META, platformIdentity } from '@/lib/platform'
 import SeverityBadge from '@/components/SeverityBadge'
 import ForensicTimeline from '@/components/ForensicTimeline'
+import ForensicsUnavailable from '@/components/ForensicsUnavailable'
 import BlastRadiusSummary from '@/components/BlastRadiusSummary'
 import AffectedResources from '@/components/AffectedResources'
 import SourceIPs from '@/components/SourceIPs'
@@ -458,16 +459,23 @@ const IncidentDetail: React.FC = () => {
             </div>
           )}
 
-          {/* Forensic Timeline */}
-          <div className="bg-card border rounded-sm shadow-sm p-6 sm:p-8">
-              <h2 className="text-lg font-semibold text-foreground mb-6 flex items-center gap-2">
-                <div className="p-1.5 bg-primary/10 text-primary rounded-sm">
-                   <Activity size={18} />
-                </div>
-                Forensic Timeline
-              </h2>
-             <ForensicTimeline events={incident.events} />
-          </div>
+          {/* Timeline, or an explanation of why there cannot be one.
+              Tier-2 platforms expose no queryable audit log, so rendering an
+              empty timeline would read as "nothing happened" when the truth is
+              "this is unknowable". */}
+          {isForensicTier(incident) ? (
+            <div className="bg-card border rounded-sm shadow-sm p-6 sm:p-8">
+                <h2 className="text-lg font-semibold text-foreground mb-6 flex items-center gap-2">
+                  <div className="p-1.5 bg-primary/10 text-primary rounded-sm">
+                     <Activity size={18} />
+                  </div>
+                  Forensic Timeline
+                </h2>
+               <ForensicTimeline events={incident.events} />
+            </div>
+          ) : (
+            <ForensicsUnavailable incident={incident} />
+          )}
 
         </div>
 

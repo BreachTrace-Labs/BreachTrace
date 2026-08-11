@@ -391,6 +391,68 @@ const INC5_EVENTS: ForensicEvent[] = [
   }
 ]
 
+/* ─── shared events for incident 8 (Stripe) ────────────────────── */
+
+const STRIPE_EVENTS: ForensicEvent[] = [
+  {
+    event_id: 'ev-801',
+    platform: 'stripe',
+    timestamp: '2026-06-02T09:17:41Z',
+    api_action: 'charge.succeeded',
+    event_source: 'api.stripe.com',
+    // Stripe events carry no source IP. Showing null is honest; inventing one
+    // would put a false fact in a forensic report.
+    source_ip: null,
+    user_agent: null,
+    affected_resource: 'ch_3Nk2a',
+    resource_type: 'charge',
+    success: true,
+    error_code: null,
+    raw_data: { data: { object: { amount: 74000, currency: 'usd' } } },
+    principal_id: 'req_8fk2Lm',
+    location: null,
+    impact_category: 'financial_abuse',
+    severity_weight: 4,
+  },
+  {
+    event_id: 'ev-802',
+    platform: 'stripe',
+    timestamp: '2026-06-02T09:22:03Z',
+    api_action: 'charge.succeeded',
+    event_source: 'api.stripe.com',
+    source_ip: null,
+    user_agent: null,
+    affected_resource: 'ch_3Nk2b',
+    resource_type: 'charge',
+    success: true,
+    error_code: null,
+    raw_data: { data: { object: { amount: 50000, currency: 'usd' } } },
+    principal_id: 'req_9gl3Mn',
+    location: null,
+    impact_category: 'financial_abuse',
+    severity_weight: 4,
+  },
+  {
+    event_id: 'ev-803',
+    platform: 'stripe',
+    timestamp: '2026-06-02T09:31:18Z',
+    api_action: 'account.external_account.created',
+    event_source: 'api.stripe.com',
+    source_ip: null,
+    user_agent: null,
+    affected_resource: 'ba_1PqR4x',
+    resource_type: 'bank_account',
+    success: true,
+    error_code: null,
+    raw_data: { data: { object: { id: 'ba_1PqR4x', object: 'bank_account' } } },
+    principal_id: 'req_0hm4No',
+    location: null,
+    // The real attack: redirecting future payouts survives key rotation.
+    impact_category: 'privilege_escalation',
+    severity_weight: 4,
+  },
+]
+
 /* ─── incidents ───────────────────────────────────────────────── */
 
 export const MOCK_INCIDENTS: IncidentRecord[] = [
@@ -554,7 +616,76 @@ export const MOCK_INCIDENTS: IncidentRecord[] = [
     gdpr_flag: true,
     estimated_financial_impact: 'Data transfer: estimated $0.27. Persistence risk outweighs direct cost.',
   },
+
+  /* ─── incident 8 (Stripe — real money on the timeline) ────────── */
+  {
+    incident_id: 'inc-008',
+    credential_type: 'stripe_secret_key',
+    credential_hint: 'sk_live_****p7dc',
+    access_key_id: null,
+    principal_id: 'sk_live_4eC39HqLyjWDarjtT1zdp7dc',
+    platform: 'stripe',
+    gcp_project_id: null,
+    azure_tenant_id: null,
+    azure_subscription_id: null,
+    forensic_tier: 1,
+    unavailable_reason: null,
+    repo_url: 'https://github.com/dev-team/checkout-service',
+    commit_hash: 'e4f19c7a2b8d6053f1a9c4e7b2d5f8a1c4e7b2d5',
+    exposure_start: '2026-06-02T09:14:22Z',
+    exposure_end: '2026-06-02T09:41:05Z',
+    status: 'complete',
+    events: STRIPE_EVENTS,
+    overall_severity: 'CRITICAL',
+    report_text: `A live Stripe secret key was committed to a public repository and used within three minutes.\n\nThe key created two charges totalling 1,240.00 USD and then added a new external bank account to the connected account — the setup step for redirecting future payouts. The bank account change is the more serious finding: rotating the API key does not remove it.\n\nCharges can be refunded. A payout redirected to an attacker-controlled account cannot.`,
+    remediation_steps: [
+      'Remove the external bank account added at 09:31 UTC from the Stripe dashboard immediately',
+      'Roll the exposed secret key sk_live_****p7dc in the Stripe dashboard',
+      'Refund charges ch_3Nk2a and ch_3Nk2b totalling 1,240.00 USD',
+      'Enable two-factor authentication on the Stripe account',
+      'Purge the key from git history in dev-team/checkout-service',
+    ],
+    gdpr_flag: false,
+    estimated_financial_impact: 'Stripe: 1,240.00 USD charged (2 transaction(s))',
+  },
+
+  /* ─── incident 9 (Tier 2 — the honest "we cannot know" case) ──── */
+  {
+    incident_id: 'inc-009',
+    credential_type: 'github_pat',
+    credential_hint: 'ghp_16C7****B4a',
+    access_key_id: null,
+    principal_id: null,
+    platform: 'github',
+    gcp_project_id: null,
+    azure_tenant_id: null,
+    azure_subscription_id: null,
+    // No queryable audit log — the panel replaces the timeline entirely.
+    forensic_tier: 2,
+    unavailable_reason:
+      'GitHub exposes per-token audit logs only to Enterprise organisations. Activity performed with a personal access token cannot be reconstructed.',
+    repo_url: 'https://github.com/dev-team/ci-scripts',
+    commit_hash: '7b2d5f8a1c4e7b2d5f8a1c4e7b2d5f8a1c4e7b2d',
+    exposure_start: '2026-06-14T16:02:10Z',
+    exposure_end: null,
+    status: 'complete',
+    events: [],
+    // Deliberately null: we do not know the blast radius, and claiming LOW
+    // would be a fabrication.
+    overall_severity: null,
+    report_text: `## Credential exposed\n\nA **github pat** (\`ghp_16C7****B4a\`) was committed to https://github.com/dev-team/ci-scripts.\n\n## Why there is no activity timeline\n\nGitHub exposes per-token audit logs only to Enterprise organisations. Activity performed with a personal access token cannot be reconstructed.\n\n**This is not evidence that the credential went unused.** It means the platform provides no way to find out. Treat the credential as compromised and rotate it immediately.`,
+    remediation_steps: [
+      'Revoke the exposed github pat (ghp_16C7****B4a) in the provider\'s console now',
+      'Issue a replacement credential and update every deployment that used it',
+      'Purge the secret from git history in https://github.com/dev-team/ci-scripts',
+      'Review any provider-side billing or usage dashboards for unexpected activity during the exposure window',
+      'Enable secret scanning on the repository to catch the next one before push',
+    ],
+    gdpr_flag: false,
+    estimated_financial_impact: null,
+  },
 ]
+
 
 /* ─── research experiments ─────────────────────────────────────── */
 

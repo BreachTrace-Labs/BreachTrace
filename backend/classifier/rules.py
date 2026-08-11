@@ -7,6 +7,8 @@ from sqlalchemy.orm import Session
 from classifier.taxonomy_aws import AWS_API_TAXONOMY
 from classifier.taxonomy_azure import AZURE_API_TAXONOMY
 from classifier.taxonomy_gcp import GCP_API_TAXONOMY
+from classifier.taxonomy_stripe import STRIPE_API_TAXONOMY
+from classifier.taxonomy_twilio import TWILIO_API_TAXONOMY, TWILIO_BULK_THRESHOLD
 from db.models import ForensicEvent as ORMForensicEvent
 from db.models import IncidentRecord
 from normalizer.schema import ForensicEvent
@@ -29,7 +31,23 @@ _TAXONOMY_MAP: dict[str, dict[str, dict]] = {
     "aws": AWS_API_TAXONOMY,
     "gcp": GCP_API_TAXONOMY,
     "azure": AZURE_API_TAXONOMY,
+    "stripe": STRIPE_API_TAXONOMY,
+    "twilio": TWILIO_API_TAXONOMY,
 }
+
+# Bulk-escalation threshold per platform.
+#
+# BULK_THRESHOLD = 5 was tuned for AWS GetObject, where five reads of the same
+# object from one IP is already suspicious. That figure does not transfer:
+# five Twilio messages is a normal application minute, and applying the AWS
+# number there would mark every healthy integration as critical.
+_BULK_THRESHOLD_BY_PLATFORM: dict[str, int] = {
+    "twilio": TWILIO_BULK_THRESHOLD,
+}
+
+
+def _bulk_threshold(platform: str | None) -> int:
+    return _BULK_THRESHOLD_BY_PLATFORM.get((platform or "aws").lower(), BULK_THRESHOLD)
 
 # ────────────────────────────────────────────────────────────────────────────
 # AWS heuristics (unchanged)
@@ -220,7 +238,7 @@ def classify_events(events: list[ForensicEvent]) -> list[ForensicEvent]:
         if (
             event.source_ip
             and event.impact_category == DATA_ACCESS
-            and counts[key] >= BULK_THRESHOLD
+            and counts[key] >= _bulk_threshold(event.platform)
         ):
             event.impact_category = DATA_EXFILTRATION
             event.severity_weight = 4

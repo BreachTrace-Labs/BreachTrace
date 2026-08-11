@@ -45,6 +45,11 @@
   --color-platform-aws: #f97316;
   --color-platform-gcp: #3b82f6;
   --color-platform-azure: #14b8a6;
+  --color-platform-stripe: #7c5cff;
+  --color-platform-twilio: #e0245e;
+  /* Tier-2 platforms share one muted token: they never plot on a timeline, so
+     they need to be distinguishable from Tier 1 rather than from each other. */
+  --color-platform-tier2: #78716c;
 
   /* Status colours */
   --color-status-detecting: #6366f1;
@@ -102,6 +107,9 @@
     --color-platform-aws: #fb923c;
     --color-platform-gcp: #60a5fa;
     --color-platform-azure: #2dd4bf;
+    --color-platform-stripe: #a78bfa;
+    --color-platform-twilio: #f472b6;
+    --color-platform-tier2: #a8a29e;
   }
 
   * {

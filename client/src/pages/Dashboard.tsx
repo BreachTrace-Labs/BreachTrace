@@ -10,7 +10,13 @@ import {
 } from 'lucide-react'
 import client from '@/api/client'
 import type { IncidentSummary } from '@/types'
-import { derivePlatform, PLATFORMS, PLATFORM_META, type Platform } from '@/lib/platform'
+import {
+  derivePlatform,
+  FORENSIC_PLATFORMS,
+  isForensicTier,
+  PLATFORM_META,
+  type Platform,
+} from '@/lib/platform'
 import SeverityBadge from '@/components/SeverityBadge'
 import {
   Table,
@@ -323,7 +329,9 @@ const Dashboard: React.FC = () => {
   const [incidents, setIncidents] = useState<IncidentSummary[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
-  const [filterPlatform, setFilterPlatform] = useState<Platform | 'all'>('all')
+  // Filter options are the five Tier-1 platforms plus 'other'. Rendering a chip
+  // per platform would mean eleven chips, most of them empty most of the time.
+  const [filterPlatform, setFilterPlatform] = useState<Platform | 'all' | 'other'>('all')
   const [now, setNow] = useState(Date.now())
   const tickerRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const navigate = useNavigate()
@@ -373,7 +381,9 @@ const Dashboard: React.FC = () => {
   const filteredIncidents =
     filterPlatform === 'all'
       ? incidents
-      : incidents.filter(i => platformOf(i) === filterPlatform)
+      : filterPlatform === 'other'
+        ? incidents.filter(i => !FORENSIC_PLATFORMS.includes(platformOf(i)))
+        : incidents.filter(i => platformOf(i) === filterPlatform)
 
   const platformCounts = incidents.reduce<Record<string, number>>((acc, i) => {
     const p = platformOf(i)
@@ -494,11 +504,20 @@ const Dashboard: React.FC = () => {
             )}
           </h2>
           <div className="flex bg-[var(--color-muted)] p-1 rounded-md">
-            {(['all', ...PLATFORMS] as const).map(platform => {
+            {(['all', ...FORENSIC_PLATFORMS, 'other'] as const).map(platform => {
               const isActive = filterPlatform === platform
-              const label = platform === 'all' ? 'All' : PLATFORM_META[platform].label
+              const label =
+                platform === 'all'
+                  ? 'All'
+                  : platform === 'other'
+                    ? 'Other'
+                    : PLATFORM_META[platform].label
               const count =
-                platform === 'all' ? incidents.length : (platformCounts[platform] ?? 0)
+                platform === 'all'
+                  ? incidents.length
+                  : platform === 'other'
+                    ? incidents.filter(i => !FORENSIC_PLATFORMS.includes(platformOf(i))).length
+                    : (platformCounts[platform] ?? 0)
               return (
                 <button
                   key={platform}
@@ -514,7 +533,10 @@ const Dashboard: React.FC = () => {
                     <span
                       className="w-1.5 h-1.5 rounded-full shrink-0"
                       style={{
-                        backgroundColor: PLATFORM_META[platform].color,
+                        backgroundColor:
+                          platform === 'other'
+                            ? 'var(--color-platform-tier2)'
+                            : PLATFORM_META[platform].color,
                         opacity: count === 0 ? 0.3 : 1,
                       }}
                     />
@@ -661,6 +683,23 @@ const Dashboard: React.FC = () => {
                           >
                             {inc.credential_type}
                           </p>
+                          {/* Tier-2 rows would otherwise look like Tier-1 rows
+                              whose investigation found nothing. The badge makes
+                              "we could not look" distinct from "we looked and
+                              found nothing" at a glance. */}
+                          {!isForensicTier(inc) && (
+                            <span
+                              className="inline-block mt-1 text-[10px] font-bold px-1.5 py-0.5 rounded uppercase tracking-wider"
+                              style={{
+                                backgroundColor:
+                                  'color-mix(in srgb, var(--color-platform-tier2) 18%, transparent)',
+                                color: 'var(--color-platform-tier2)',
+                              }}
+                              title="This platform exposes no queryable audit log, so activity cannot be reconstructed"
+                            >
+                              Detection only
+                            </span>
+                          )}
                         </div>
                       </TableCell>
 

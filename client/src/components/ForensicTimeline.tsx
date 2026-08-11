@@ -50,11 +50,26 @@ function fmtTime(d: Date) {
   })
 }
 
-/** Glyph per platform, so a greyscale print still distinguishes the streams. */
+/**
+ * Glyph per platform, so a greyscale print still distinguishes the streams.
+ *
+ * Only Tier-1 platforms ever plot here — Tier-2 incidents render the
+ * ForensicsUnavailable panel instead of a timeline — but the map is total so
+ * that adding a platform cannot produce an undefined symbol at runtime.
+ */
 const PLATFORM_SYMBOL: Record<Platform, d3.SymbolType> = {
   aws: d3.symbolCircle,
   gcp: d3.symbolSquare,
   azure: d3.symbolDiamond,
+  stripe: d3.symbolTriangle,
+  twilio: d3.symbolStar,
+  // Tier 2: unreachable in practice, kept for exhaustiveness.
+  github: d3.symbolCross,
+  slack: d3.symbolCross,
+  npm: d3.symbolCross,
+  sendgrid: d3.symbolCross,
+  huggingface: d3.symbolCross,
+  db: d3.symbolCross,
 }
 
 /**

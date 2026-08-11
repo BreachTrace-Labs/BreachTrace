@@ -14,9 +14,25 @@
  * backend/routers/incidents.py.
  */
 
-export type Platform = 'aws' | 'gcp' | 'azure'
+export type Platform =
+  | 'aws' | 'gcp' | 'azure'          // cloud, Tier 1
+  | 'stripe' | 'twilio'              // SaaS, Tier 1
+  | 'github' | 'slack' | 'npm' | 'sendgrid' | 'huggingface' | 'db'  // Tier 2
 
-export const PLATFORMS: Platform[] = ['aws', 'gcp', 'azure']
+export const PLATFORMS: Platform[] = [
+  'aws', 'gcp', 'azure', 'stripe', 'twilio',
+  'github', 'slack', 'npm', 'sendgrid', 'huggingface', 'db',
+]
+
+/** Platforms with a queryable audit log — these produce a real timeline. */
+export const FORENSIC_PLATFORMS: Platform[] = ['aws', 'gcp', 'azure', 'stripe', 'twilio']
+
+/**
+ * Dashboard filter options. Deliberately not every platform: eleven filter
+ * chips is unusable, and the ones that matter for filtering are the Tier-1
+ * platforms plus a catch-all for detection-only findings.
+ */
+export const PLATFORM_FILTERS = ['All', 'AWS', 'GCP', 'Azure', 'Stripe', 'Twilio', 'Other'] as const
 
 interface PlatformMeta {
   /** Display name used in tables, filters and chart axes. */
@@ -48,6 +64,55 @@ export const PLATFORM_META: Record<Platform, PlatformMeta> = {
     color: 'var(--color-platform-azure)',
     identityLabel: 'Client ID',
   },
+  stripe: {
+    label: 'Stripe',
+    auditLog: 'Events API',
+    color: 'var(--color-platform-stripe)',
+    identityLabel: 'Secret Key',
+  },
+  twilio: {
+    label: 'Twilio',
+    auditLog: 'Messages & Calls',
+    color: 'var(--color-platform-twilio)',
+    identityLabel: 'Account SID',
+  },
+  // Tier 2 — no audit log to name, so auditLog describes the absence.
+  github: {
+    label: 'GitHub',
+    auditLog: 'no per-token audit log',
+    color: 'var(--color-platform-tier2)',
+    identityLabel: 'Personal Access Token',
+  },
+  slack: {
+    label: 'Slack',
+    auditLog: 'no audit log below Enterprise Grid',
+    color: 'var(--color-platform-tier2)',
+    identityLabel: 'Webhook / Token',
+  },
+  npm: {
+    label: 'npm',
+    auditLog: 'no per-token audit API',
+    color: 'var(--color-platform-tier2)',
+    identityLabel: 'Access Token',
+  },
+  sendgrid: {
+    label: 'SendGrid',
+    auditLog: 'Email Activity API (paid add-on)',
+    color: 'var(--color-platform-tier2)',
+    identityLabel: 'API Key',
+  },
+  huggingface: {
+    label: 'Hugging Face',
+    auditLog: 'no audit API',
+    color: 'var(--color-platform-tier2)',
+    identityLabel: 'Access Token',
+  },
+  db: {
+    label: 'Database',
+    auditLog: 'audit logging lives inside the target database',
+    color: 'var(--color-platform-tier2)',
+    identityLabel: 'Connection String',
+  },
 }
 
 /** Anything carrying enough information to work out which platform it belongs to. */
@@ -71,10 +136,55 @@ export function derivePlatform(source: PlatformSource | null | undefined): Platf
     return explicit as Platform
   }
 
-  const credentialType = source.credential_type?.toLowerCase() ?? ''
-  if (credentialType.includes('gcp') || credentialType.includes('firebase')) return 'gcp'
-  if (credentialType.includes('azure')) return 'azure'
-  return 'aws'
+  return CREDENTIAL_TYPE_TO_PLATFORM[source.credential_type?.toLowerCase() ?? ''] ?? 'aws'
+}
+
+/**
+ * credential_type -> platform, mirroring CREDENTIAL_TYPE_TO_PLATFORM in
+ * backend/db/models.py. An explicit map rather than substring matching: with
+ * twelve credential types, `includes('gcp')`-style checks start colliding and
+ * mis-routing is silent.
+ */
+const CREDENTIAL_TYPE_TO_PLATFORM: Record<string, Platform> = {
+  aws_access_key: 'aws',
+  gcp_service_account: 'gcp',
+  // Firebase keys ARE GCP service account keys and collect through Cloud Audit
+  // Logs, so they belong to the GCP platform despite the distinct label.
+  firebase_service_account: 'gcp',
+  azure_service_principal: 'azure',
+  azure_client_secret: 'azure',
+  azure_storage_connection: 'azure',
+  stripe_secret_key: 'stripe',
+  twilio_account_sid: 'twilio',
+  github_pat: 'github',
+  slack_webhook: 'slack',
+  slack_token: 'slack',
+  npm_token: 'npm',
+  sendgrid_api_key: 'sendgrid',
+  huggingface_token: 'huggingface',
+  db_connection_string: 'db',
+}
+
+/**
+ * Whether an incident's blast radius was actually reconstructable.
+ *
+ * Defaults a missing `forensic_tier` to Tier 1. That direction matters: an
+ * incident cached from before the field shipped has a real timeline, and
+ * treating `undefined` as Tier 2 would hide it behind the "unavailable" panel.
+ */
+export function isForensicTier(source: { forensic_tier?: number | null } | null | undefined): boolean {
+  return (source?.forensic_tier ?? 1) === 1
+}
+
+/** Filter chip -> predicate. 'Other' collects every Tier-2 platform. */
+export function matchesPlatformFilter(
+  incident: PlatformSource & { forensic_tier?: number | null },
+  filter: string,
+): boolean {
+  if (filter === 'All') return true
+  const platform = derivePlatform(incident)
+  if (filter === 'Other') return !FORENSIC_PLATFORMS.includes(platform)
+  return platform === filter.toLowerCase()
 }
 
 export function platformMeta(source: PlatformSource | null | undefined): PlatformMeta {

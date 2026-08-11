@@ -47,6 +47,16 @@ export interface IncidentRecord {
   // from before the multi-platform fields shipped will not have it, and
   // lib/platform.ts falls back to deriving it from credential_type.
   platform?: string
+  // Forensic tier. 1 = the platform has a queryable audit log, so the timeline
+  // is a real reconstruction. 2 = detection only; there is nothing to query and
+  // `unavailable_reason` says why.
+  //
+  // Optional for the same reason as `platform`: incidents cached from before
+  // the field shipped omit it. Read it via `isForensicTier()` in lib/platform,
+  // which defaults missing values to Tier 1 — never treat `undefined` as Tier 2,
+  // that would hide a real timeline behind the unavailable panel.
+  forensic_tier?: 1 | 2
+  unavailable_reason?: string | null
   // Computed by the detail endpoint — may be absent on list responses
   pcidss_flag?: boolean
   soc2_flag?: boolean

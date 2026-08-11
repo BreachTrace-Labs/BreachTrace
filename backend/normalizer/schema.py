@@ -32,7 +32,9 @@ class IncidentRecord(BaseModel):
     incident_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     credential_type: str = "aws_access_key"
     credential_hint: str                         # e.g. 'AKIA****WXYZ'
-    access_key_id: str                           # Full AKIA... key ID (NOT the secret)
+    # Only AWS has an access key ID. GCP/Azure/SaaS incidents identify the
+    # credential via principal_id instead, so this cannot be required.
+    access_key_id: Optional[str] = None
     repo_url: str
     commit_hash: str
     exposure_start: datetime
@@ -50,3 +52,7 @@ class IncidentRecord(BaseModel):
     azure_tenant_id: Optional[str] = None
     azure_subscription_id: Optional[str] = None
     principal_id: Optional[str] = None
+    # Forensic tier: 1 = audit log queryable, 2 = detection only.
+    # Tier 2 incidents carry unavailable_reason and never attempt collection.
+    forensic_tier: int = 1
+    unavailable_reason: Optional[str] = None
