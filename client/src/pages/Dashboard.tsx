@@ -10,6 +10,13 @@ import {
 } from 'lucide-react'
 import client from '@/api/client'
 import type { IncidentSummary } from '@/types'
+import {
+  derivePlatform,
+  FORENSIC_PLATFORMS,
+  isForensicTier,
+  PLATFORM_META,
+  type Platform,
+} from '@/lib/platform'
 import SeverityBadge from '@/components/SeverityBadge'
 import {
   Table,
@@ -77,6 +84,24 @@ const STATUS_LABELS: Record<string, string> = {
   reporting:   'Reporting',
   complete:    'Complete',
   error:        'Needs Attention',
+}
+
+/* ─── platform tag ─────────────────────────────────────────────── */
+
+function PlatformTag({ platform }: { platform: Platform }) {
+  const meta = PLATFORM_META[platform]
+  return (
+    <span
+      className="inline-flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wider"
+      title={`Forensic source: ${meta.auditLog}`}
+    >
+      <span
+        className="w-1.5 h-1.5 rounded-full shrink-0"
+        style={{ backgroundColor: meta.color }}
+      />
+      {meta.label}
+    </span>
+  )
 }
 
 function StatusPill({ status }: { status: IncidentSummary['status'] }) {
@@ -304,7 +329,9 @@ const Dashboard: React.FC = () => {
   const [incidents, setIncidents] = useState<IncidentSummary[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
-  const [filterPlatform, setFilterPlatform] = useState<string>('All')
+  // Filter options are the five Tier-1 platforms plus 'other'. Rendering a chip
+  // per platform would mean eleven chips, most of them empty most of the time.
+  const [filterPlatform, setFilterPlatform] = useState<Platform | 'all' | 'other'>('all')
   const [now, setNow] = useState(Date.now())
   const tickerRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const navigate = useNavigate()
@@ -346,9 +373,23 @@ const Dashboard: React.FC = () => {
   const credTypes       = [...new Set(incidents.map(i => i.credential_type))].length
   const complianceFlags = incidents.filter(i => i.gdpr_flag).length
 
-  const filteredIncidents = filterPlatform === 'All' 
-    ? incidents 
-    : incidents.filter(i => i.platform?.toLowerCase() === filterPlatform.toLowerCase())
+  // Platform is derived rather than read straight off the payload — see
+  // lib/platform.ts. Reading `i.platform` directly matched nothing against a
+  // backend that does not yet return the field.
+  const platformOf = (i: IncidentSummary) => derivePlatform(i)
+
+  const filteredIncidents =
+    filterPlatform === 'all'
+      ? incidents
+      : filterPlatform === 'other'
+        ? incidents.filter(i => !FORENSIC_PLATFORMS.includes(platformOf(i)))
+        : incidents.filter(i => platformOf(i) === filterPlatform)
+
+  const platformCounts = incidents.reduce<Record<string, number>>((acc, i) => {
+    const p = platformOf(i)
+    acc[p] = (acc[p] ?? 0) + 1
+    return acc
+  }, {})
 
   return (
     <div className="space-y-8">
@@ -463,15 +504,48 @@ const Dashboard: React.FC = () => {
             )}
           </h2>
           <div className="flex bg-[var(--color-muted)] p-1 rounded-md">
-            {['All', 'AWS', 'GCP', 'Azure'].map(platform => (
-              <button
-                key={platform}
-                onClick={() => setFilterPlatform(platform)}
-                className={`px-3 py-1 text-xs font-medium rounded-sm transition-colors ${filterPlatform === platform ? 'bg-[var(--color-background)] shadow-sm' : 'text-[var(--color-muted-foreground)] hover:text-[var(--color-foreground)]'}`}
-              >
-                {platform}
-              </button>
-            ))}
+            {(['all', ...FORENSIC_PLATFORMS, 'other'] as const).map(platform => {
+              const isActive = filterPlatform === platform
+              const label =
+                platform === 'all'
+                  ? 'All'
+                  : platform === 'other'
+                    ? 'Other'
+                    : PLATFORM_META[platform].label
+              const count =
+                platform === 'all'
+                  ? incidents.length
+                  : platform === 'other'
+                    ? incidents.filter(i => !FORENSIC_PLATFORMS.includes(platformOf(i))).length
+                    : (platformCounts[platform] ?? 0)
+              return (
+                <button
+                  key={platform}
+                  onClick={() => setFilterPlatform(platform)}
+                  aria-pressed={isActive}
+                  className={`flex items-center gap-1.5 px-3 py-1 text-xs font-medium rounded-sm transition-colors ${
+                    isActive
+                      ? 'bg-[var(--color-background)] shadow-sm'
+                      : 'text-[var(--color-muted-foreground)] hover:text-[var(--color-foreground)]'
+                  }`}
+                >
+                  {platform !== 'all' && (
+                    <span
+                      className="w-1.5 h-1.5 rounded-full shrink-0"
+                      style={{
+                        backgroundColor:
+                          platform === 'other'
+                            ? 'var(--color-platform-tier2)'
+                            : PLATFORM_META[platform].color,
+                        opacity: count === 0 ? 0.3 : 1,
+                      }}
+                    />
+                  )}
+                  {label}
+                  <span className="font-mono tabular-nums opacity-60">{count}</span>
+                </button>
+              )
+            })}
           </div>
         </div>
 
@@ -519,12 +593,34 @@ const Dashboard: React.FC = () => {
               Connect Repository
             </Button>
           </div>
+        ) : filteredIncidents.length === 0 ? (
+          <div
+            className="border py-16 text-center"
+            style={{ borderColor: 'var(--color-border)' }}
+          >
+            <p className="text-sm font-medium">
+              No {filterPlatform === 'all' ? '' : PLATFORM_META[filterPlatform as Platform].label}{' '}
+              incidents
+            </p>
+            <p className="mt-1 text-sm" style={{ color: 'var(--color-muted-foreground)' }}>
+              {incidents.length} incident{incidents.length !== 1 ? 's' : ''} on other platforms.
+            </p>
+            <Button
+              variant="outline"
+              size="sm"
+              className="mt-4"
+              onClick={() => setFilterPlatform('all')}
+            >
+              Show all platforms
+            </Button>
+          </div>
         ) : (
           <div className="border" style={{ borderColor: 'var(--color-border)' }}>
             <Table>
               <TableHeader>
                 <TableRow className="hover:bg-transparent">
                   <TableHead className="w-4 p-0" />
+                  <TableHead>Platform</TableHead>
                   <TableHead>Credential</TableHead>
                   <TableHead>Repository</TableHead>
                   <TableHead>Exposed</TableHead>
@@ -550,6 +646,11 @@ const Dashboard: React.FC = () => {
                           className="w-0.5 h-full min-h-12"
                           style={{ backgroundColor: sevBorder }}
                         />
+                      </TableCell>
+
+                      {/* Platform */}
+                      <TableCell>
+                        <PlatformTag platform={platformOf(inc)} />
                       </TableCell>
 
                       {/* Credential */}
@@ -582,6 +683,23 @@ const Dashboard: React.FC = () => {
                           >
                             {inc.credential_type}
                           </p>
+                          {/* Tier-2 rows would otherwise look like Tier-1 rows
+                              whose investigation found nothing. The badge makes
+                              "we could not look" distinct from "we looked and
+                              found nothing" at a glance. */}
+                          {!isForensicTier(inc) && (
+                            <span
+                              className="inline-block mt-1 text-[10px] font-bold px-1.5 py-0.5 rounded uppercase tracking-wider"
+                              style={{
+                                backgroundColor:
+                                  'color-mix(in srgb, var(--color-platform-tier2) 18%, transparent)',
+                                color: 'var(--color-platform-tier2)',
+                              }}
+                              title="This platform exposes no queryable audit log, so activity cannot be reconstructed"
+                            >
+                              Detection only
+                            </span>
+                          )}
                         </div>
                       </TableCell>
 

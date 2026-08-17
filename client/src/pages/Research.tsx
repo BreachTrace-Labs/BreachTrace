@@ -3,20 +3,10 @@ import { FlaskConical, BarChart3, CheckCircle, Clock, AlertCircle } from 'lucide
 import client from '@/api/client'
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
 import { Separator } from '@/components/ui/separator'
+import PlatformLatencyChart from '@/components/PlatformLatencyChart'
+import type { ExperimentRun, PlatformComparison } from '@/types'
 
 /* ─── types for research endpoint ─────────────────────────────── */
-
-interface ExperimentRun {
-  run_id: string
-  access_key_id: string | null
-  detection_time_s: number | null
-  report_time_s: number | null
-  api_calls: string[]
-  expected_severity: string | null
-  actual_severity: string | null
-  status: string | null
-  created_at: string
-}
 
 interface ResearchStats {
   total_runs: number
@@ -109,24 +99,44 @@ function MetricCard({
 const Research: React.FC = () => {
   const [runs, setRuns] = useState<ExperimentRun[]>([])
   const [stats, setStats] = useState<ResearchStats | null>(null)
+  const [comparison, setComparison] = useState<PlatformComparison | null>(null)
   const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
     const load = async () => {
       setLoading(true)
+      setError(null)
       try {
-        const [runsRes, statsRes] = await Promise.allSettled([
+        const [runsRes, statsRes, platformsRes] = await Promise.allSettled([
           client.get<ExperimentRun[]>('/research/export'),
           client.get<ResearchStats>('/incidents/stats'),
+          client.get<PlatformComparison>('/research/platforms'),
         ])
         if (runsRes.status === 'fulfilled') setRuns(runsRes.value.data)
         if (statsRes.status === 'fulfilled') setStats(statsRes.value.data)
+        if (platformsRes.status === 'fulfilled') setComparison(platformsRes.value.data)
+
+        // Distinguish "the harness has not run yet" from "the API is down".
+        // Now that runs are actually recorded, an empty table is a meaningful
+        // state and must not be shown when the real problem is connectivity.
+        if (
+          runsRes.status === 'rejected' &&
+          statsRes.status === 'rejected' &&
+          platformsRes.status === 'rejected'
+        ) {
+          setError('Could not reach the backend. Make sure the API is running.')
+        }
       } finally {
         setLoading(false)
       }
     }
     load()
   }, [])
+
+  // runs.length is the source of truth once anything is recorded; stats is the
+  // fallback for a backend that has stats but no exportable rows.
+  const totalRuns = runs.length > 0 ? runs.length : (stats?.total_runs ?? 0)
 
   const fmt = (n: number | null, digits = 1) =>
     n !== null && n !== undefined ? n.toFixed(digits) : '—'
@@ -225,13 +235,20 @@ const Research: React.FC = () => {
 
       {/* Track B */}
       <section className="space-y-5">
-        <TrackBadge track="B" label="Self-Created Pipeline Experiments — 35 Full Runs" />
+        {/* Count derived, not hardcoded: it said "35" while the data had 45,
+            and would be wrong again the moment the harness runs. */}
+        <TrackBadge
+          track="B"
+          label={`Self-Created Pipeline Experiments — ${
+            loading ? '…' : totalRuns
+          } Full Run${totalRuns === 1 ? '' : 's'}`}
+        />
 
         {/* Metrics */}
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-px border" style={{ backgroundColor: 'var(--color-border)' }}>
           <MetricCard
             label="Total Runs"
-            value={loading ? null : runs.length || (stats?.total_runs ?? 0)}
+            value={loading ? null : totalRuns}
             target="≥ 35"
             icon={<BarChart3 size={14} strokeWidth={2} />}
           />
@@ -251,16 +268,16 @@ const Research: React.FC = () => {
           />
           <MetricCard
             label="Complete"
-            value={
-              loading
-                ? null
-                : runs.filter((r) => r.status === 'complete').length ||
-                  (stats?.total_runs ?? 0)
-            }
+            // `||` here previously turned a real 0 into stats.total_runs,
+            // reporting runs as complete when none were.
+            value={loading ? null : runs.filter((r) => r.status === 'complete').length}
             target="35 runs"
             icon={<CheckCircle size={14} strokeWidth={2} />}
           />
         </div>
+
+        {/* The paper's headline figure — first thing under the metrics. */}
+        {!loading && <PlatformLatencyChart data={comparison} />}
 
         {/* Severity distribution */}
         {totalSev > 0 && (
@@ -327,25 +344,45 @@ const Research: React.FC = () => {
               className="border py-12 text-center"
               style={{ borderColor: 'var(--color-border)' }}
             >
-              <FlaskConical
-                size={28}
-                strokeWidth={1.5}
-                className="mx-auto mb-3"
-                style={{ color: 'var(--color-muted-foreground)' }}
-              />
-              <p className="text-sm font-medium">No experiments recorded yet</p>
-              <p className="mt-1 text-sm" style={{ color: 'var(--color-muted-foreground)' }}>
-                Run the research harness to populate this table.
-              </p>
-              <p
-                className="mt-3 text-xs font-mono px-3 py-1.5 inline-block border"
-                style={{
-                  borderColor: 'var(--color-border)',
-                  color: 'var(--color-muted-foreground)',
-                }}
-              >
-                python backend/research/harness.py
-              </p>
+              {/* "Nothing recorded" and "backend unreachable" look identical
+                  otherwise, and now that runs are genuinely recorded an empty
+                  table is a real state worth trusting. */}
+              {error ? (
+                <>
+                  <AlertCircle
+                    size={28}
+                    strokeWidth={1.5}
+                    className="mx-auto mb-3"
+                    style={{ color: 'var(--color-sev-high)' }}
+                  />
+                  <p className="text-sm font-medium">Could not load experiment data</p>
+                  <p className="mt-1 text-sm" style={{ color: 'var(--color-muted-foreground)' }}>
+                    {error}
+                  </p>
+                </>
+              ) : (
+                <>
+                  <FlaskConical
+                    size={28}
+                    strokeWidth={1.5}
+                    className="mx-auto mb-3"
+                    style={{ color: 'var(--color-muted-foreground)' }}
+                  />
+                  <p className="text-sm font-medium">No experiments recorded yet</p>
+                  <p className="mt-1 text-sm" style={{ color: 'var(--color-muted-foreground)' }}>
+                    Run the research harness to populate this table.
+                  </p>
+                  <p
+                    className="mt-3 text-xs font-mono px-3 py-1.5 inline-block border"
+                    style={{
+                      borderColor: 'var(--color-border)',
+                      color: 'var(--color-muted-foreground)',
+                    }}
+                  >
+                    python -m research.harness --platform aws --runs 3
+                  </p>
+                </>
+              )}
             </div>
           ) : (
             <div className="border overflow-hidden" style={{ borderColor: 'var(--color-border)' }}>

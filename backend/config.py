@@ -45,3 +45,41 @@ GEMINI_API_KEY: str = os.getenv("GEMINI_API_KEY", "")
 DATABASE_URL: str = os.getenv("DATABASE_URL", "")
 
 ENVIRONMENT: str = os.getenv("ENVIRONMENT", "development")
+
+# ---------------------------------------------------------------------------
+# GCP (optional — system operates AWS-only when absent)
+# ---------------------------------------------------------------------------
+GCP_PROJECT_ID: str = os.getenv("GCP_PROJECT_ID", "")
+GCP_SERVICE_ACCOUNT_JSON: str = os.getenv("GCP_SERVICE_ACCOUNT_JSON", "")
+GCP_EXPERIMENT_CLIENT_EMAIL: str = os.getenv("GCP_EXPERIMENT_CLIENT_EMAIL", "")
+GCP_EXPERIMENT_PRIVATE_KEY_ID: str = os.getenv("GCP_EXPERIMENT_PRIVATE_KEY_ID", "")
+GCP_EXPERIMENT_PRIVATE_KEY: str = os.getenv("GCP_EXPERIMENT_PRIVATE_KEY", "")
+
+# ---------------------------------------------------------------------------
+# Azure (optional — system operates AWS-only when absent)
+# ---------------------------------------------------------------------------
+AZURE_TENANT_ID: str = os.getenv("AZURE_TENANT_ID", "")
+AZURE_CLIENT_ID: str = os.getenv("AZURE_CLIENT_ID", "")
+AZURE_CLIENT_SECRET: str = os.getenv("AZURE_CLIENT_SECRET", "")
+AZURE_SUBSCRIPTION_ID: str = os.getenv("AZURE_SUBSCRIPTION_ID", "")
+AZURE_EXPERIMENT_CLIENT_ID: str = os.getenv("AZURE_EXPERIMENT_CLIENT_ID", "")
+AZURE_EXPERIMENT_CLIENT_SECRET: str = os.getenv("AZURE_EXPERIMENT_CLIENT_SECRET", "")
+
+# ---------------------------------------------------------------------------
+# Stripe (optional — SaaS forensic tier)
+#
+# Test mode is free and fully featured, so STRIPE_API_KEY is normally an
+# sk_test_ key. The collector prefers the leaked key itself and falls back to
+# this one, which matters because the leaked key is often revoked by the time
+# the pipeline runs.
+# ---------------------------------------------------------------------------
+STRIPE_API_KEY: str = os.getenv("STRIPE_API_KEY", "")
+STRIPE_EXPERIMENT_API_KEY: str = os.getenv("STRIPE_EXPERIMENT_API_KEY", "")
+
+# ---------------------------------------------------------------------------
+# Twilio (optional — SaaS forensic tier)
+# ---------------------------------------------------------------------------
+TWILIO_ACCOUNT_SID: str = os.getenv("TWILIO_ACCOUNT_SID", "")
+TWILIO_AUTH_TOKEN: str = os.getenv("TWILIO_AUTH_TOKEN", "")
+TWILIO_EXPERIMENT_ACCOUNT_SID: str = os.getenv("TWILIO_EXPERIMENT_ACCOUNT_SID", "")
+TWILIO_EXPERIMENT_AUTH_TOKEN: str = os.getenv("TWILIO_EXPERIMENT_AUTH_TOKEN", "")

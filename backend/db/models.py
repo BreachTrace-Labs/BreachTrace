@@ -6,6 +6,7 @@ from sqlalchemy import (
     CheckConstraint,
     Column,
     DateTime,
+    Float,
     ForeignKey,
     Index,
     Integer,
@@ -18,6 +19,54 @@ from sqlalchemy.orm import declarative_base, relationship
 from sqlalchemy.sql import func
 
 Base = declarative_base()
+
+# ---------------------------------------------------------------------------
+# Forensic tiers (see plan.md §1)
+#
+# Tier 1 — the platform exposes an audit log we can query, so blast radius is
+#          reconstructable.
+# Tier 2 — detection only. No queryable per-credential audit log exists, so the
+#          incident carries an exposure window, a credential class, remediation
+#          steps, and an explicit reason reconstruction is impossible.
+#
+# Kept as plain ints rather than an Enum so the DB column stays trivially
+# queryable and the JSON API stays boring.
+# ---------------------------------------------------------------------------
+TIER_FORENSIC = 1
+TIER_DETECTION_ONLY = 2
+
+# Every platform string that may appear on forensic_events / collection_status.
+# Must stay in sync with the CHECK constraints below.
+VALID_PLATFORMS = (
+    "aws", "gcp", "azure", "firebase",          # cloud (Tier 1)
+    "stripe", "twilio",                         # SaaS (Tier 1)
+    "github", "slack", "npm", "sendgrid", "huggingface", "db",  # Tier 2
+)
+
+_PLATFORM_SQL_LIST = ", ".join(f"'{p}'" for p in VALID_PLATFORMS)
+
+# credential_type -> platform. The detector owns credential_type; this is the
+# single place that maps it onto a collector/taxonomy selector.
+CREDENTIAL_TYPE_TO_PLATFORM: dict[str, str] = {
+    "aws_access_key": "aws",
+    "gcp_service_account": "gcp",
+    # Firebase admin SDK keys ARE GCP service account keys and land in Cloud
+    # Audit Logs, so they route to the GCP collector while keeping their own
+    # label for the report.
+    "firebase_service_account": "gcp",
+    "azure_service_principal": "azure",
+    "azure_client_secret": "azure",
+    "azure_storage_connection": "azure",
+    "stripe_secret_key": "stripe",
+    "twilio_account_sid": "twilio",
+    "github_pat": "github",
+    "slack_webhook": "slack",
+    "slack_token": "slack",
+    "npm_token": "npm",
+    "sendgrid_api_key": "sendgrid",
+    "huggingface_token": "huggingface",
+    "db_connection_string": "db",
+}
 
 # ---------------------------------------------------------------------------
 # 1. incident_records
@@ -97,6 +146,45 @@ class IncidentRecord(Base):
         nullable=True,
         comment="Formatted string: e.g. 'EC2: 2x t2.micro at $0.02/hr'",
     )
+
+    # GCP / Azure multi-platform fields
+    gcp_project_id = Column(
+        VARCHAR(100),
+        nullable=True,
+        comment="GCP project where the leaked service account lives",
+    )
+    azure_tenant_id = Column(
+        VARCHAR(50),
+        nullable=True,
+        comment="Azure Active Directory tenant ID",
+    )
+    azure_subscription_id = Column(
+        VARCHAR(50),
+        nullable=True,
+        comment="Azure subscription ID",
+    )
+    principal_id = Column(
+        VARCHAR(300),
+        nullable=True,
+        comment="Unified identity: GCP service account email or Azure client ID",
+    )
+
+    # ── Forensic tier ──────────────────────────────────────────────────────
+    forensic_tier = Column(
+        Integer,
+        nullable=False,
+        default=TIER_FORENSIC,
+        server_default="1",
+        comment="1 = audit log queryable (blast radius reconstructable); "
+                "2 = detection only, no queryable audit log exists",
+    )
+    unavailable_reason = Column(
+        Text,
+        nullable=True,
+        comment="Tier 2 only: why forensic reconstruction is impossible for this "
+                "platform. Shown verbatim in the UI instead of an empty timeline.",
+    )
+
     created_at = Column(
         DateTime(timezone=True),
         nullable=False,
@@ -127,6 +215,27 @@ class IncidentRecord(Base):
         Index("ix_incident_records_exposure_start", "exposure_start"),
         Index("ix_incident_records_status", "status"),
     )
+
+    @property
+    def platform(self) -> str:
+        """
+        Derive the platform from credential_type (not a DB column).
+
+        Uses an explicit map rather than substring matching. The old
+        `"gcp" in ctype` form breaks as soon as credential types multiply — a
+        `gcp_service_account` and a `db_connection_string` both contain
+        substrings that collide with other platform names, and silently
+        mis-routing an incident to the wrong collector is hard to notice.
+        Unknown types fall back to 'aws', matching the schema default.
+        """
+        return CREDENTIAL_TYPE_TO_PLATFORM.get(
+            (self.credential_type or "").lower(), "aws"
+        )
+
+    @property
+    def is_forensic_tier(self) -> bool:
+        """True when this platform has a queryable audit log (Tier 1)."""
+        return (self.forensic_tier or TIER_FORENSIC) == TIER_FORENSIC
 
     def __repr__(self) -> str:
         return (
@@ -224,12 +333,24 @@ class ForensicEvent(Base):
         comment="Full original CloudTrail event dict",
     )
 
-    # Filled by classifier (Day 4)
+    # GCP / Azure identity and location fields
+    principal_id = Column(
+        VARCHAR(300),
+        nullable=True,
+        comment="GCP service account email or Azure client ID (principalEmail / caller)",
+    )
+    location = Column(
+        VARCHAR(200),
+        nullable=True,
+        comment="GCP region/zone or Azure resource group",
+    )
+
+    # Filled by classifier
     impact_category = Column(
         VARCHAR(50),
         nullable=True,
-        comment="One of 7 AWS categories: reconnaissance, data_access, exfiltration, "
-                "resource_abuse, privilege_escalation, financial_abuse, communication_abuse",
+        comment="One of 8 categories: reconnaissance, data_access, exfiltration, "
+                "resource_abuse, privilege_escalation, financial_abuse, communication_abuse, code_compromise",
     )
     severity_weight = Column(
         Integer,
@@ -247,7 +368,7 @@ class ForensicEvent(Base):
             name="ck_forensic_events_severity_weight",
         ),
         CheckConstraint(
-            "platform IN ('aws', 'gcp', 'stripe', 'github', 'twilio', 'db', 'npm')",
+            f"platform IN ({_PLATFORM_SQL_LIST})",
             name="ck_forensic_events_platform_valid",
         ),
         Index("ix_forensic_events_incident_id", "incident_id"),
@@ -318,7 +439,7 @@ class CollectionStatus(Base):
 
     __table_args__ = (
         CheckConstraint(
-            "platform IN ('aws', 'gcp', 'stripe', 'github', 'twilio', 'db', 'npm')",
+            f"platform IN ({_PLATFORM_SQL_LIST})",
             name="ck_collection_status_platform_valid",
         ),
         CheckConstraint(
@@ -369,6 +490,15 @@ class ExperimentRun(Base):
         nullable=True,
         comment="'A' (standard) | 'B' (bulk) | 'C' (minimal)",
     )
+    platform = Column(
+        VARCHAR(20),
+        nullable=False,
+        default="aws",
+        server_default="aws",
+        comment="Platform this run exercised. Without it the cross-platform "
+                "comparison in research/analysis.py has nothing to group by, "
+                "which is the paper's headline result.",
+    )
     exposure_start = Column(
         DateTime(timezone=True),
         nullable=True,
@@ -380,17 +510,17 @@ class ExperimentRun(Base):
         comment="When simulate_attacker_activity() was called",
     )
     detection_time_s = Column(
-        Integer,
+        Float,
         nullable=True,
         comment="Seconds from credential push to webhook detection",
     )
     first_external_use_s = Column(
-        Integer,
+        Float,
         nullable=True,
         comment="Seconds from exposure_start to first non-team IP usage — key research metric",
     )
     report_time_s = Column(
-        Integer,
+        Float,
         nullable=True,
         comment="Seconds from credential push to status=complete",
     )
@@ -428,6 +558,8 @@ class ExperimentRun(Base):
     __table_args__ = (
         Index("ix_experiment_runs_run_number", "run_number"),
         Index("ix_experiment_runs_experiment_group", "experiment_group"),
+        # compare_platforms() groups by this on every research page load.
+        Index("ix_experiment_runs_platform", "platform"),
     )
 
     def __repr__(self) -> str:

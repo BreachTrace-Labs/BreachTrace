@@ -49,15 +49,33 @@ def is_key_revoked(
     access_key_id: str,
     secret_access_key: str | None = None,
     *,
-    admin_credentials: dict | None = None
+    admin_credentials: dict | None = None,
+    platform: str = "aws",
 ) -> bool:
     """
-    Check whether an AWS access key is revoked via STS GetCallerIdentity.
+    Check whether a credential is revoked.
+
+    Dispatches to the appropriate platform revocation checker based on *platform*.
+
+    For AWS: authenticates via STS GetCallerIdentity.
+    For GCP:  attempts a token refresh with the leaked service account key.
+    For Azure: attempts to acquire a token with the leaked client credentials.
 
     When *secret_access_key* is provided the function authenticates as the
     leaked key directly — the most reliable way to detect revocation.
     Falls back to admin / configured credentials when the secret is unknown.
     """
+    if platform == "gcp":
+        from window import gcp_revocation  # noqa: PLC0415
+        return gcp_revocation.is_gcp_key_revoked(
+            access_key_id, secret_access_key or ""
+        )
+    if platform == "azure":
+        from window import azure_revocation  # noqa: PLC0415
+        return azure_revocation.is_azure_key_revoked(
+            access_key_id, secret_access_key or ""
+        )
+    # Default: AWS STS check
     try:
         # Prefer leaked-key credentials when available
         if secret_access_key:

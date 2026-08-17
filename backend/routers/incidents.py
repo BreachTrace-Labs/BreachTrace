@@ -11,6 +11,7 @@ Returns stored incidents and their forensic events.
 from __future__ import annotations
 
 from collections import Counter
+from dataclasses import asdict
 from datetime import datetime
 from typing import Optional
 
@@ -20,13 +21,14 @@ from sqlalchemy.orm import Session
 
 from db.crud import get_incident, list_incidents, reset_incident_for_refresh
 from db.database import get_db
-from db.models import ExperimentRun
+from db.models import CREDENTIAL_TYPE_TO_PLATFORM, ExperimentRun
 from pipeline import run_collection_pipeline
 from scorer.severity import (
     build_compliance_reasons,
     check_gdpr_flag,
     check_pcidss_flag,
     check_soc2_flag,
+    compute_financial_impact_lines,
 )
 
 router = APIRouter(prefix="/incidents", tags=["incidents"])
@@ -61,6 +63,10 @@ class ForensicEventOut(BaseModel):
     is_denied: bool
     impact_category: Optional[str]
     severity_weight: Optional[int]
+    # GCP / Azure identity and location
+    principal_id: Optional[str] = None
+    location: Optional[str] = None
+    raw_data: dict = Field(default_factory=dict)
 
     class Config:
         from_attributes = True
@@ -79,6 +85,18 @@ class IncidentSummaryOut(BaseModel):
     overall_severity: Optional[str]
     gdpr_flag: bool
     created_at: datetime
+    # Multi-platform fields
+    platform: str = "aws"
+    principal_id: Optional[str] = None
+    gcp_project_id: Optional[str] = None
+    azure_tenant_id: Optional[str] = None
+    azure_subscription_id: Optional[str] = None
+    # Forensic tier: 1 = blast radius reconstructable, 2 = detection only.
+    # The UI branches on this to decide between a timeline and the
+    # "forensics unavailable" panel, so it must appear on the LIST response
+    # too — not just the detail one — or the dashboard cannot label rows.
+    forensic_tier: int = 1
+    unavailable_reason: Optional[str] = None
 
     @field_validator("overall_severity", mode="before")
     @classmethod
@@ -91,6 +109,22 @@ class IncidentSummaryOut(BaseModel):
         from_attributes = True
 
 
+class FinancialImpactLineOut(BaseModel):
+    """One costed finding. Mirrors scorer.severity.FinancialImpactLine."""
+
+    platform: str
+    kind: str
+    label: str
+    text: str
+    amount: Optional[float] = None
+    currency: Optional[str] = None
+    unit: Optional[str] = None
+    quantity: Optional[int] = None
+    # True only where money demonstrably moved (Stripe). Everything else is a
+    # list-price estimate, and the UI must be able to tell them apart.
+    actual: bool = False
+
+
 class IncidentDetailOut(IncidentSummaryOut):
     events: list[ForensicEventOut] = []
     report_text: Optional[str] = None
@@ -100,6 +134,10 @@ class IncidentDetailOut(IncidentSummaryOut):
     pcidss_flag: bool = False
     soc2_flag: bool = False
     compliance_reasons: list[str] = []
+    # Structured view of estimated_financial_impact. Computed per request from
+    # the same events, following the precedent of the compliance flags above —
+    # so no migration is needed and existing incidents get it immediately.
+    financial_impact_lines: list[FinancialImpactLineOut] = []
 
     class Config:
         from_attributes = True
@@ -176,6 +214,10 @@ def get_incident_detail(
         soc2=soc2,
         events=incident.events,
     )
+    out.financial_impact_lines = [
+        FinancialImpactLineOut(**asdict(line))
+        for line in compute_financial_impact_lines(incident.events)
+    ]
     return out
 
 
@@ -206,6 +248,20 @@ def get_incident_timeline(
 # Manual CloudTrail refresh endpoint
 # ---------------------------------------------------------------------------
 
+def _derive_platform(incident) -> str:
+    """
+    Platform for an incident.
+
+    Delegates to IncidentRecord.platform, which uses the explicit
+    CREDENTIAL_TYPE_TO_PLATFORM map. The previous substring form
+    (`"gcp" in credential_type`) silently mis-routed the SaaS credential types
+    and could not express that a Firebase key collects through GCP.
+    """
+    return CREDENTIAL_TYPE_TO_PLATFORM.get(
+        (getattr(incident, "credential_type", "") or "").lower(), "aws"
+    )
+
+
 def _queue_incident_refresh(
     incident_id: str,
     background_tasks: BackgroundTasks,
@@ -215,25 +271,45 @@ def _queue_incident_refresh(
     if incident is None:
         raise HTTPException(status_code=404, detail="Incident not found")
 
-    if not incident.access_key_id:
-        raise HTTPException(
-            status_code=422,
-            detail="Incident does not have an AWS access key ID to query CloudTrail.",
-        )
+    platform = _derive_platform(incident)
+
+    # Pick the right credential for collection:
+    # AWS uses access_key_id; GCP/Azure use principal_id (email / client ID)
+    if platform == "aws":
+        credential = incident.access_key_id
+        if not credential:
+            raise HTTPException(
+                status_code=422,
+                detail="Incident does not have an AWS access key ID to query CloudTrail.",
+            )
+    else:
+        credential = incident.principal_id
+        if not credential:
+            raise HTTPException(
+                status_code=422,
+                detail=f"Incident does not have a principal ID to query {platform.upper()} logs.",
+            )
+
+    platform_msg = {
+        "aws": "CloudTrail can take up to 15 minutes to surface fresh events.",
+        "gcp": "GCP Cloud Audit Logs query started.",
+        "azure": "Azure Activity Log query started.",
+    }.get(platform, "Log query started.")
 
     reset_incident_for_refresh(db, incident_id)
     background_tasks.add_task(
         run_collection_pipeline,
         incident.incident_id,
-        incident.access_key_id,
+        credential,
         incident.exposure_start,
+        platform=platform,
         refresh_existing=True,
     )
 
     return RefreshResponse(
         incident_id=incident.incident_id,
         status="collecting",
-        message="Forensics refresh started. CloudTrail can take up to 15 minutes to surface fresh events.",
+        message=f"Forensics refresh started. {platform_msg}",
     )
 
 

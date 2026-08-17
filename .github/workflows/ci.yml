@@ -1,0 +1,70 @@
+# BreachTrace CI (S3-R10)
+#
+# Runs the offline test suite on every push and pull request. No AWS, GCP,
+# Azure, or database credentials are needed — the suite mocks every collector.
+#
+# Motivation: the team merges large hand-resolved branches (ritwik-current was
+# 27 files across 2 commits), which is exactly the situation where a silent
+# regression slips in. This blocks that.
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  # A new push to the same branch cancels the in-flight run.
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend-tests:
+    name: Backend tests (Python 3.12)
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          # 3.12+ is mandatory — PEP 604 unions in runtime-evaluated dataclass
+          # annotations raise TypeError on 3.9.
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r backend/requirements.txt -r backend/requirements-dev.txt
+
+      - name: Run test suite
+        # No credentials needed — every collector is stubbed and conftest.py
+        # supplies a throwaway SQLite URL.
+        run: python -m pytest backend/tests -q
+
+  frontend-build:
+    name: Frontend typecheck + build
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: client/package-lock.json
+
+      - name: Install dependencies
+        working-directory: client
+        run: npm ci
+
+      - name: Typecheck and build
+        # `npm run build` is `tsc -b && vite build`, so this catches type errors
+        # in the API contract as well as build failures.
+        working-directory: client
+        run: npm run build

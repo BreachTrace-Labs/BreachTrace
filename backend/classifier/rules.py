@@ -7,6 +7,8 @@ from sqlalchemy.orm import Session
 from classifier.taxonomy_aws import AWS_API_TAXONOMY
 from classifier.taxonomy_azure import AZURE_API_TAXONOMY
 from classifier.taxonomy_gcp import GCP_API_TAXONOMY
+from classifier.taxonomy_stripe import STRIPE_API_TAXONOMY
+from classifier.taxonomy_twilio import TWILIO_API_TAXONOMY, TWILIO_BULK_THRESHOLD
 from db.models import ForensicEvent as ORMForensicEvent
 from db.models import IncidentRecord
 from normalizer.schema import ForensicEvent
@@ -22,6 +24,34 @@ CODE_COMPROMISE = "code_compromise"
 
 BULK_THRESHOLD = 5  # same api_action + same IP >= 5 times -> escalate to exfiltration
 
+# ────────────────────────────────────────────────────────────────────────────
+# Platform → taxonomy dispatch table
+# ────────────────────────────────────────────────────────────────────────────
+_TAXONOMY_MAP: dict[str, dict[str, dict]] = {
+    "aws": AWS_API_TAXONOMY,
+    "gcp": GCP_API_TAXONOMY,
+    "azure": AZURE_API_TAXONOMY,
+    "stripe": STRIPE_API_TAXONOMY,
+    "twilio": TWILIO_API_TAXONOMY,
+}
+
+# Bulk-escalation threshold per platform.
+#
+# BULK_THRESHOLD = 5 was tuned for AWS GetObject, where five reads of the same
+# object from one IP is already suspicious. That figure does not transfer:
+# five Twilio messages is a normal application minute, and applying the AWS
+# number there would mark every healthy integration as critical.
+_BULK_THRESHOLD_BY_PLATFORM: dict[str, int] = {
+    "twilio": TWILIO_BULK_THRESHOLD,
+}
+
+
+def _bulk_threshold(platform: str | None) -> int:
+    return _BULK_THRESHOLD_BY_PLATFORM.get((platform or "aws").lower(), BULK_THRESHOLD)
+
+# ────────────────────────────────────────────────────────────────────────────
+# AWS heuristics (unchanged)
+# ────────────────────────────────────────────────────────────────────────────
 HEURISTIC_CLASSIFICATIONS: list[tuple[tuple[str, ...], tuple[str, int]]] = [
     (("List", "Describe"), (RECONNAISSANCE, 1)),
     (("Get",), (DATA_ACCESS, 2)),
@@ -52,19 +82,6 @@ EVENT_SOURCE_ALIASES = {
 }
 
 
-_TAXONOMY_MAP: dict[str, dict[str, dict]] = {
-    "aws": AWS_API_TAXONOMY,
-    "gcp": GCP_API_TAXONOMY,
-    "azure": AZURE_API_TAXONOMY,
-}
-
-
-def _get_taxonomy(platform: str | None) -> dict[str, dict]:
-    if not platform:
-        return AWS_API_TAXONOMY
-    return _TAXONOMY_MAP.get(platform.lower(), AWS_API_TAXONOMY)
-
-
 def _service_prefix_from_event_source(event_source: str | None) -> str | None:
     if not event_source:
         return None
@@ -73,11 +90,7 @@ def _service_prefix_from_event_source(event_source: str | None) -> str | None:
     return EVENT_SOURCE_ALIASES.get(prefix, prefix)
 
 
-def _taxonomy_key_candidates(
-    event: ForensicEvent,
-    *,
-    taxonomy: dict[str, dict],
-) -> list[str]:
+def _taxonomy_key_candidates(event: ForensicEvent) -> list[str]:
     candidates: list[str] = []
 
     if ":" in event.api_action:
@@ -86,7 +99,9 @@ def _taxonomy_key_candidates(
         service_prefix = _service_prefix_from_event_source(event.event_source)
         if service_prefix:
             candidates.append(f"{service_prefix}:{event.api_action}")
-    suffix_matches = [key for key in taxonomy if key.endswith(f":{event.api_action}")]
+    suffix_matches = [
+        key for key in AWS_API_TAXONOMY if key.endswith(f":{event.api_action}")
+    ]
     if len(suffix_matches) == 1:
         candidates.append(suffix_matches[0])
 
@@ -101,100 +116,101 @@ def _taxonomy_key_candidates(
     return unique_candidates
 
 
-def _aws_taxonomy_classification(event: ForensicEvent) -> tuple[str, int] | None:
-    for candidate in _taxonomy_key_candidates(event, taxonomy=AWS_API_TAXONOMY):
+def _taxonomy_classification(event: ForensicEvent) -> tuple[str, int] | None:
+    for candidate in _taxonomy_key_candidates(event):
         taxonomy_entry = AWS_API_TAXONOMY.get(candidate)
         if taxonomy_entry:
             return taxonomy_entry["category"], taxonomy_entry["severity"]
     return None
 
 
-def _taxonomy_classification(event: ForensicEvent) -> tuple[str, int] | None:
-    platform = (event.platform or "aws").lower()
-    taxonomy = _get_taxonomy(platform)
-
-    # AWS needs candidate expansion because events may store api_action without
-    # the "service:" prefix, or may only provide event_source.
-    if platform == "aws":
-        return _aws_taxonomy_classification(event)
-
-    # For GCP and Azure we store method/operation names directly.
-    taxonomy_entry = taxonomy.get(event.api_action)
-    if taxonomy_entry:
-        return taxonomy_entry["category"], taxonomy_entry["severity"]
-    return None
-
-
-GCP_HEURISTIC_PREFIXES: dict[str, tuple[str, int]] = {
-    "list": (RECONNAISSANCE, 1),
-    "get": (DATA_ACCESS, 2),
-    "create": (RESOURCE_ABUSE, 3),
-    "delete": (RESOURCE_ABUSE, 3),
-    "update": (RESOURCE_ABUSE, 3),
-    "setIamPolicy": (PRIVILEGE_ESCALATION, 4),
-    "signJwt": (PRIVILEGE_ESCALATION, 4),
-}
-
-
-AZURE_HEURISTIC_SUFFIXES: dict[str, tuple[str, int]] = {
-    "/read": (RECONNAISSANCE, 1),
-    "/write": (RESOURCE_ABUSE, 3),
-    "/delete": (RESOURCE_ABUSE, 3),
-    "/action": (RESOURCE_ABUSE, 3),
-}
-
-
-AZURE_PRIV_ESC_PATTERNS: tuple[str, ...] = (
-    "roleAssignments/write",
-    "roleDefinitions/write",
-    "policies/write",
-)
-
-
-def _aws_heuristic_classification(api_action: str) -> tuple[str, int]:
+def _heuristic_classification(api_action: str) -> tuple[str, int]:
     for prefixes, classification in HEURISTIC_CLASSIFICATIONS:
         if api_action.startswith(prefixes):
             return classification
     return RECONNAISSANCE, 1
 
 
-def _gcp_heuristic_classification(api_action: str) -> tuple[str, int]:
-    # Cloud Audit Logs method names are dot-separated. We classify based on
-    # the last segment (verb), not the full string.
-    verb = api_action.rsplit(".", 1)[-1]
-    return GCP_HEURISTIC_PREFIXES.get(verb, (RECONNAISSANCE, 1))
+# ────────────────────────────────────────────────────────────────────────────
+# GCP heuristics (dot-separated action suffix)
+# ────────────────────────────────────────────────────────────────────────────
+_GCP_SUFFIX_MAP: dict[str, tuple[str, int]] = {
+    "list":          (RECONNAISSANCE, 1),
+    "get":           (DATA_ACCESS, 2),
+    "create":        (RESOURCE_ABUSE, 3),
+    "insert":        (RESOURCE_ABUSE, 3),
+    "update":        (RESOURCE_ABUSE, 3),
+    "patch":         (RESOURCE_ABUSE, 3),
+    "delete":        (RESOURCE_ABUSE, 3),
+    "setIamPolicy":  (PRIVILEGE_ESCALATION, 4),
+    "signJwt":       (PRIVILEGE_ESCALATION, 4),
+    "signBlob":      (PRIVILEGE_ESCALATION, 4),
+    "getAccessToken": (PRIVILEGE_ESCALATION, 4),
+}
 
 
-def _azure_heuristic_classification(operation: str) -> tuple[str, int]:
-    op = operation or ""
-    for pattern in AZURE_PRIV_ESC_PATTERNS:
-        if pattern in op:
+def _gcp_classify(event: ForensicEvent) -> tuple[str, int]:
+    """Classify a GCP event: taxonomy first, then dot-suffix heuristic."""
+    taxonomy_entry = GCP_API_TAXONOMY.get(event.api_action)
+    if taxonomy_entry:
+        return taxonomy_entry["category"], taxonomy_entry["severity"]
+
+    # Heuristic: use the last dot-segment as the verb
+    verb = event.api_action.rsplit(".", 1)[-1] if "." in event.api_action else event.api_action
+    return _GCP_SUFFIX_MAP.get(verb, (RECONNAISSANCE, 1))
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# Azure heuristics (operation suffix after last "/")
+# ────────────────────────────────────────────────────────────────────────────
+_AZURE_PRIV_ESC_PATTERNS = (
+    "roleAssignments/write",
+    "roleDefinitions/write",
+    "policies/write",
+    "elevateAccess/action",
+)
+
+_AZURE_SUFFIX_MAP: dict[str, tuple[str, int]] = {
+    "read":   (RECONNAISSANCE, 1),
+    "write":  (RESOURCE_ABUSE, 3),
+    "delete": (RESOURCE_ABUSE, 3),
+    "action": (RESOURCE_ABUSE, 3),
+}
+
+
+def _azure_classify(event: ForensicEvent) -> tuple[str, int]:
+    """Classify an Azure event: taxonomy first, then suffix heuristics."""
+    taxonomy_entry = AZURE_API_TAXONOMY.get(event.api_action)
+    if taxonomy_entry:
+        return taxonomy_entry["category"], taxonomy_entry["severity"]
+
+    # Special privilege-escalation overrides (check before generic suffix)
+    for pattern in _AZURE_PRIV_ESC_PATTERNS:
+        if event.api_action.endswith(pattern):
             return PRIVILEGE_ESCALATION, 4
 
-    for suffix, classification in AZURE_HEURISTIC_SUFFIXES.items():
-        if op.endswith(suffix):
-            return classification
-    return RECONNAISSANCE, 1
+    # Heuristic: last path segment after "/"
+    suffix = event.api_action.rsplit("/", 1)[-1].lower() if "/" in event.api_action else event.api_action
+    return _AZURE_SUFFIX_MAP.get(suffix, (RECONNAISSANCE, 1))
 
 
-def _heuristic_classification(platform: str, api_action: str) -> tuple[str, int]:
-    if platform == "gcp":
-        return _gcp_heuristic_classification(api_action)
-    if platform == "azure":
-        return _azure_heuristic_classification(api_action)
-    return _aws_heuristic_classification(api_action)
-
+# ────────────────────────────────────────────────────────────────────────────
+# Unified dispatch
+# ────────────────────────────────────────────────────────────────────────────
 
 def _classify_action(event: ForensicEvent) -> tuple[str, int]:
+    if event.platform == "gcp":
+        return _gcp_classify(event)
+    if event.platform == "azure":
+        return _azure_classify(event)
+
+    # AWS (default)
     taxonomy_classification = _taxonomy_classification(event)
     if taxonomy_classification is not None:
         return taxonomy_classification
 
-    platform = (event.platform or "aws").lower()
-    classification = _heuristic_classification(platform, event.api_action)
-    if platform == "aws":
-        return SPECIAL_OVERRIDES.get(event.api_action, classification)
-    return classification
+    classification = _heuristic_classification(event.api_action)
+    return SPECIAL_OVERRIDES.get(event.api_action, classification)
 
 
 def classify_event(event: ForensicEvent) -> ForensicEvent:
@@ -211,20 +227,18 @@ def classify_events(events: list[ForensicEvent]) -> list[ForensicEvent]:
     for event in events:
         classify_event(event)
 
-    counts: Counter[tuple[str, str]] = Counter()
-    for e in events:
-        if e.source_ip is None:
-            continue
-        counts[(e.api_action, e.source_ip)] += 1
+    counts = Counter(
+        (event.api_action, event.source_ip)
+        for event in events
+        if event.source_ip
+    )
 
     for event in events:
-        if event.source_ip is None:
-            continue
-
         key = (event.api_action, event.source_ip)
         if (
-            event.impact_category == DATA_ACCESS
-            and counts[key] >= BULK_THRESHOLD
+            event.source_ip
+            and event.impact_category == DATA_ACCESS
+            and counts[key] >= _bulk_threshold(event.platform)
         ):
             event.impact_category = DATA_EXFILTRATION
             event.severity_weight = 4

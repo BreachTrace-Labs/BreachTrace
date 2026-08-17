@@ -18,8 +18,9 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
-from db.crud import create_incident, set_exposure_end
+from db.crud import create_incident, finalize_non_forensic_incident, set_exposure_end
 from db.database import SessionLocal, get_db
+from detector.match_resolver import match_credential_value, resolve_match
 from detector.scanner import scan
 from pipeline import run_collection_pipeline
 from window.calculator import is_key_revoked
@@ -34,10 +35,16 @@ router = APIRouter(prefix="/test", tags=["test"])
 # ---------------------------------------------------------------------------
 
 class SimulateRequest(BaseModel):
-    repo_url: str
+    repo_url: str = "simulated"
     diff_text: str
-    # Optional: force a specific key ID + secret so revocation polling starts.
-    # If omitted the scanner extracts the key ID from the diff.
+    # Platform selector: 'aws' | 'gcp' | 'azure'
+    platform: str = "aws"
+    # Optional: force a specific credential so a match can be filtered.
+    # AWS:   access_key_id (AKIA…)
+    # GCP:   client_email (service account email)
+    # Azure: client_id (UUID)
+    credential: Optional[str] = None
+    # AWS-specific: legacy field kept for backward compatibility.
     access_key_id: Optional[str] = None
     secret_access_key: Optional[str] = None
     # Override exposure start; defaults to now() if not provided
@@ -51,18 +58,20 @@ class SimulateRequest(BaseModel):
 
 async def _monitor_revocation(
     incident_id: str,
-    access_key_id: str,
-    secret_access_key: str,
+    credential: str,
+    secret: str,
+    *,
+    platform: str = "aws",
 ) -> None:
-    """Poll STS every 60 s for up to 10 minutes; set exposure_end when revoked."""
+    """Poll revocation endpoint every 60 s for up to 10 minutes; set exposure_end when revoked."""
     max_polls = 10
     for poll in range(max_polls):
         await asyncio.sleep(60)
         try:
-            revoked = is_key_revoked(access_key_id, secret_access_key)
+            revoked = is_key_revoked(credential, secret, platform=platform)
         except Exception as exc:
             logger.error(
-                "STS revocation poll %d failed for %s: %s", poll + 1, access_key_id, exc
+                "Revocation poll %d failed for %s: %s", poll + 1, credential[:20], exc
             )
             continue
 
@@ -92,64 +101,96 @@ async def simulate(
     Feed a raw diff directly into the scanner and persist incidents to DB.
     Optionally starts revocation monitoring when both key parts are provided.
     """
-    matches = scan(body.diff_text)
+    matches = scan(body.diff_text, include_saas=True)
 
     if not matches:
         return {"status": "no_credentials_found", "incidents_created": 0}
 
-    # If the caller forced a specific key ID, filter to just that match or
-    # create a synthetic match if the diff doesn't contain it.
-    if body.access_key_id:
-        matches = [m for m in matches if m.access_key_id == body.access_key_id]
+    # Resolve the effective credential override (support both legacy access_key_id
+    # and the new unified credential field).
+    forced_credential: str | None = body.credential or body.access_key_id
+
+    if forced_credential:
+        matches = [
+            m for m in matches if match_credential_value(m) == forced_credential
+        ]
         if not matches:
             raise HTTPException(
                 status_code=422,
-                detail=f"access_key_id '{body.access_key_id}' not found in the provided diff_text",
+                detail=f"Credential '{forced_credential}' not found in the provided diff_text",
             )
 
     exposure_start = body.exposure_start or datetime.now(tz=timezone.utc)
     created: list[dict] = []
 
     for match in matches:
+        resolved = resolve_match(match)
+
         incident = create_incident(
             db,
-            credential_type=match.credential_type,
-            credential_hint=match.credential_hint,
-            access_key_id=match.access_key_id,
+            credential_type=resolved.credential_type,
+            credential_hint=resolved.credential_hint,
+            access_key_id=resolved.access_key_id,
             repo_url=body.repo_url,
             commit_hash="simulated",
             exposure_start=exposure_start,
+            principal_id=resolved.principal_id,
+            forensic_tier=resolved.forensic_tier,
+            unavailable_reason=resolved.unavailable_reason,
         )
-        logger.info("Simulated incident created: %s", incident.incident_id)
-
-        # Fire CloudTrail collection in the background.
-        background_tasks.add_task(
-            run_collection_pipeline,
+        logger.info(
+            "Simulated incident created: %s (platform=%s tier=%s)",
             incident.incident_id,
-            match.access_key_id,
-            exposure_start,
+            resolved.platform,
+            resolved.forensic_tier,
         )
 
-        # Start revocation monitor if credentials provided
-        if body.secret_access_key:
+        if resolved.is_collectable:
+            background_tasks.add_task(
+                run_collection_pipeline,
+                incident.incident_id,
+                resolved.credential,
+                exposure_start,
+                platform=resolved.platform,
+            )
+        else:
+            # Tier 2: no queryable audit log, so collection would just produce an
+            # empty timeline indistinguishable from "the key was never used".
+            # Finalise immediately with the reason recorded instead.
+            finalize_non_forensic_incident(
+                db, incident.incident_id, resolved.unavailable_reason
+            )
+
+        # Start revocation monitor if a secret was provided.
+        if body.secret_access_key and resolved.platform == "aws":
             asyncio.create_task(
                 _monitor_revocation(
                     incident.incident_id,
-                    match.access_key_id,
+                    resolved.credential,
                     body.secret_access_key,
+                    platform="aws",
                 )
             )
 
         created.append(
             {
                 "incident_id": incident.incident_id,
-                "credential_hint": match.credential_hint,
-                "revocation_monitor": body.secret_access_key is not None,
+                "credential_hint": resolved.credential_hint,
+                "platform": resolved.platform,
+                "forensic_tier": resolved.forensic_tier,
+                "collected": resolved.is_collectable,
+                "revocation_monitor": body.secret_access_key is not None
+                and resolved.platform == "aws",
             }
         )
 
-    return {
+    response: dict = {
         "status": "ok",
         "incidents_created": len(created),
         "incidents": created,
     }
+    # Convenience field: top-level incident_id for single-incident responses
+    # (used by the research harness to poll for pipeline completion).
+    if len(created) == 1:
+        response["incident_id"] = created[0]["incident_id"]
+    return response

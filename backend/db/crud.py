@@ -21,10 +21,16 @@ def create_incident(
     *,
     credential_type: str,
     credential_hint: str,
-    access_key_id: str,
+    access_key_id: str | None = None,
     repo_url: str,
     commit_hash: str,
     exposure_start: datetime,
+    principal_id: str | None = None,
+    gcp_project_id: str | None = None,
+    azure_tenant_id: str | None = None,
+    azure_subscription_id: str | None = None,
+    forensic_tier: int = 1,
+    unavailable_reason: str | None = None,
 ) -> IncidentRecord:
     """Insert a new incident row and return the persisted object."""
     incident = IncidentRecord(
@@ -35,6 +41,12 @@ def create_incident(
         repo_url=repo_url,
         commit_hash=commit_hash,
         exposure_start=exposure_start,
+        principal_id=principal_id,
+        forensic_tier=forensic_tier,
+        unavailable_reason=unavailable_reason,
+        gcp_project_id=gcp_project_id,
+        azure_tenant_id=azure_tenant_id,
+        azure_subscription_id=azure_subscription_id,
         status="collecting",
         remediation_steps=[],
         gdpr_flag=False,
@@ -145,6 +157,9 @@ def save_forensic_events(
             error_code=error_code,
             is_denied=is_denied,
             principal_arn=principal_arn,
+            # GCP / Azure identity fields (None for AWS events)
+            principal_id=getattr(event, "principal_id", None),
+            location=getattr(event, "location", None),
             raw_data=event.raw_data,
             impact_category=event.impact_category,
             severity_weight=event.severity_weight,
@@ -184,3 +199,64 @@ def save_collection_status(
     db.commit()
     db.refresh(record)
     return record
+
+
+def finalize_non_forensic_incident(
+    db: Session,
+    incident_id: str,
+    unavailable_reason: str | None = None,
+) -> IncidentRecord | None:
+    """
+    Complete a Tier-2 incident without running a collector.
+
+    Tier-2 platforms expose no queryable per-credential audit log, so running a
+    collector would return nothing and leave the incident stuck in 'collecting'
+    forever — a state the dashboard renders identically to a real in-flight
+    investigation. Worse, an empty timeline reads as "nothing happened", which
+    is precisely the false reassurance BreachTrace exists to eliminate.
+
+    So the incident is marked complete immediately, carrying the reason
+    reconstruction is impossible and generic remediation. Severity stays NULL
+    rather than defaulting to Low: we genuinely do not know the blast radius,
+    and claiming it was low would be a fabrication.
+    """
+    incident = db.get(IncidentRecord, incident_id)
+    if incident is None:
+        return None
+
+    incident.status = "complete"
+    if unavailable_reason:
+        incident.unavailable_reason = unavailable_reason
+    incident.report_text = _non_forensic_report(incident, unavailable_reason)
+    incident.remediation_steps = _non_forensic_remediation(incident)
+    db.commit()
+    db.refresh(incident)
+    return incident
+
+
+def _non_forensic_report(incident: IncidentRecord, reason: str | None) -> str:
+    """Deterministic report for Tier-2 incidents — no LLM call needed."""
+    return (
+        f"## Credential exposed\n\n"
+        f"A **{incident.credential_type.replace('_', ' ')}** "
+        f"(`{incident.credential_hint}`) was committed to {incident.repo_url}.\n\n"
+        f"## Why there is no activity timeline\n\n"
+        f"{reason or 'This platform exposes no queryable audit log for this credential type.'}\n\n"
+        f"**This is not evidence that the credential went unused.** It means the "
+        f"platform provides no way to find out. Treat the credential as compromised "
+        f"and rotate it immediately.\n"
+    )
+
+
+def _non_forensic_remediation(incident: IncidentRecord) -> list[str]:
+    """Generic but specific-enough remediation for a Tier-2 leak."""
+    return [
+        f"☐ Revoke the exposed {incident.credential_type.replace('_', ' ')} "
+        f"({incident.credential_hint}) in the provider's console now",
+        "☐ Issue a replacement credential and update every deployment that used it",
+        f"☐ Purge the secret from git history in {incident.repo_url} "
+        "(rotation alone leaves it readable in past commits)",
+        "☐ Review any provider-side billing or usage dashboards for unexpected activity "
+        "during the exposure window",
+        "☐ Enable secret scanning on the repository to catch the next one before push",
+    ]
