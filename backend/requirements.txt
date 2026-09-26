@@ -38,5 +38,9 @@ azure-mgmt-resource
 azure-mgmt-storage
 azure-mgmt-monitor>=6.0.0
 
+# SaaS collectors
+stripe>=7.0.0
+twilio>=8.0.0
+
 # Testing
 pytest  # dev-only

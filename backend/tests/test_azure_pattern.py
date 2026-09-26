@@ -179,7 +179,21 @@ def test_connection_string_with_short_account_key_not_detected():
 # Client secret detection
 # ---------------------------------------------------------------------------
 
-VALID_CLIENT_SECRET = "A" * 40  # 40-char alphanumeric string
+# Realistic Azure AD client secret. Azure has issued secrets in the form
+# "<short prefix>~<~30 more chars>" since 2021, and AZURE_CLIENT_SECRET_PATTERN
+# now requires that tilde.
+#
+# This fixture was previously "A" * 40 — syntactically long but not shaped like
+# anything Azure actually issues. The pattern that accepted it also accepted any
+# long string near the word "password": JWTs, bcrypt hashes, SMTP and Redis
+# passwords, other vendors' API keys. Measured against the adversarial negatives
+# in tests/fixtures/gcp_azure_detection_set.csv that was 8 false positives out
+# of 8 — precision 0.714. See test_gcp_azure_detection_accuracy.py.
+#
+# YASH: this is your file and your call to overrule. The tradeoff is recorded in
+# test_legacy_tilde_less_secret_is_no_longer_detected below.
+VALID_CLIENT_SECRET = "Xq7~vTn2.Kp9_Rm4-Ws8Yz1Ab3Cd6Ef0Gh"
+LEGACY_CLIENT_SECRET = "A" * 40  # pre-2021 style: base64-ish, no tilde
 
 
 def test_detects_client_secret_near_keyword():
@@ -201,6 +215,34 @@ def test_client_secret_without_keyword_not_detected():
     matches = find_azure_credentials(text)
     secrets = [m for m in matches if m.credential_type == "azure_client_secret"]
     assert len(secrets) == 0
+
+
+def test_legacy_tilde_less_secret_is_no_longer_detected():
+    """
+    Records a deliberate recall sacrifice, so it cannot change again unnoticed.
+
+    Pre-2021 Azure secrets were plain base64 with no tilde and are indistinguishable
+    from any other long string, which is precisely what drove precision to 0.714.
+    A missed credential produces no incident; a false positive produces a bogus one
+    and corrupts the Track A accuracy numbers. Precision wins here.
+    """
+    text = f"client_secret={LEGACY_CLIENT_SECRET}"
+    matches = find_azure_credentials(text)
+    secrets = [m for m in matches if m.credential_type == "azure_client_secret"]
+    assert len(secrets) == 0
+
+
+def test_common_non_azure_passwords_are_not_client_secrets():
+    """The false positives that motivated the tighter pattern."""
+    for text in (
+        'password = "correcthorsebatterystaple1234567890"',
+        "SMTP_PASSWORD=MailgunSmtp9876543210AbCdEfGhIjKlMnOp",
+        "password: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dozjgNryP4J3",
+        "client_secret: ghp_16C7e42F292c6912E7710c838347Ae178B4a",
+    ):
+        matches = find_azure_credentials(text)
+        secrets = [m for m in matches if m.credential_type == "azure_client_secret"]
+        assert len(secrets) == 0, f"false positive on: {text}"
 
 
 def test_uuid_not_double_detected_as_client_secret():

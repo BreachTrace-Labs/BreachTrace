@@ -1,4 +1,13 @@
-import type { IncidentRecord, ForensicEvent } from '@/types'
+import type {
+  ExperimentRun,
+  ForensicEvent,
+  IncidentRecord,
+  MetricSummary,
+  PlatformComparison,
+  PlatformStats,
+} from '@/types'
+
+export type { ExperimentRun }
 
 /* ─── shared events for incident 1 ────────────────────────────── */
 
@@ -244,6 +253,116 @@ const INC4_EVENTS: ForensicEvent[] = [
   }
 ]
 
+/* ─── shared events for incident 7 (AWS + GCP in one exposure) ──
+   One commit leaking a Terraform vars file with two cloud credentials. This is
+   the case the unified timeline exists for: a single attacker moving across two
+   platforms, which no single-cloud tool can show on one axis. ─────────────── */
+
+const INC7_EVENTS: ForensicEvent[] = [
+  {
+    event_id: 'ev-701',
+    platform: 'aws',
+    timestamp: '2026-04-18T09:16:20Z',
+    api_action: 'ListBuckets',
+    event_source: 's3.amazonaws.com',
+    source_ip: '45.33.32.156',
+    user_agent: 'aws-cli/2.15.0',
+    affected_resource: null,
+    resource_type: null,
+    success: true,
+    error_code: null,
+    raw_data: {}, principal_id: null, location: 'us-east-1',
+    impact_category: 'reconnaissance',
+    severity_weight: 1,
+  },
+  {
+    event_id: 'ev-702',
+    platform: 'gcp',
+    timestamp: '2026-04-18T09:17:44Z',
+    api_action: 'storage.buckets.list',
+    event_source: 'storage.googleapis.com',
+    source_ip: '45.33.32.156',
+    user_agent: 'google-cloud-sdk/458.0.1',
+    affected_resource: null,
+    resource_type: null,
+    success: true,
+    error_code: null,
+    raw_data: {},
+    principal_id: 'terraform-deployer@shared-infra-prod.iam.gserviceaccount.com',
+    location: 'us-central1',
+    impact_category: 'reconnaissance',
+    severity_weight: 1,
+  },
+  {
+    event_id: 'ev-703',
+    platform: 'aws',
+    timestamp: '2026-04-18T09:19:02Z',
+    api_action: 'DescribeInstances',
+    event_source: 'ec2.amazonaws.com',
+    source_ip: '45.33.32.156',
+    user_agent: 'aws-cli/2.15.0',
+    affected_resource: null,
+    resource_type: null,
+    success: false,
+    error_code: 'AccessDenied',
+    raw_data: {}, principal_id: null, location: 'us-east-1',
+    impact_category: 'reconnaissance',
+    severity_weight: 1,
+  },
+  {
+    event_id: 'ev-704',
+    platform: 'gcp',
+    timestamp: '2026-04-18T09:22:31Z',
+    api_action: 'storage.objects.get',
+    event_source: 'storage.googleapis.com',
+    source_ip: '45.33.32.156',
+    user_agent: 'google-cloud-sdk/458.0.1',
+    affected_resource: 'customer-exports/q1_customers.csv',
+    resource_type: 'gcs_bucket',
+    success: true,
+    error_code: null,
+    raw_data: {},
+    principal_id: 'terraform-deployer@shared-infra-prod.iam.gserviceaccount.com',
+    location: 'us-central1',
+    impact_category: 'data_access',
+    severity_weight: 2,
+  },
+  {
+    event_id: 'ev-705',
+    platform: 'gcp',
+    timestamp: '2026-04-18T09:23:10Z',
+    api_action: 'storage.objects.get',
+    event_source: 'storage.googleapis.com',
+    source_ip: '45.33.32.156',
+    user_agent: 'google-cloud-sdk/458.0.1',
+    affected_resource: 'customer-exports/q2_customers.csv',
+    resource_type: 'gcs_bucket',
+    success: true,
+    error_code: null,
+    raw_data: {},
+    principal_id: 'terraform-deployer@shared-infra-prod.iam.gserviceaccount.com',
+    location: 'us-central1',
+    impact_category: 'data_access',
+    severity_weight: 2,
+  },
+  {
+    event_id: 'ev-706',
+    platform: 'aws',
+    timestamp: '2026-04-18T09:31:55Z',
+    api_action: 'CreateAccessKey',
+    event_source: 'iam.amazonaws.com',
+    source_ip: '45.33.32.156',
+    user_agent: 'aws-cli/2.15.0',
+    affected_resource: 'AKIA****NEW1',
+    resource_type: 'AWS::IAM::AccessKey',
+    success: true,
+    error_code: null,
+    raw_data: {}, principal_id: null, location: 'us-east-1',
+    impact_category: 'privilege_escalation',
+    severity_weight: 4,
+  },
+]
+
 /* ─── shared events for incident 5 (Azure) ─────────────────────── */
 
 const INC5_EVENTS: ForensicEvent[] = [
@@ -281,14 +400,160 @@ const INC5_EVENTS: ForensicEvent[] = [
   }
 ]
 
+/* ─── shared events for incident 8 (Stripe) ────────────────────── */
+
+const STRIPE_EVENTS: ForensicEvent[] = [
+  {
+    event_id: 'ev-801',
+    platform: 'stripe',
+    timestamp: '2026-06-02T09:17:41Z',
+    api_action: 'charge.succeeded',
+    event_source: 'api.stripe.com',
+    // Stripe events carry no source IP. Showing null is honest; inventing one
+    // would put a false fact in a forensic report.
+    source_ip: null,
+    user_agent: null,
+    affected_resource: 'ch_3Nk2a',
+    resource_type: 'charge',
+    success: true,
+    error_code: null,
+    raw_data: { data: { object: { amount: 74000, currency: 'usd' } } },
+    principal_id: 'req_8fk2Lm',
+    location: null,
+    impact_category: 'financial_abuse',
+    severity_weight: 4,
+  },
+  {
+    event_id: 'ev-802',
+    platform: 'stripe',
+    timestamp: '2026-06-02T09:22:03Z',
+    api_action: 'charge.succeeded',
+    event_source: 'api.stripe.com',
+    source_ip: null,
+    user_agent: null,
+    affected_resource: 'ch_3Nk2b',
+    resource_type: 'charge',
+    success: true,
+    error_code: null,
+    raw_data: { data: { object: { amount: 50000, currency: 'usd' } } },
+    principal_id: 'req_9gl3Mn',
+    location: null,
+    impact_category: 'financial_abuse',
+    severity_weight: 4,
+  },
+  {
+    event_id: 'ev-803',
+    platform: 'stripe',
+    timestamp: '2026-06-02T09:31:18Z',
+    api_action: 'account.external_account.created',
+    event_source: 'api.stripe.com',
+    source_ip: null,
+    user_agent: null,
+    affected_resource: 'ba_1PqR4x',
+    resource_type: 'bank_account',
+    success: true,
+    error_code: null,
+    raw_data: { data: { object: { id: 'ba_1PqR4x', object: 'bank_account' } } },
+    principal_id: 'req_0hm4No',
+    location: null,
+    // The real attack: redirecting future payouts survives key rotation.
+    impact_category: 'privilege_escalation',
+    severity_weight: 4,
+  },
+]
+
 /* ─── incidents ───────────────────────────────────────────────── */
+
+const TWILIO_EVENTS: ForensicEvent[] = [
+  {
+    event_id: 'ev-1001',
+    platform: 'twilio',
+    timestamp: '2026-06-09T12:04:12Z',
+    api_action: 'message.sent',
+    event_source: 'api.twilio.com',
+    source_ip: null,
+    user_agent: null,
+    affected_resource: '+15551234567',
+    resource_type: 'message',
+    success: true,
+    error_code: null,
+    raw_data: {
+      sid: 'SM8a2d1f4c',
+      from: '+15557654321',
+      to: '+15551234567',
+      status: 'sent',
+      price: 0.0079,
+      price_unit: 'USD',
+      num_segments: '1',
+      body_length: 42,
+    },
+    principal_id: 'AC9f8e7d6c5b4a39281706f5e4d3c2b1a0',
+    location: null,
+    impact_category: 'communication_abuse',
+    severity_weight: 2,
+  },
+  {
+    event_id: 'ev-1002',
+    platform: 'twilio',
+    timestamp: '2026-06-09T12:06:55Z',
+    api_action: 'message.failed',
+    event_source: 'api.twilio.com',
+    source_ip: null,
+    user_agent: null,
+    affected_resource: '+15559876543',
+    resource_type: 'message',
+    success: false,
+    error_code: '30007',
+    raw_data: {
+      sid: 'SM9b3e2g5d',
+      from: '+15557654321',
+      to: '+15559876543',
+      status: 'failed',
+      price: 0,
+      price_unit: 'USD',
+      num_segments: '1',
+      body_length: 38,
+    },
+    principal_id: 'AC9f8e7d6c5b4a39281706f5e4d3c2b1a0',
+    location: null,
+    impact_category: 'communication_abuse',
+    severity_weight: 2,
+  },
+  {
+    event_id: 'ev-1003',
+    platform: 'twilio',
+    timestamp: '2026-06-09T12:11:20Z',
+    api_action: 'call.completed',
+    event_source: 'api.twilio.com',
+    source_ip: null,
+    user_agent: null,
+    affected_resource: '+15550111222',
+    resource_type: 'call',
+    success: true,
+    error_code: null,
+    raw_data: {
+      sid: 'CA7c4f3h6e',
+      from: '+15557654321',
+      to: '+15550111222',
+      status: 'completed',
+      duration: '63',
+      price: 0.021,
+      price_unit: 'USD',
+      direction: 'outbound-api',
+    },
+    principal_id: 'AC9f8e7d6c5b4a39281706f5e4d3c2b1a0',
+    location: null,
+    impact_category: 'communication_abuse',
+    severity_weight: 3,
+  },
+]
 
 export const MOCK_INCIDENTS: IncidentRecord[] = [
   {
     incident_id: 'inc-001',
     credential_type: 'AWS_ACCESS_KEY',
     credential_hint: 'AKIA***XYZ',
-    access_key_id: '', platform: 'aws', gcp_project_id: null, azure_tenant_id: null, azure_subscription_id: null,
+    access_key_id: '', principal_id: null, platform: 'aws', gcp_project_id: null, azure_tenant_id: null, azure_subscription_id: null,
     repo_url: 'https://github.com/dev-team/infrastructure',
     commit_hash: 'a3f8e7d9b2c1045f6e8a9b0c1d2e3f4a5b6c7d8e',
     exposure_start: '2026-03-17T14:23:41Z',
@@ -307,13 +572,19 @@ export const MOCK_INCIDENTS: IncidentRecord[] = [
       'Run git-secrets or trufflehog across full commit history',
     ],
     gdpr_flag: true,
-    estimated_financial_impact: 'EC2 instances: $0.02/hr × 2 (running since exposure). Data transfer: ~$0.21 (2.3 GB egress). Total accruing: ~$0.25+',
+    estimated_financial_impact: 'EC2: 2x t2.micro at $0.02/hr. Data transfer: estimated $0.01',
+    financial_impact_lines: [
+      { platform: 'aws', kind: 'compute', label: 'EC2', text: 'EC2: 2x t2.micro at $0.02/hr',
+        amount: 0.0232, currency: 'USD', unit: 'hour', quantity: 2, actual: false },
+      { platform: 'aws', kind: 'egress', label: 'Data transfer', text: 'Data transfer: estimated $0.01',
+        amount: 0.009, currency: 'USD', unit: null, quantity: 1, actual: false },
+    ],
   },
   {
     incident_id: 'inc-002',
     credential_type: 'AWS_ACCESS_KEY',
     credential_hint: 'AKIA***ABC',
-    access_key_id: '', platform: 'aws', gcp_project_id: null, azure_tenant_id: null, azure_subscription_id: null,
+    access_key_id: '', principal_id: null, platform: 'aws', gcp_project_id: null, azure_tenant_id: null, azure_subscription_id: null,
     repo_url: 'https://github.com/yash-dev/ml-project',
     commit_hash: 'b9c3d2e1f0a8b7c6d5e4f3a2b1c0d9e8f7a6b5c4',
     exposure_start: '2026-03-18T09:11:55Z',
@@ -335,7 +606,7 @@ export const MOCK_INCIDENTS: IncidentRecord[] = [
     incident_id: 'inc-003',
     credential_type: 'AWS_ACCESS_KEY',
     credential_hint: 'AKIA***QRS',
-    access_key_id: '', platform: 'aws', gcp_project_id: null, azure_tenant_id: null, azure_subscription_id: null,
+    access_key_id: '', principal_id: null, platform: 'aws', gcp_project_id: null, azure_tenant_id: null, azure_subscription_id: null,
     repo_url: 'https://github.com/breachtrace-demo/web-app',
     commit_hash: 'c1d2e3f4a5b6c7d8e9f0a1b2c3d4e5f6a7b8c9d0',
     exposure_start: '2026-03-19T22:00:58Z',
@@ -355,13 +626,17 @@ export const MOCK_INCIDENTS: IncidentRecord[] = [
       'File GDPR / data breach notification with your supervisory authority',
     ],
     gdpr_flag: true,
-    estimated_financial_impact: 'Data transfer: ~$0.08 (800 MB egress). Potential regulatory fines: €10M–€20M under GDPR Article 83(5) if personal data confirmed.',
+    estimated_financial_impact: 'Data transfer: estimated $0.02',
+    financial_impact_lines: [
+      { platform: 'aws', kind: 'egress', label: 'Data transfer', text: 'Data transfer: estimated $0.02',
+        amount: 0.018, currency: 'USD', unit: null, quantity: 2, actual: false },
+    ],
   },
   {
     incident_id: 'inc-004',
     credential_type: 'AWS_ACCESS_KEY',
     credential_hint: 'AKIA***MNO',
-    access_key_id: '', platform: 'aws', gcp_project_id: null, azure_tenant_id: null, azure_subscription_id: null,
+    access_key_id: '', principal_id: null, platform: 'aws', gcp_project_id: null, azure_tenant_id: null, azure_subscription_id: null,
     repo_url: 'https://github.com/shashank-r/backend-api',
     commit_hash: 'd2e3f4a5b6c7d8e9f0a1b2c3d4e5f6a7b8c9d0e1',
     exposure_start: '2026-03-29T07:44:12Z',
@@ -378,7 +653,7 @@ export const MOCK_INCIDENTS: IncidentRecord[] = [
     incident_id: 'inc-005',
     credential_type: 'GCP_SERVICE_ACCOUNT',
     credential_hint: 'gcp-sa-***',
-    access_key_id: null, platform: 'gcp', gcp_project_id: 'my-gcp-project-123', azure_tenant_id: null, azure_subscription_id: null,
+    access_key_id: null, principal_id: 'leaked-sa@my-gcp-project-123.iam.gserviceaccount.com', platform: 'gcp', gcp_project_id: 'my-gcp-project-123', azure_tenant_id: null, azure_subscription_id: null,
     repo_url: 'https://github.com/dev-team/gcp-infra',
     commit_hash: 'e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4',
     exposure_start: '2026-04-10T10:55:00Z',
@@ -393,13 +668,17 @@ export const MOCK_INCIDENTS: IncidentRecord[] = [
       'Audit GCP Cloud Audit Logs for further unauthorized access'
     ],
     gdpr_flag: false,
-    estimated_financial_impact: 'Compute instances: $0.10/hr. Total accruing: ~$0.50+',
+    estimated_financial_impact: 'Compute Engine: 1x e2-micro at $0.01/hr',
+    financial_impact_lines: [
+      { platform: 'gcp', kind: 'compute', label: 'Compute Engine', text: 'Compute Engine: 1x e2-micro at $0.01/hr',
+        amount: 0.0084, currency: 'USD', unit: 'hour', quantity: 1, actual: false },
+    ],
   },
   {
     incident_id: 'inc-006',
     credential_type: 'AZURE_SERVICE_PRINCIPAL',
     credential_hint: 'az-sp-***',
-    access_key_id: null, platform: 'azure', gcp_project_id: null, azure_tenant_id: 'tenant-1234', azure_subscription_id: 'sub-5678',
+    access_key_id: null, principal_id: '3f8b2c1a-9d4e-4f7a-8b6c-1e2d3f4a5b6c', platform: 'azure', gcp_project_id: null, azure_tenant_id: 'tenant-1234', azure_subscription_id: 'sub-5678',
     repo_url: 'https://github.com/dev-team/azure-infra',
     commit_hash: 'f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5',
     exposure_start: '2026-04-12T15:10:00Z',
@@ -414,36 +693,193 @@ export const MOCK_INCIDENTS: IncidentRecord[] = [
       'Rotate storage account keys that were listed by the attacker'
     ],
     gdpr_flag: true,
-    estimated_financial_impact: 'Virtual machines: $0.20/hr. Total accruing: ~$1.00+',
+    estimated_financial_impact: 'Virtual Machines: 1x B1s at $0.01/hr',
+    financial_impact_lines: [
+      { platform: 'azure', kind: 'compute', label: 'Virtual Machines', text: 'Virtual Machines: 1x B1s at $0.01/hr',
+        amount: 0.0104, currency: 'USD', unit: 'hour', quantity: 1, actual: false },
+    ],
+  },
+  {
+    incident_id: 'inc-007',
+    credential_type: 'AWS_ACCESS_KEY',
+    credential_hint: 'AKIA****7QZM',
+    access_key_id: 'AKIAZZ4NPLMX9QW27QZM',
+    principal_id: null,
+    platform: 'aws',
+    gcp_project_id: 'shared-infra-prod',
+    azure_tenant_id: null,
+    azure_subscription_id: null,
+    repo_url: 'https://github.com/dev-team/terraform-multicloud',
+    commit_hash: 'a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4',
+    exposure_start: '2026-04-18T09:12:00Z',
+    exposure_end: '2026-04-18T09:41:00Z',
+    status: 'complete',
+    events: INC7_EVENTS,
+    overall_severity: 'CRITICAL',
+    report_text: `A single Terraform variables file exposed both an AWS access key and a GCP service account key. The same source address used both within four minutes of the commit.\n\nOn AWS the key was used for reconnaissance and then to create a new IAM access key — a persistence foothold that survives rotating the original credential. On GCP the same actor read three objects from a customer data bucket.\n\nRotating the leaked keys alone is not sufficient: the attacker-created IAM key must be deleted separately.`,
+    remediation_steps: [
+      'Delete the attacker-created IAM access key AKIA****NEW1 before rotating anything else',
+      'Rotate the exposed AWS access key AKIA****7QZM',
+      'Revoke the GCP service account key for terraform-deployer@shared-infra-prod.iam.gserviceaccount.com',
+      'Review the three objects read from customer-exports for GDPR notification requirements',
+      'Purge the credential from git history and force-push the rewritten branch',
+    ],
+    gdpr_flag: true,
+    estimated_financial_impact: 'Data transfer: estimated $0.01. Cloud Storage egress: estimated $0.04',
+    financial_impact_lines: [
+      { platform: 'aws', kind: 'egress', label: 'Data transfer', text: 'Data transfer: estimated $0.01',
+        amount: 0.009, currency: 'USD', unit: null, quantity: 1, actual: false },
+      { platform: 'gcp', kind: 'egress', label: 'Cloud Storage egress', text: 'Cloud Storage egress: estimated $0.04',
+        amount: 0.036, currency: 'USD', unit: null, quantity: 3, actual: false },
+    ],
+  },
+
+  /* ─── incident 8 (Stripe — real money on the timeline) ────────── */
+  {
+    incident_id: 'inc-008',
+    credential_type: 'stripe_secret_key',
+    credential_hint: 'sk_live_****p7dc',
+    access_key_id: null,
+    principal_id: 'sk_live_4eC39HqLyjWDarjtT1zdp7dc',
+    platform: 'stripe',
+    gcp_project_id: null,
+    azure_tenant_id: null,
+    azure_subscription_id: null,
+    forensic_tier: 1,
+    unavailable_reason: null,
+    repo_url: 'https://github.com/dev-team/checkout-service',
+    commit_hash: 'e4f19c7a2b8d6053f1a9c4e7b2d5f8a1c4e7b2d5',
+    exposure_start: '2026-06-02T09:14:22Z',
+    exposure_end: '2026-06-02T09:41:05Z',
+    status: 'complete',
+    events: STRIPE_EVENTS,
+    overall_severity: 'CRITICAL',
+    report_text: `A live Stripe secret key was committed to a public repository and used within three minutes.\n\nThe key created two charges totalling 1,240.00 USD and then added a new external bank account to the connected account — the setup step for redirecting future payouts. The bank account change is the more serious finding: rotating the API key does not remove it.\n\nCharges can be refunded. A payout redirected to an attacker-controlled account cannot.`,
+    remediation_steps: [
+      'Remove the external bank account added at 09:31 UTC from the Stripe dashboard immediately',
+      'Roll the exposed secret key sk_live_****p7dc in the Stripe dashboard',
+      'Refund charges ch_3Nk2a and ch_3Nk2b totalling 1,240.00 USD',
+      'Enable two-factor authentication on the Stripe account',
+      'Purge the key from git history in dev-team/checkout-service',
+    ],
+    gdpr_flag: false,
+    estimated_financial_impact: 'Stripe: 1,240.00 USD charged (2 transaction(s))',
+    // Byte-identical to compute_financial_impact_lines() output for the two
+    // charge events above (74000 + 50000 cents). If this drifts, mock mode
+    // stops exercising the shape live mode produces.
+    financial_impact_lines: [
+      { platform: 'stripe', kind: 'charge', label: 'Stripe',
+        text: 'Stripe: 1,240.00 USD charged (2 transaction(s))',
+        amount: 1240, currency: 'USD', unit: null, quantity: 2, actual: true },
+    ],
+  },
+
+  /* ─── incident 9 (Tier 2 — the honest "we cannot know" case) ──── */
+  {
+    incident_id: 'inc-009',
+    credential_type: 'twilio_account_sid',
+    credential_hint: 'AC9f****b1a0',
+    access_key_id: null,
+    principal_id: 'AC9f8e7d6c5b4a39281706f5e4d3c2b1a0',
+    platform: 'twilio',
+    gcp_project_id: null,
+    azure_tenant_id: null,
+    azure_subscription_id: null,
+    forensic_tier: 1,
+    unavailable_reason: null,
+    repo_url: 'https://github.com/dev-team/notification-worker',
+    commit_hash: '9c7a2b8d6053f1a9c4e7b2d5f8a1c4e7b2d5f8a1',
+    exposure_start: '2026-06-09T12:02:44Z',
+    exposure_end: '2026-06-09T12:22:18Z',
+    status: 'complete',
+    events: TWILIO_EVENTS,
+    overall_severity: 'HIGH',
+    report_text: `A Twilio Account SID and auth token were committed to a public repository and used shortly after exposure.\n\nThe credential was used to send outbound SMS messages and place an outbound API call. Twilio exposes message and call resources, so communication abuse and direct usage cost are visible. Read-only access to message bodies is not represented in these logs, so absence of read events is not proof that no OTP or PII was viewed.\n\nRotate the credential pair and review messaging/call logs for destinations outside expected customer regions.`,
+    remediation_steps: [
+      'Rotate the exposed Twilio auth token for AC9f****b1a0',
+      'Disable or restrict the affected Messaging Service while reviewing outbound traffic',
+      'Review destination numbers +15551234567, +15559876543, and +15550111222',
+      'Check Twilio usage and billing dashboards for additional SMS pumping activity',
+      'Purge the Twilio credentials from git history in dev-team/notification-worker',
+    ],
+    gdpr_flag: true,
+    estimated_financial_impact: 'Twilio: 2 message/call item(s), estimated $0.03',
+    financial_impact_lines: [
+      { platform: 'twilio', kind: 'messaging', label: 'Twilio',
+        text: 'Twilio: 2 message/call item(s), estimated $0.03',
+        amount: 0.0289, currency: 'USD', unit: null, quantity: 2, actual: false },
+    ],
+  },
+
+  {
+    incident_id: 'inc-010',
+    credential_type: 'github_pat',
+    credential_hint: 'ghp_16C7****B4a',
+    access_key_id: null,
+    principal_id: null,
+    platform: 'github',
+    gcp_project_id: null,
+    azure_tenant_id: null,
+    azure_subscription_id: null,
+    // No queryable audit log — the panel replaces the timeline entirely.
+    forensic_tier: 2,
+    unavailable_reason:
+      'GitHub exposes per-token audit logs only to Enterprise organisations. Activity performed with a personal access token cannot be reconstructed.',
+    repo_url: 'https://github.com/dev-team/ci-scripts',
+    commit_hash: '7b2d5f8a1c4e7b2d5f8a1c4e7b2d5f8a1c4e7b2d',
+    exposure_start: '2026-06-14T16:02:10Z',
+    exposure_end: null,
+    status: 'complete',
+    events: [],
+    // Deliberately null: we do not know the blast radius, and claiming LOW
+    // would be a fabrication.
+    overall_severity: null,
+    report_text: `## Credential exposed\n\nA **github pat** (\`ghp_16C7****B4a\`) was committed to https://github.com/dev-team/ci-scripts.\n\n## Why there is no activity timeline\n\nGitHub exposes per-token audit logs only to Enterprise organisations. Activity performed with a personal access token cannot be reconstructed.\n\n**This is not evidence that the credential went unused.** It means the platform provides no way to find out. Treat the credential as compromised and rotate it immediately.`,
+    remediation_steps: [
+      'Revoke the exposed github pat (ghp_16C7****B4a) in the provider\'s console now',
+      'Issue a replacement credential and update every deployment that used it',
+      'Purge the secret from git history in https://github.com/dev-team/ci-scripts',
+      'Review any provider-side billing or usage dashboards for unexpected activity during the exposure window',
+      'Enable secret scanning on the repository to catch the next one before push',
+    ],
+    gdpr_flag: false,
+    estimated_financial_impact: null,
   },
 ]
 
+
 /* ─── research experiments ─────────────────────────────────────── */
 
-export interface ExperimentRun {
-  run_id: string
-  access_key_id: string | null
-  detection_time_s: number | null
-  report_time_s: number | null
-  api_calls: string[]
-  expected_severity: string | null
-  actual_severity: string | null
-  status: string | null
-  created_at: string
+/**
+ * Experiment-run factories.
+ *
+ * The three previous copies (makeRun / makeGcpRun / makeAzureRun) differed only
+ * by the credential-id prefix. One factory with a platform argument keeps the
+ * `platform` field — which the per-platform chart groups on — impossible to
+ * forget on a new run.
+ */
+const KEY_PREFIX: Record<string, string> = {
+  aws: 'AKIA',
+  gcp: 'gcp-sa-',
+  azure: 'az-sp-',
+  stripe: 'sk_live_',
+  twilio: 'AC',
 }
 
 function makeRun(
   i: number,
+  platform: string,
   key: string,
   detMs: number,
   repMs: number,
   calls: string[],
   expSev: string,
-  actSev: string
+  actSev: string,
+  eventCount = 3,
 ): ExperimentRun {
   return {
     run_id: `run-${String(i).padStart(3, '0')}`,
-    access_key_id: `AKIA${key}`,
+    access_key_id: `${KEY_PREFIX[platform] ?? ''}${key}`,
     detection_time_s: detMs,
     report_time_s: repMs,
     api_calls: calls,
@@ -451,94 +887,59 @@ function makeRun(
     actual_severity: actSev,
     status: 'complete',
     created_at: `2026-03-29T${String(8 + Math.floor(i / 4)).padStart(2, '0')}:${String((i * 7) % 60).padStart(2, '0')}:00Z`,
+    platform,
+    run_number: i,
+    event_count: eventCount,
+    external_use_detected: false,
   }
 }
 
-function makeGcpRun(
-  i: number,
-  key: string,
-  detMs: number,
-  repMs: number,
-  calls: string[],
-  expSev: string,
-  actSev: string
-): ExperimentRun {
-  return {
-    run_id: `run-${String(i).padStart(3, '0')}`,
-    access_key_id: `gcp-sa-${key}`,
-    detection_time_s: detMs,
-    report_time_s: repMs,
-    api_calls: calls,
-    expected_severity: expSev,
-    actual_severity: actSev,
-    status: 'complete',
-    created_at: `2026-03-29T${String(8 + Math.floor(i / 4)).padStart(2, '0')}:${String((i * 7) % 60).padStart(2, '0')}:00Z`,
-  }
-}
-
-function makeAzureRun(
-  i: number,
-  key: string,
-  detMs: number,
-  repMs: number,
-  calls: string[],
-  expSev: string,
-  actSev: string
-): ExperimentRun {
-  return {
-    run_id: `run-${String(i).padStart(3, '0')}`,
-    access_key_id: `az-sp-${key}`,
-    detection_time_s: detMs,
-    report_time_s: repMs,
-    api_calls: calls,
-    expected_severity: expSev,
-    actual_severity: actSev,
-    status: 'complete',
-    created_at: `2026-03-29T${String(8 + Math.floor(i / 4)).padStart(2, '0')}:${String((i * 7) % 60).padStart(2, '0')}:00Z`,
-  }
-}
+const makeGcpRun = (i: number, key: string, det: number, rep: number, calls: string[], exp: string, act: string) =>
+  makeRun(i, 'gcp', key, det, rep, calls, exp, act)
+const makeAzureRun = (i: number, key: string, det: number, rep: number, calls: string[], exp: string, act: string) =>
+  makeRun(i, 'azure', key, det, rep, calls, exp, act)
 
 export const MOCK_EXPERIMENT_RUNS: ExperimentRun[] = [
   // Group A — ListBuckets + DescribeInstances + GetCallerIdentity → LOW
-  makeRun(1, 'IOSFODNN7A001', 12.3, 28.1, ['ListBuckets', 'DescribeInstances', 'GetCallerIdentity'], 'LOW', 'LOW'),
-  makeRun(2, 'IOSFODNN7A002', 14.7, 31.4, ['ListBuckets', 'DescribeInstances', 'GetCallerIdentity'], 'LOW', 'LOW'),
-  makeRun(3, 'IOSFODNN7A003', 11.8, 29.7, ['ListBuckets', 'DescribeInstances', 'GetCallerIdentity'], 'LOW', 'LOW'),
-  makeRun(4, 'IOSFODNN7A004', 16.2, 34.8, ['ListBuckets', 'DescribeInstances', 'GetCallerIdentity'], 'LOW', 'LOW'),
-  makeRun(5, 'IOSFODNN7A005', 13.1, 27.9, ['ListBuckets', 'DescribeInstances', 'GetCallerIdentity'], 'LOW', 'LOW'),
-  makeRun(6, 'IOSFODNN7A006', 15.4, 33.2, ['ListBuckets', 'DescribeInstances', 'GetCallerIdentity'], 'LOW', 'LOW'),
-  makeRun(7, 'IOSFODNN7A007', 10.9, 26.5, ['ListBuckets', 'DescribeInstances', 'GetCallerIdentity'], 'LOW', 'LOW'),
-  makeRun(8, 'IOSFODNN7A008', 18.3, 38.1, ['ListBuckets', 'DescribeInstances', 'GetCallerIdentity'], 'LOW', 'LOW'),
-  makeRun(9, 'IOSFODNN7A009', 12.7, 30.3, ['ListBuckets', 'DescribeInstances', 'GetCallerIdentity'], 'LOW', 'LOW'),
-  makeRun(10, 'IOSFODNN7A010', 14.1, 31.8, ['ListBuckets', 'DescribeInstances', 'GetCallerIdentity'], 'LOW', 'LOW'),
-  makeRun(11, 'IOSFODNN7A011', 13.5, 28.9, ['ListBuckets', 'DescribeInstances', 'GetCallerIdentity'], 'LOW', 'LOW'),
-  makeRun(12, 'IOSFODNN7A012', 15.9, 35.7, ['ListBuckets', 'DescribeInstances', 'GetCallerIdentity'], 'LOW', 'LOW'),
+  makeRun(1, 'aws', 'IOSFODNN7A001', 12.3, 28.1, ['ListBuckets', 'DescribeInstances', 'GetCallerIdentity'], 'LOW', 'LOW'),
+  makeRun(2, 'aws', 'IOSFODNN7A002', 14.7, 31.4, ['ListBuckets', 'DescribeInstances', 'GetCallerIdentity'], 'LOW', 'LOW'),
+  makeRun(3, 'aws', 'IOSFODNN7A003', 11.8, 29.7, ['ListBuckets', 'DescribeInstances', 'GetCallerIdentity'], 'LOW', 'LOW'),
+  makeRun(4, 'aws', 'IOSFODNN7A004', 16.2, 34.8, ['ListBuckets', 'DescribeInstances', 'GetCallerIdentity'], 'LOW', 'LOW'),
+  makeRun(5, 'aws', 'IOSFODNN7A005', 13.1, 27.9, ['ListBuckets', 'DescribeInstances', 'GetCallerIdentity'], 'LOW', 'LOW'),
+  makeRun(6, 'aws', 'IOSFODNN7A006', 15.4, 33.2, ['ListBuckets', 'DescribeInstances', 'GetCallerIdentity'], 'LOW', 'LOW'),
+  makeRun(7, 'aws', 'IOSFODNN7A007', 10.9, 26.5, ['ListBuckets', 'DescribeInstances', 'GetCallerIdentity'], 'LOW', 'LOW'),
+  makeRun(8, 'aws', 'IOSFODNN7A008', 18.3, 38.1, ['ListBuckets', 'DescribeInstances', 'GetCallerIdentity'], 'LOW', 'LOW'),
+  makeRun(9, 'aws', 'IOSFODNN7A009', 12.7, 30.3, ['ListBuckets', 'DescribeInstances', 'GetCallerIdentity'], 'LOW', 'LOW'),
+  makeRun(10, 'aws', 'IOSFODNN7A010', 14.1, 31.8, ['ListBuckets', 'DescribeInstances', 'GetCallerIdentity'], 'LOW', 'LOW'),
+  makeRun(11, 'aws', 'IOSFODNN7A011', 13.5, 28.9, ['ListBuckets', 'DescribeInstances', 'GetCallerIdentity'], 'LOW', 'LOW'),
+  makeRun(12, 'aws', 'IOSFODNN7A012', 15.9, 35.7, ['ListBuckets', 'DescribeInstances', 'GetCallerIdentity'], 'LOW', 'LOW'),
 
   // Group B — GetObject + RunInstances → HIGH
-  makeRun(13, 'IOSFODNN7B001', 11.2, 42.6, ['GetObject', 'RunInstances'], 'HIGH', 'HIGH'),
-  makeRun(14, 'IOSFODNN7B002', 19.8, 51.3, ['GetObject', 'RunInstances'], 'HIGH', 'HIGH'),
-  makeRun(15, 'IOSFODNN7B003', 13.4, 44.9, ['GetObject', 'RunInstances'], 'HIGH', 'HIGH'),
-  makeRun(16, 'IOSFODNN7B004', 17.6, 48.2, ['GetObject', 'RunInstances'], 'HIGH', 'HIGH'),
-  makeRun(17, 'IOSFODNN7B005', 12.0, 40.7, ['GetObject', 'RunInstances'], 'HIGH', 'HIGH'),
-  makeRun(18, 'IOSFODNN7B006', 21.3, 54.1, ['GetObject', 'RunInstances'], 'HIGH', 'HIGH'),
-  makeRun(19, 'IOSFODNN7B007', 14.8, 43.5, ['GetObject', 'RunInstances'], 'HIGH', 'HIGH'),
-  makeRun(20, 'IOSFODNN7B008', 16.5, 47.0, ['GetObject', 'RunInstances'], 'HIGH', 'MEDIUM'),  // misclassification
-  makeRun(21, 'IOSFODNN7B009', 11.9, 41.3, ['GetObject', 'RunInstances'], 'HIGH', 'HIGH'),
-  makeRun(22, 'IOSFODNN7B010', 18.2, 49.8, ['GetObject', 'RunInstances'], 'HIGH', 'HIGH'),
-  makeRun(23, 'IOSFODNN7B011', 13.7, 45.6, ['GetObject', 'RunInstances'], 'HIGH', 'HIGH'),
-  makeRun(24, 'IOSFODNN7B012', 20.1, 52.9, ['GetObject', 'RunInstances'], 'HIGH', 'HIGH'),
-  makeRun(25, 'IOSFODNN7B013', 15.3, 46.4, ['GetObject', 'RunInstances'], 'HIGH', 'HIGH'),
+  makeRun(13, 'aws', 'IOSFODNN7B001', 11.2, 42.6, ['GetObject', 'RunInstances'], 'HIGH', 'HIGH'),
+  makeRun(14, 'aws', 'IOSFODNN7B002', 19.8, 51.3, ['GetObject', 'RunInstances'], 'HIGH', 'HIGH'),
+  makeRun(15, 'aws', 'IOSFODNN7B003', 13.4, 44.9, ['GetObject', 'RunInstances'], 'HIGH', 'HIGH'),
+  makeRun(16, 'aws', 'IOSFODNN7B004', 17.6, 48.2, ['GetObject', 'RunInstances'], 'HIGH', 'HIGH'),
+  makeRun(17, 'aws', 'IOSFODNN7B005', 12.0, 40.7, ['GetObject', 'RunInstances'], 'HIGH', 'HIGH'),
+  makeRun(18, 'aws', 'IOSFODNN7B006', 21.3, 54.1, ['GetObject', 'RunInstances'], 'HIGH', 'HIGH'),
+  makeRun(19, 'aws', 'IOSFODNN7B007', 14.8, 43.5, ['GetObject', 'RunInstances'], 'HIGH', 'HIGH'),
+  makeRun(20, 'aws', 'IOSFODNN7B008', 16.5, 47.0, ['GetObject', 'RunInstances'], 'HIGH', 'MEDIUM'),  // misclassification
+  makeRun(21, 'aws', 'IOSFODNN7B009', 11.9, 41.3, ['GetObject', 'RunInstances'], 'HIGH', 'HIGH'),
+  makeRun(22, 'aws', 'IOSFODNN7B010', 18.2, 49.8, ['GetObject', 'RunInstances'], 'HIGH', 'HIGH'),
+  makeRun(23, 'aws', 'IOSFODNN7B011', 13.7, 45.6, ['GetObject', 'RunInstances'], 'HIGH', 'HIGH'),
+  makeRun(24, 'aws', 'IOSFODNN7B012', 20.1, 52.9, ['GetObject', 'RunInstances'], 'HIGH', 'HIGH'),
+  makeRun(25, 'aws', 'IOSFODNN7B013', 15.3, 46.4, ['GetObject', 'RunInstances'], 'HIGH', 'HIGH'),
 
   // Group C — GetCallerIdentity only → LOW
-  makeRun(26, 'IOSFODNN7C001', 9.8, 22.3, ['GetCallerIdentity'], 'LOW', 'LOW'),
-  makeRun(27, 'IOSFODNN7C002', 10.2, 24.1, ['GetCallerIdentity'], 'LOW', 'LOW'),
-  makeRun(28, 'IOSFODNN7C003', 11.5, 25.8, ['GetCallerIdentity'], 'LOW', 'LOW'),
-  makeRun(29, 'IOSFODNN7C004', 8.9, 21.7, ['GetCallerIdentity'], 'LOW', 'LOW'),
-  makeRun(30, 'IOSFODNN7C005', 12.1, 26.4, ['GetCallerIdentity'], 'LOW', 'LOW'),
-  makeRun(31, 'IOSFODNN7C006', 9.4, 23.0, ['GetCallerIdentity'], 'LOW', 'LOW'),
-  makeRun(32, 'IOSFODNN7C007', 10.8, 24.9, ['GetCallerIdentity'], 'LOW', 'LOW'),
-  makeRun(33, 'IOSFODNN7C008', 11.3, 25.2, ['GetCallerIdentity'], 'LOW', 'LOW'),
-  makeRun(34, 'IOSFODNN7C009', 9.1, 22.8, ['GetCallerIdentity'], 'LOW', 'LOW'),
-  makeRun(35, 'IOSFODNN7C010', 10.5, 23.6, ['GetCallerIdentity'], 'LOW', 'LOW'),
+  makeRun(26, 'aws', 'IOSFODNN7C001', 9.8, 22.3, ['GetCallerIdentity'], 'LOW', 'LOW'),
+  makeRun(27, 'aws', 'IOSFODNN7C002', 10.2, 24.1, ['GetCallerIdentity'], 'LOW', 'LOW'),
+  makeRun(28, 'aws', 'IOSFODNN7C003', 11.5, 25.8, ['GetCallerIdentity'], 'LOW', 'LOW'),
+  makeRun(29, 'aws', 'IOSFODNN7C004', 8.9, 21.7, ['GetCallerIdentity'], 'LOW', 'LOW'),
+  makeRun(30, 'aws', 'IOSFODNN7C005', 12.1, 26.4, ['GetCallerIdentity'], 'LOW', 'LOW'),
+  makeRun(31, 'aws', 'IOSFODNN7C006', 9.4, 23.0, ['GetCallerIdentity'], 'LOW', 'LOW'),
+  makeRun(32, 'aws', 'IOSFODNN7C007', 10.8, 24.9, ['GetCallerIdentity'], 'LOW', 'LOW'),
+  makeRun(33, 'aws', 'IOSFODNN7C008', 11.3, 25.2, ['GetCallerIdentity'], 'LOW', 'LOW'),
+  makeRun(34, 'aws', 'IOSFODNN7C009', 9.1, 22.8, ['GetCallerIdentity'], 'LOW', 'LOW'),
+  makeRun(35, 'aws', 'IOSFODNN7C010', 10.5, 23.6, ['GetCallerIdentity'], 'LOW', 'LOW'),
 
   // Group D — GCP storage.buckets.list + compute.instances.insert → HIGH
   makeGcpRun(36, 'GCP001', 14.2, 38.6, ['storage.buckets.list', 'compute.instances.insert'], 'HIGH', 'HIGH'),
@@ -581,3 +982,88 @@ export const MOCK_STATS = {
   public_dataset_avg_detection_time_s: 12.4,
   public_dataset_avg_report_time_s: 29.8,
 }
+
+
+/* ─── platform comparison ──────────────────────────────────────── */
+
+/**
+ * TypeScript mirror of `compare_platforms()` + `latency_by_platform()` in
+ * backend/research/analysis.py, so mock mode exercises the same shape the live
+ * endpoint returns.
+ *
+ * Three invariants must not drift from the Python:
+ *   1. Empty metrics are `null`, never 0 — analysis.py is explicit that a
+ *      platform with no timings must not appear as "0 seconds to detect".
+ *   2. Severity keys are uppercased.
+ *   3. Platforms with no timing data are OMITTED from
+ *      detection_latency_by_platform rather than included as 0.
+ */
+function summarize(values: number[]): MetricSummary {
+  if (values.length === 0) {
+    return { n: 0, mean: null, median: null, p95: null, min: null, max: null }
+  }
+  const sorted = [...values].sort((a, b) => a - b)
+  const round2 = (v: number) => Math.round(v * 100) / 100
+  const mid = Math.floor(sorted.length / 2)
+  return {
+    n: sorted.length,
+    mean: round2(sorted.reduce((a, b) => a + b, 0) / sorted.length),
+    median: round2(
+      sorted.length % 2 === 0 ? (sorted[mid - 1] + sorted[mid]) / 2 : sorted[mid],
+    ),
+    p95: round2(sorted[Math.min(Math.floor(sorted.length * 0.95), sorted.length - 1)]),
+    min: round2(sorted[0]),
+    max: round2(sorted[sorted.length - 1]),
+  }
+}
+
+export function computePlatformComparison(runs: ExperimentRun[]): PlatformComparison {
+  const grouped = new Map<string, ExperimentRun[]>()
+  for (const run of runs) {
+    const platform = (run.platform || 'aws').trim().toLowerCase()
+    grouped.set(platform, [...(grouped.get(platform) ?? []), run])
+  }
+
+  const byPlatform: Record<string, PlatformStats> = {}
+  const latency: Record<string, number> = {}
+
+  for (const [platform, platformRuns] of [...grouped.entries()].sort()) {
+    const nums = (pick: (r: ExperimentRun) => number | null | undefined) =>
+      platformRuns.map(pick).filter((v): v is number => typeof v === 'number')
+
+    const detection = summarize(nums(r => r.detection_time_s))
+    const completed = platformRuns.filter(r => r.status === 'complete')
+
+    const severity: Record<string, number> = {}
+    for (const run of platformRuns) {
+      const key = run.actual_severity ? run.actual_severity.toUpperCase() : 'unknown'
+      severity[key] = (severity[key] ?? 0) + 1
+    }
+
+    byPlatform[platform] = {
+      total_runs: platformRuns.length,
+      completed_runs: completed.length,
+      completion_rate:
+        platformRuns.length > 0
+          ? Math.round((completed.length / platformRuns.length) * 1000) / 1000
+          : 0,
+      detection_time_s: detection,
+      report_time_s: summarize(nums(r => r.report_time_s)),
+      first_use_time_s: summarize(nums(r => r.first_external_use_s)),
+      events_collected: summarize(nums(r => r.event_count)),
+      severity_distribution: severity,
+    }
+
+    // Omitted, not zeroed, when there is nothing to report.
+    if (detection.mean !== null) latency[platform] = detection.mean
+  }
+
+  return {
+    total_runs: runs.length,
+    by_platform: byPlatform,
+    detection_latency_by_platform: latency,
+  }
+}
+
+export const MOCK_PLATFORM_COMPARISON: PlatformComparison =
+  computePlatformComparison(MOCK_EXPERIMENT_RUNS)

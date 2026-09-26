@@ -26,6 +26,8 @@ from classifier.rules import classify_all_events
 from collectors.aws import AWSCloudTrailCollector
 from collectors.azure import AzureActivityLogCollector
 from collectors.gcp import GCPAuditLogCollector
+from collectors.stripe import StripeEventsCollector
+from collectors.twilio import TwilioUsageCollector
 from db.crud import (
     reset_incident_for_refresh,
     save_collection_status,
@@ -45,10 +47,16 @@ from scorer.severity import (
 logger = logging.getLogger(__name__)
 
 # Collector dispatch map — keyed by platform string
+# Tier 1 platforms only. A platform absent here has no queryable audit log, and
+# the pipeline must not attempt collection for it — see _TIER_TWO_PLATFORMS.
+# Firebase is intentionally missing: firebase_service_account maps to the "gcp"
+# platform in CREDENTIAL_TYPE_TO_PLATFORM and collects through GCPAuditLogCollector.
 _COLLECTOR_MAP = {
     "aws": AWSCloudTrailCollector,
     "gcp": GCPAuditLogCollector,
     "azure": AzureActivityLogCollector,
+    "stripe": StripeEventsCollector,
+    "twilio": TwilioUsageCollector,
 }
 
 # How far before the commit timestamp to look in CloudTrail.

@@ -1,0 +1,37 @@
+# BreachTrace backend (S3-R10)
+#
+# Python 3.12 is required, not preferred: the codebase uses PEP 604 unions
+# (`int | None`) in runtime-evaluated dataclass annotations, which raise
+# TypeError on 3.9.
+FROM python:3.12-slim
+
+# psycopg2-binary ships wheels, but build-essential + libpq-dev keep the image
+# buildable if a dependency ever needs to compile from source.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends build-essential libpq-dev curl \
+    && rm -rf /var/lib/apt/lists/*
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1
+
+WORKDIR /app
+
+# Copy requirements first so dependency layers cache across code changes.
+COPY backend/requirements.txt backend/requirements.txt
+RUN pip install --upgrade pip && pip install -r backend/requirements.txt
+
+COPY backend/ ./backend/
+COPY pytest.ini ./
+
+# main.py does `from routers import ...`, so backend/ must be the working
+# directory AND on the import path.
+WORKDIR /app/backend
+ENV PYTHONPATH=/app/backend
+
+EXPOSE 8000
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
+    CMD curl -fsS http://localhost:8000/ || exit 1
+
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]

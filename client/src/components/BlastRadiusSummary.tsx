@@ -1,4 +1,5 @@
 import type { IncidentRecord, ForensicEvent } from '../types'
+import { derivePlatform, PLATFORM_META, type Platform } from '@/lib/platform'
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
 import SeverityBadge from './SeverityBadge'
 
@@ -47,12 +48,48 @@ function groupByCategory(events: ForensicEvent[]) {
   }, {})
 }
 
+/**
+ * Highest severity weight seen for each category in this incident, so "highest
+ * risk" can be chosen by severity rather than by how often something happened.
+ */
+function peakSeverityByCategory(events: ForensicEvent[]) {
+  return events.reduce<Record<string, number>>((acc, e) => {
+    const cat = e.impact_category ?? 'unclassified'
+    acc[cat] = Math.max(acc[cat] ?? 0, e.severity_weight ?? 0)
+    return acc
+  }, {})
+}
+
+/** Per-platform event counts, in a stable display order. */
+function groupByPlatform(events: ForensicEvent[]) {
+  const counts = events.reduce<Partial<Record<Platform, number>>>((acc, e) => {
+    const p = derivePlatform(e)
+    acc[p] = (acc[p] ?? 0) + 1
+    return acc
+  }, {})
+  return (['aws', 'gcp', 'azure', 'stripe', 'twilio'] as Platform[])
+    .filter(p => (counts[p] ?? 0) > 0)
+    .map(p => ({ platform: p, count: counts[p] as number }))
+}
+
 const BlastRadiusSummary: React.FC<Props> = ({ incident }) => {
   const { events, overall_severity } = incident
   const cats = groupByCategory(events)
+  const peaks = peakSeverityByCategory(events)
   const total = events.length
   const entries = Object.entries(cats).sort((a, b) => b[1] - a[1])
-  const worstCat = entries[0]?.[0] ?? null
+
+  // Highest risk is the most SEVERE category, not the most frequent one.
+  // Counting alone reported "reconnaissance" as the headline risk on incidents
+  // that also contained privilege escalation, simply because recon is noisier.
+  const worstCat =
+    entries.length === 0
+      ? null
+      : entries
+          .map(([cat, count]) => ({ cat, count, peak: peaks[cat] ?? 0 }))
+          .sort((a, b) => (b.peak - a.peak) || (b.count - a.count))[0].cat
+
+  const platformBreakdown = groupByPlatform(events)
 
   return (
     <Card>
@@ -69,24 +106,41 @@ const BlastRadiusSummary: React.FC<Props> = ({ incident }) => {
           </p>
         ) : (
           <div className="space-y-4">
-            {/* Platform + total */}
+            {/* Per-platform breakdown. Events are attributed to the platform
+                that logged them, not to the incident's own credential type — a
+                single exposure can produce events on more than one platform. */}
             <div
-              className="flex items-center justify-between text-xs pb-3 border-b"
+              className="space-y-1.5 pb-3 border-b"
               style={{ borderColor: 'var(--color-border)' }}
             >
-              <span
-                className="font-semibold uppercase tracking-wider"
-                style={{ 
-                  color: incident.platform?.toLowerCase() === 'gcp' ? 'var(--color-sev-blue)' : 
-                         incident.platform?.toLowerCase() === 'azure' ? 'var(--color-sev-teal)' : 
-                         'var(--color-sev-orange)' 
-                }}
-              >
-                {incident.platform?.toLowerCase() === 'gcp' ? 'GCP Cloud Audit Logs' : 
-                 incident.platform?.toLowerCase() === 'azure' ? 'Azure Activity Log' : 
-                 'AWS CloudTrail'}
-              </span>
-              <span className="font-mono font-semibold">{total} events</span>
+              {platformBreakdown.map(({ platform, count }) => {
+                const meta = PLATFORM_META[platform]
+                return (
+                  <div key={platform} className="flex items-center justify-between text-xs">
+                    <span
+                      className="font-semibold uppercase tracking-wider"
+                      style={{ color: meta.color }}
+                    >
+                      {meta.label} {meta.auditLog}
+                    </span>
+                    <span className="font-mono font-semibold">{count} events</span>
+                  </div>
+                )
+              })}
+              {platformBreakdown.length > 1 && (
+                <div
+                  className="flex items-center justify-between text-xs pt-1.5 border-t"
+                  style={{ borderColor: 'var(--color-border)' }}
+                >
+                  <span
+                    className="font-semibold uppercase tracking-wider"
+                    style={{ color: 'var(--color-muted-foreground)' }}
+                  >
+                    Total
+                  </span>
+                  <span className="font-mono font-semibold">{total} events</span>
+                </div>
+              )}
             </div>
 
             {/* Category rows */}

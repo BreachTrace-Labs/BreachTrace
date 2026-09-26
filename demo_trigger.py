@@ -6,10 +6,19 @@ simulated credential-leak incidents and watch them flow through the full
 pipeline.
 
 Usage:
-    python demo_trigger.py            # fires all three platforms
-    python demo_trigger.py aws        # AWS only
-    python demo_trigger.py gcp        # GCP only
-    python demo_trigger.py azure      # Azure only
+    python demo_trigger.py                   # fires all five platforms
+    python demo_trigger.py aws               # AWS only
+    python demo_trigger.py gcp               # GCP only
+    python demo_trigger.py azure             # Azure only
+    python demo_trigger.py stripe            # Stripe only
+    python demo_trigger.py twilio            # Twilio only
+
+Stripe and Twilio actually query their live APIs during collection, so the
+collector needs real (test-mode/trial) credentials in .env — STRIPE_API_KEY,
+TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN — even though the *leaked* key below is
+a synthetic placeholder used only to trip the detector. Without those set,
+the incident is still created and shows up on the dashboard, but its pipeline
+stage ends in 'error' instead of 'complete'.
 """
 import json
 import sys
@@ -45,15 +54,39 @@ GCP_DIFF = (
 )
 
 # ── Azure ──────────────────────────────────────────────────────────────────────
-# Replace these placeholders with values from your Azure app registrations.
-AZURE_CLIENT_ID     = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"  # experiment app client ID
-AZURE_CLIENT_SECRET = "AzureExperimentSecret~ReplaceMe.12345"  # 34+ chars
+# Service Principal Object ID from Enterprise Applications (matches Activity Log caller field)
+AZURE_CLIENT_ID     = "2892686f-f224-4bfc-b698-bb1d461397be"
+AZURE_CLIENT_SECRET = "ecb7faec-3299-4c37-aaa9-8cc81db3912a"
 
 AZURE_DIFF = (
     f'+  # Azure service principal credentials\n'
     f'+  AZURE_CLIENT_ID={AZURE_CLIENT_ID}\n'
     f'+  AZURE_CLIENT_SECRET={AZURE_CLIENT_SECRET}\n'
     f'+  AZURE_TENANT_ID=ffffffff-0000-1111-2222-333333333333\n'
+)
+
+# ── Stripe ─────────────────────────────────────────────────────────────────────
+# Synthetic key: matches the sk_test_ pattern so the detector fires. Replace
+# with a real Stripe test-mode secret key (dashboard → Developers → API keys)
+# if you want the collector to return real Events API activity.
+STRIPE_SECRET_KEY = "sk_test_51NcX9kLZ8mQoT4vJ2wRbYfDgHjKpQrStUvWxYz1234"
+
+STRIPE_DIFF = (
+    f"+  # Stripe API key — do not commit\n"
+    f"+  STRIPE_SECRET_KEY={STRIPE_SECRET_KEY}\n"
+)
+
+# ── Twilio ─────────────────────────────────────────────────────────────────────
+# Synthetic SID + token: match the AC + 32-hex pattern with nearby context
+# keywords so the detector fires. Replace with your real trial Account SID +
+# Auth Token (twilio.com/console) for the collector to return real activity.
+TWILIO_ACCOUNT_SID = "ACa1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4"
+TWILIO_AUTH_TOKEN = "f6e5d4c3b2a1f6e5d4c3b2a1f6e5d4c3"
+
+TWILIO_DIFF = (
+    f"+  # Twilio credentials — do not commit\n"
+    f"+  TWILIO_ACCOUNT_SID={TWILIO_ACCOUNT_SID}\n"
+    f"+  TWILIO_AUTH_TOKEN={TWILIO_AUTH_TOKEN}\n"
 )
 
 
@@ -92,7 +125,7 @@ def trigger(platform: str, diff_text: str, extra: dict | None = None) -> dict:
 
 
 def main():
-    targets = sys.argv[1:] if len(sys.argv) > 1 else ["aws", "gcp", "azure"]
+    targets = sys.argv[1:] if len(sys.argv) > 1 else ["aws", "gcp", "azure", "stripe", "twilio"]
 
     if "aws" in targets:
         trigger("aws", AWS_DIFF, {
@@ -105,6 +138,12 @@ def main():
 
     if "azure" in targets:
         trigger("azure", AZURE_DIFF)
+
+    if "stripe" in targets:
+        trigger("stripe", STRIPE_DIFF)
+
+    if "twilio" in targets:
+        trigger("twilio", TWILIO_DIFF)
 
     print(f"\n{'='*60}")
     print("Pipeline is running in the background.")

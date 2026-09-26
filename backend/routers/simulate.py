@@ -18,9 +18,9 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
-from db.crud import create_incident, set_exposure_end
+from db.crud import create_incident, finalize_non_forensic_incident, set_exposure_end
 from db.database import SessionLocal, get_db
-from detector.patterns import AzureCredentialMatch, GCPCredentialMatch
+from detector.match_resolver import match_credential_value, resolve_match
 from detector.scanner import scan
 from pipeline import run_collection_pipeline
 from window.calculator import is_key_revoked
@@ -101,7 +101,7 @@ async def simulate(
     Feed a raw diff directly into the scanner and persist incidents to DB.
     Optionally starts revocation monitoring when both key parts are provided.
     """
-    matches = scan(body.diff_text)
+    matches = scan(body.diff_text, include_saas=True)
 
     if not matches:
         return {"status": "no_credentials_found", "incidents_created": 0}
@@ -111,16 +111,9 @@ async def simulate(
     forced_credential: str | None = body.credential or body.access_key_id
 
     if forced_credential:
-        # Filter to the specific match for this credential across all platforms.
-        def _match_credential(m) -> bool:  # type: ignore[return]
-            if isinstance(m, GCPCredentialMatch):
-                return m.client_email == forced_credential
-            if isinstance(m, AzureCredentialMatch):
-                return (m.client_id or "") == forced_credential
-            # AWS CredentialMatch
-            return getattr(m, "access_key_id", None) == forced_credential
-
-        matches = [m for m in matches if _match_credential(m)]
+        matches = [
+            m for m in matches if match_credential_value(m) == forced_credential
+        ]
         if not matches:
             raise HTTPException(
                 status_code=422,
@@ -131,55 +124,49 @@ async def simulate(
     created: list[dict] = []
 
     for match in matches:
-        # Determine platform and credential identifier from match type.
-        if isinstance(match, GCPCredentialMatch):
-            match_platform = "gcp"
-            credential = match.client_email
-            incident_access_key_id = None
-            incident_principal_id = match.client_email
-        elif isinstance(match, AzureCredentialMatch):
-            match_platform = "azure"
-            credential = match.client_id or ""
-            incident_access_key_id = None
-            incident_principal_id = match.client_id
-        else:
-            # AWS CredentialMatch
-            match_platform = "aws"
-            credential = match.access_key_id
-            incident_access_key_id = match.access_key_id
-            incident_principal_id = None
+        resolved = resolve_match(match)
 
         incident = create_incident(
             db,
-            credential_type=match.credential_type,
-            credential_hint=match.credential_hint,
-            access_key_id=incident_access_key_id,
+            credential_type=resolved.credential_type,
+            credential_hint=resolved.credential_hint,
+            access_key_id=resolved.access_key_id,
             repo_url=body.repo_url,
             commit_hash="simulated",
             exposure_start=exposure_start,
-            principal_id=incident_principal_id,
+            principal_id=resolved.principal_id,
+            forensic_tier=resolved.forensic_tier,
+            unavailable_reason=resolved.unavailable_reason,
         )
         logger.info(
-            "Simulated incident created: %s (platform=%s)",
+            "Simulated incident created: %s (platform=%s tier=%s)",
             incident.incident_id,
-            match_platform,
+            resolved.platform,
+            resolved.forensic_tier,
         )
 
-        # Fire event collection in the background.
-        background_tasks.add_task(
-            run_collection_pipeline,
-            incident.incident_id,
-            credential,
-            exposure_start,
-            platform=match_platform,
-        )
+        if resolved.is_collectable:
+            background_tasks.add_task(
+                run_collection_pipeline,
+                incident.incident_id,
+                resolved.credential,
+                exposure_start,
+                platform=resolved.platform,
+            )
+        else:
+            # Tier 2: no queryable audit log, so collection would just produce an
+            # empty timeline indistinguishable from "the key was never used".
+            # Finalise immediately with the reason recorded instead.
+            finalize_non_forensic_incident(
+                db, incident.incident_id, resolved.unavailable_reason
+            )
 
         # Start revocation monitor if a secret was provided.
-        if body.secret_access_key and match_platform == "aws":
+        if body.secret_access_key and resolved.platform == "aws":
             asyncio.create_task(
                 _monitor_revocation(
                     incident.incident_id,
-                    credential,
+                    resolved.credential,
                     body.secret_access_key,
                     platform="aws",
                 )
@@ -188,9 +175,12 @@ async def simulate(
         created.append(
             {
                 "incident_id": incident.incident_id,
-                "credential_hint": match.credential_hint,
-                "platform": match_platform,
-                "revocation_monitor": body.secret_access_key is not None and match_platform == "aws",
+                "credential_hint": resolved.credential_hint,
+                "platform": resolved.platform,
+                "forensic_tier": resolved.forensic_tier,
+                "collected": resolved.is_collectable,
+                "revocation_monitor": body.secret_access_key is not None
+                and resolved.platform == "aws",
             }
         )
 

@@ -1,5 +1,10 @@
 import axios from 'axios'
-import { MOCK_INCIDENTS, MOCK_EXPERIMENT_RUNS, MOCK_STATS } from './mockData'
+import {
+  MOCK_EXPERIMENT_RUNS,
+  MOCK_INCIDENTS,
+  MOCK_PLATFORM_COMPARISON,
+  MOCK_STATS,
+} from './mockData'
 
 /* ─── mock client ─────────────────────────────────────────────── */
 
@@ -39,6 +44,11 @@ const MOCK_ROUTES: Array<{ pattern: RegExp; handler: MockHandler }> = [
     // GET /incidents
     pattern: /^\/incidents$/,
     handler: () => MOCK_INCIDENTS,
+  },
+  {
+    // GET /research/platforms — per-platform comparison for the headline chart
+    pattern: /^\/research\/platforms$/,
+    handler: () => MOCK_PLATFORM_COMPARISON,
   },
   {
     // GET /research/export
@@ -96,10 +106,27 @@ const realClient = axios.create({
 
 /* ─── export whichever is active ─────────────────────────────── */
 
-// Set VITE_USE_MOCK=true in .env.local (or Vite dev server config) to run
-// the UI without a live backend. The mock client returns data from mockData.ts
-// and has artificial 600 ms latency to simulate real network round-trips.
-const USE_MOCK = import.meta.env.VITE_USE_MOCK === 'true' || true
+// Mock mode returns data from mockData.ts with 600 ms of artificial latency so
+// the UI can be developed without a backend.
+//
+// Resolution order:
+//   VITE_USE_MOCK=true   → always mock
+//   VITE_USE_MOCK=false  → always live, even with no VITE_API_URL set
+//   unset                → mock only when no VITE_API_URL is configured
+//
+// The unset case keeps a fresh clone usable with no setup, while a configured
+// API URL means someone intends to talk to a real backend.
+const mockFlag = import.meta.env.VITE_USE_MOCK
+const USE_MOCK =
+  mockFlag === 'true' || (mockFlag === undefined && !import.meta.env.VITE_API_URL)
+
+if (import.meta.env.DEV) {
+  console.info(
+    USE_MOCK
+      ? '[BreachTrace] Mock API — set VITE_API_URL to use a live backend.'
+      : `[BreachTrace] Live API — ${import.meta.env.VITE_API_URL ?? 'http://localhost:8000'}`,
+  )
+}
 
 const client = USE_MOCK ? mockClient : realClient
 

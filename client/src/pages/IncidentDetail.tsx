@@ -12,14 +12,18 @@ import {
   Clock3,
   GitCommitHorizontal,
   KeyRound,
+  Fingerprint,
   Radio,
   RefreshCw,
   Timer,
 } from 'lucide-react'
 import client from '@/api/client'
 import type { IncidentRecord } from '@/types'
+import { derivePlatform, isForensicTier, PLATFORM_META, platformIdentity } from '@/lib/platform'
 import SeverityBadge from '@/components/SeverityBadge'
 import ForensicTimeline from '@/components/ForensicTimeline'
+import ForensicsUnavailable from '@/components/ForensicsUnavailable'
+import FinancialImpactPanel from '@/components/FinancialImpactPanel'
 import BlastRadiusSummary from '@/components/BlastRadiusSummary'
 import AffectedResources from '@/components/AffectedResources'
 import SourceIPs from '@/components/SourceIPs'
@@ -79,14 +83,17 @@ const STATUS_LABELS: Record<string, string> = {
 }
 
 const PLATFORM_STYLES: Record<string, { label: string; className: string }> = {
-  gcp:   { label: 'GCP',   className: 'bg-blue-500/10 text-blue-700 dark:text-blue-300 border-blue-500/20' },
-  azure: { label: 'Azure', className: 'bg-teal-500/10 text-teal-700 dark:text-teal-300 border-teal-500/20' },
-  aws:   { label: 'AWS',   className: 'bg-orange-500/10 text-orange-700 dark:text-orange-300 border-orange-500/20' },
+  gcp:    { label: 'GCP',    className: 'bg-blue-500/10 text-blue-700 dark:text-blue-300 border-blue-500/20' },
+  azure:  { label: 'Azure',  className: 'bg-teal-500/10 text-teal-700 dark:text-teal-300 border-teal-500/20' },
+  aws:    { label: 'AWS',    className: 'bg-orange-500/10 text-orange-700 dark:text-orange-300 border-orange-500/20' },
+  stripe: { label: 'Stripe', className: 'bg-violet-500/10 text-violet-700 dark:text-violet-300 border-violet-500/20' },
+  twilio: { label: 'Twilio', className: 'bg-red-500/10 text-red-700 dark:text-red-300 border-red-500/20' },
 }
 
 function PlatformBadge({ platform }: { platform: string | undefined }) {
   if (!platform) return null
-  const style = PLATFORM_STYLES[platform.toLowerCase()] ?? PLATFORM_STYLES.aws
+  const style = PLATFORM_STYLES[platform.toLowerCase()]
+  if (!style) return null
   return (
     <span className={`inline-flex items-center px-2.5 py-1 rounded-sm border text-xs font-bold uppercase tracking-wide ${style.className}`}>
       {style.label}
@@ -229,6 +236,9 @@ const IncidentDetail: React.FC = () => {
 
   const dur = duration(incident.exposure_start, incident.exposure_end)
   const repoDisplay = incident.repo_url.replace('https://github.com/', '')
+  const platform = derivePlatform(incident)
+  const platformMeta = PLATFORM_META[platform]
+  const identity = platformIdentity(incident, incident.events ?? [])
 
   return (
     <div className="max-w-7xl mx-auto space-y-8 pb-12 animate-in fade-in duration-500">
@@ -289,6 +299,20 @@ const IncidentDetail: React.FC = () => {
                     </p>
                   </div>
                   <div className="flex flex-wrap items-center gap-3 text-sm">
+                    <span
+                      className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-sm font-bold uppercase tracking-wider text-xs"
+                      style={{
+                        backgroundColor: `color-mix(in srgb, ${platformMeta.color} 14%, transparent)`,
+                        color: platformMeta.color,
+                      }}
+                      title={`Forensic events collected from ${platformMeta.auditLog}`}
+                    >
+                      <span
+                        className="w-1.5 h-1.5 rounded-full shrink-0"
+                        style={{ backgroundColor: platformMeta.color }}
+                      />
+                      {platformMeta.label}
+                    </span>
                     <span className="inline-flex items-center px-2.5 py-1 rounded-sm bg-secondary text-secondary-foreground font-medium">
                       {incident.credential_type}
                     </span>
@@ -349,6 +373,22 @@ const IncidentDetail: React.FC = () => {
                   </SummaryTile>
                 )}
               </div>
+
+              {/* Leaked principal — named per platform. AWS reports an access key
+                  ID, GCP a service account email, Azure a client ID; showing an
+                  empty "Access Key ID" on a GCP incident reads as a bug. */}
+              {identity && (
+                <div className="mt-4">
+                  <SummaryTile icon={Fingerprint} label={identity.label}>
+                    <span className="font-mono text-xs break-all">{identity.value}</span>
+                    {identity.context && (
+                      <span className="mt-1 block text-xs font-normal text-muted-foreground">
+                        {identity.context}
+                      </span>
+                    )}
+                  </SummaryTile>
+                </div>
+              )}
             </div>
             
             {(incident.gdpr_flag || incident.pcidss_flag || incident.soc2_flag) && (
@@ -398,14 +438,10 @@ const IncidentDetail: React.FC = () => {
               </div>
             )}
             
-            {incident.estimated_financial_impact && (
-              <div className="border-t px-6 sm:px-8 py-4 bg-muted/20 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-                 <span className="text-sm font-medium text-muted-foreground uppercase tracking-wider">Estimated Financial Impact</span>
-                 <span className="text-lg font-bold text-destructive flex items-center gap-2">
-                    {incident.estimated_financial_impact}
-                 </span>
-              </div>
-            )}
+            {/* Financial impact moved to FinancialImpactPanel in the sidebar.
+                It renders one figure per currency and separates money that
+                actually moved from list-price estimates, which this raw string
+                dump could not. Kept in one place so the two cannot disagree. */}
           </div>
 
           {/* AI Summary Report */}
@@ -423,22 +459,33 @@ const IncidentDetail: React.FC = () => {
             </div>
           )}
 
-          {/* Forensic Timeline */}
-          <div className="bg-card border rounded-sm shadow-sm p-6 sm:p-8">
-              <h2 className="text-lg font-semibold text-foreground mb-6 flex items-center gap-2">
-                <div className="p-1.5 bg-primary/10 text-primary rounded-sm">
-                   <Activity size={18} />
-                </div>
-                Forensic Timeline
-              </h2>
-             <ForensicTimeline events={incident.events} />
-          </div>
+          {/* Timeline, or an explanation of why there cannot be one.
+              Tier-2 platforms expose no queryable audit log, so rendering an
+              empty timeline would read as "nothing happened" when the truth is
+              "this is unknowable". */}
+          {isForensicTier(incident) ? (
+            <div className="bg-card border rounded-sm shadow-sm p-6 sm:p-8">
+                <h2 className="text-lg font-semibold text-foreground mb-6 flex items-center gap-2">
+                  <div className="p-1.5 bg-primary/10 text-primary rounded-sm">
+                     <Activity size={18} />
+                  </div>
+                  Forensic Timeline
+                </h2>
+               <ForensicTimeline events={incident.events} />
+            </div>
+          ) : (
+            <ForensicsUnavailable incident={incident} />
+          )}
 
         </div>
 
         {/* Right Column (Sidebar) */}
         <div className="xl:col-span-4 space-y-6">
           <div className="sticky top-6 space-y-6">
+            {/* First in the stack: on a Stripe incident this is real money
+                moved, which should not sit below three other cards. Self-hides
+                when there is nothing to report. */}
+            <FinancialImpactPanel incident={incident} />
             <BlastRadiusSummary incident={incident} />
             <SourceIPs events={incident.events} />
             <AffectedResources events={incident.events} />

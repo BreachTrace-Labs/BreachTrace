@@ -11,6 +11,7 @@ Returns stored incidents and their forensic events.
 from __future__ import annotations
 
 from collections import Counter
+from dataclasses import asdict
 from datetime import datetime
 from typing import Optional
 
@@ -20,13 +21,14 @@ from sqlalchemy.orm import Session
 
 from db.crud import get_incident, list_incidents, reset_incident_for_refresh
 from db.database import get_db
-from db.models import ExperimentRun
+from db.models import CREDENTIAL_TYPE_TO_PLATFORM, ExperimentRun
 from pipeline import run_collection_pipeline
 from scorer.severity import (
     build_compliance_reasons,
     check_gdpr_flag,
     check_pcidss_flag,
     check_soc2_flag,
+    compute_financial_impact_lines,
 )
 
 router = APIRouter(prefix="/incidents", tags=["incidents"])
@@ -89,6 +91,12 @@ class IncidentSummaryOut(BaseModel):
     gcp_project_id: Optional[str] = None
     azure_tenant_id: Optional[str] = None
     azure_subscription_id: Optional[str] = None
+    # Forensic tier: 1 = blast radius reconstructable, 2 = detection only.
+    # The UI branches on this to decide between a timeline and the
+    # "forensics unavailable" panel, so it must appear on the LIST response
+    # too — not just the detail one — or the dashboard cannot label rows.
+    forensic_tier: int = 1
+    unavailable_reason: Optional[str] = None
 
     @field_validator("overall_severity", mode="before")
     @classmethod
@@ -101,6 +109,22 @@ class IncidentSummaryOut(BaseModel):
         from_attributes = True
 
 
+class FinancialImpactLineOut(BaseModel):
+    """One costed finding. Mirrors scorer.severity.FinancialImpactLine."""
+
+    platform: str
+    kind: str
+    label: str
+    text: str
+    amount: Optional[float] = None
+    currency: Optional[str] = None
+    unit: Optional[str] = None
+    quantity: Optional[int] = None
+    # True only where money demonstrably moved (Stripe). Everything else is a
+    # list-price estimate, and the UI must be able to tell them apart.
+    actual: bool = False
+
+
 class IncidentDetailOut(IncidentSummaryOut):
     events: list[ForensicEventOut] = []
     report_text: Optional[str] = None
@@ -110,6 +134,10 @@ class IncidentDetailOut(IncidentSummaryOut):
     pcidss_flag: bool = False
     soc2_flag: bool = False
     compliance_reasons: list[str] = []
+    # Structured view of estimated_financial_impact. Computed per request from
+    # the same events, following the precedent of the compliance flags above —
+    # so no migration is needed and existing incidents get it immediately.
+    financial_impact_lines: list[FinancialImpactLineOut] = []
 
     class Config:
         from_attributes = True
@@ -186,6 +214,10 @@ def get_incident_detail(
         soc2=soc2,
         events=incident.events,
     )
+    out.financial_impact_lines = [
+        FinancialImpactLineOut(**asdict(line))
+        for line in compute_financial_impact_lines(incident.events)
+    ]
     return out
 
 
@@ -217,13 +249,17 @@ def get_incident_timeline(
 # ---------------------------------------------------------------------------
 
 def _derive_platform(incident) -> str:
-    """Derive cloud platform string from credential_type."""
-    ctype = (incident.credential_type or "").lower()
-    if "gcp" in ctype:
-        return "gcp"
-    if "azure" in ctype:
-        return "azure"
-    return "aws"
+    """
+    Platform for an incident.
+
+    Delegates to IncidentRecord.platform, which uses the explicit
+    CREDENTIAL_TYPE_TO_PLATFORM map. The previous substring form
+    (`"gcp" in credential_type`) silently mis-routed the SaaS credential types
+    and could not express that a Firebase key collects through GCP.
+    """
+    return CREDENTIAL_TYPE_TO_PLATFORM.get(
+        (getattr(incident, "credential_type", "") or "").lower(), "aws"
+    )
 
 
 def _queue_incident_refresh(

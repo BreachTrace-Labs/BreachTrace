@@ -1,0 +1,82 @@
+id,platform,ground_truth,snippet,note
+G01,gcp,true,"{\n  ""type"": ""service_account"",\n  ""project_id"": ""acme-prod-4471"",\n  ""private_key_id"": ""9f2b1a0c9d8e7f6a5b4c3d2e1f0a9b8c7d6e5f40"",\n  ""client_email"": ""deploy-bot@acme-prod-4471.iam.gserviceaccount.com""\n}",full service account key file
+G02,gcp,true,"{\n  ""type"": ""service_account"",\n  ""project_id"": ""data-pipeline-77"",\n  ""client_email"": ""etl-runner@data-pipeline-77.iam.gserviceaccount.com""\n}",key file without private_key_id
+G03,gcp,true,"GOOGLE_SA_EMAIL=ci-deployer@build-system-201.iam.gserviceaccount.com",bare env var assignment
+G04,gcp,true,"client_email: backup-agent@storage-vault-9.iam.gserviceaccount.com",yaml style
+G05,gcp,true,"  ""client_email"": ""firebase-adminsdk-x9k2p@my-app-13ab7.iam.gserviceaccount.com"",",firebase admin sdk key
+G06,gcp,true,"gcloud auth activate-service-account terraform@infra-mgmt-55.iam.gserviceaccount.com --key-file=key.json",shell command
+G07,none,false,"const SA = 'pubsub-worker@events-ingest-3.iam.gserviceaccount.com';",javascript literal naming an account, no key material
+G08,none,false,"serviceAccount:analytics-reader@bigquery-warehouse-12.iam.gserviceaccount.com",iam policy binding member — identifier, not a secret
+G09,gcp,true,"{\n  ""type"": ""service_account"",\n  ""private_key_id"": ""a1b2c3d4e5f60718293a4b5c6d7e8f9012345678"",\n  ""client_email"": ""scheduler@cron-jobs-88.iam.gserviceaccount.com"",\n  ""private_key"": ""-----BEGIN PRIVATE KEY-----\\nMIIEvQ...""\n}",full key with private key body
+G10,gcp,true,"SERVICE_ACCOUNT=monitoring-agent@observability-4.iam.gserviceaccount.com",env var
+G11,gcp,true,"impersonate_service_account = ""admin-sa@security-audit-19.iam.gserviceaccount.com""",terraform provider block
+G12,none,false,"email: ml-training@vertex-experiments-6.iam.gserviceaccount.com",kubernetes annotation — identifier, not a secret
+G13,gcp,true,"""client_email"":""log-shipper@telemetry-hub-31.iam.gserviceaccount.com""",minified json
+G14,gcp,true,"GCP_SA=report-generator@finance-reports-2.iam.gserviceaccount.com",short project name
+G15,none,false,"iam.gserviceaccount.com account: cdn-invalidator@edge-cache-45.iam.gserviceaccount.com",prose mention in documentation — identifier, not a secret
+G16,none,false,"- name: gke-node-sa@container-cluster-7.iam.gserviceaccount.com",yaml manifest name — identifier, not a secret
+G17,gcp,true,"{\n ""type"": ""service_account"",\n ""client_email"": ""secret-rotator@vault-integration-23.iam.gserviceaccount.com""\n}",compact key file
+G18,gcp,true,"export GOOGLE_APPLICATION_CREDENTIALS_EMAIL=dataflow@stream-proc-64.iam.gserviceaccount.com",export statement
+G19,none,false,"principal: api-gateway@public-endpoints-8.iam.gserviceaccount.com",policy binding principal — identifier, not a secret
+G20,gcp,true,"client_email = 'billing-exporter@cost-mgmt-91.iam.gserviceaccount.com'",python literal
+A01,azure,true,"AZURE_CLIENT_ID=3f8b2c1a-9d4e-4f7a-8b6c-1e2d3f4a5b6c",client id with keyword in var name
+A02,azure,true,"client_id: 7a2e9c4b-1f8d-4a3e-9c7b-2d5f8a1c4e7b\nclient_secret: Xq7~vTn2.Kp9_Rm4-Ws8Yz1Ab3Cd6Ef0Gh",service principal pair
+A03,azure,true,"DefaultEndpointsProtocol=https;AccountName=prodstorage7;AccountKey=aBcDeFgHiJkLmNoPqRsTuVwXyZ0123456789aBcDeFgHiJkLmNoPqRsTuVwXyZ012345678901234567890abcdEFGH==;",storage connection string
+A04,azure,true,"appId: 9c4f7b2a-3e8d-4c1f-a7b9-6d2e5f8a3c1b",appId keyword
+A05,azure,true,"AZURE_CLIENT_SECRET=Zt4~vQm9.Nb2_Xc7-WsLpR8kYhJfD1aE5uI",secret with keyword
+A06,azure,true,"az ad sp create-for-rbac --id 2d7a4e9c-5b1f-4837-9e2c-8a4d1f7b3e6c",cli with client id keyword absent but appid context,
+A07,azure,true,"ARM_CLIENT_ID = ""8e3c1b7a-4d9f-42e5-b8a1-3c6f9d2e5a8b""",terraform arm provider
+A08,azure,true,"applicationId: 5b9d2f4a-7c1e-4836-9a2d-4e7f1b5c8d3a",applicationId keyword
+A09,azure,true,"DefaultEndpointsProtocol=https;AccountName=backupvault2;AccountKey=QwErTyUiOpAsDfGhJkLzXcVbNm1234567890QwErTyUiOpAsDfGhJkLzXcVbNm0987654321AbCdEfGh==;EndpointSuffix=core.windows.net",connection string with suffix
+A10,azure,true,"clientId=4c8e1a7b-2f9d-4e63-8b5a-1d7c3f9e2b4a",no spaces form
+A11,azure,true,"AZURE_CLIENT_ID: 6f2b9d4c-8a1e-4753-b9c2-5e8a1d4f7b2c\nAZURE_TENANT_ID: 1a2b3c4d-5e6f-4718-9a0b-1c2d3e4f5a6b",client and tenant pair
+A12,azure,true,"client_secret: Pm3~xVn8.Qr5_Zt1-Ky9WbLc4Jd7Hs2Ne6Uf",secret keyword yaml
+A13,azure,true,"--client-id 7d3f9a2c-4e8b-4165-9d7a-2c5e8f1b4a7d --client-secret Rk8~zXm4.Vp1_Nq6-Yt3JcLd9Hb2Sf5Ug",cli both values
+A14,azure,true,"DefaultEndpointsProtocol=https;AccountName=logsarchive9;AccountKey=ZxCvBnMaSdFgHjKlQwErTyUiOp1234567890ZxCvBnMaSdFgHjKlQwErTyUiOp0987654321QwEr==;",third connection string
+A15,azure,true,"azure_client_id = ""9a4d7f2b-6c1e-4839-8b5d-3f7a2c9e5b1d""",python config
+A16,azure,true,"AAD_CLIENT_ID=1f7c3e9a-5d2b-4864-9c1f-7a3e5d8b2c4f",aad prefix with client_id
+A17,azure,true,"password: Wq6~tYn3.Bm8_Ls2-Xv5RdKf9Hj4Pc7Za1E",password keyword long secret
+A18,azure,true,"clientid: 8b2e5c9a-1f4d-4726-a9e3-6c1b4f8d2e5a",lowercase clientid
+A19,azure,true,"ARM_CLIENT_SECRET=Nv9~qWr2.Tz6_Bx4-Mj8FpLd1Kc5Hs3Ya7U",arm secret
+A20,azure,true,"{\n  ""clientId"": ""3c9f6b1e-8d4a-4257-b1c9-4f7e2a5d8b3c"",\n  ""clientSecret"": ""Jd2~mZq7.Hv3_Fw9-Rp6TbNc1Xk4Ls8Ge5Y""\n}",json credentials object
+N01,none,false,"user_id = 3f8b2c1a-9d4e-4f7a-8b6c-1e2d3f4a5b6c",bare uuid no azure context
+N02,none,false,"correlation_id: 7a2e9c4b-1f8d-4a3e-9c7b-2d5f8a1c4e7b",uuid as trace id
+N03,none,false,"contact: support-team@acme-corp.com",ordinary email
+N04,none,false,"email = ""developer@gmail.com""",gmail address
+N05,none,false,"sha = a1b2c3d4e5f60718293a4b5c6d7e8f9012345678",40 hex git sha not a key id
+N06,none,false,"DATABASE_URL=postgresql://svc:Kp9Rm4Ws@db.internal:5432/app",postgres uri not azure
+N07,none,false,"request_id: 9c4f7b2a-3e8d-4c1f-a7b9-6d2e5f8a3c1b",uuid as request id
+N08,none,false,"account: reporting@example.iam.example.com",lookalike domain not gserviceaccount
+N09,none,false,"DefaultEndpointsProtocol=https;AccountName=demo;",connection string missing AccountKey
+N10,none,false,"session = 4c8e1a7b-2f9d-4e63-8b5a-1d7c3f9e2b4a",uuid as session id
+N11,none,false,"const checksum = 'ZxCvBnMaSdFgHjKlQwErTyUiOp1234567890ZxCv';",40 char string no keyword
+N12,none,false,"service_account_name: my-app-sa",k8s sa name not an email
+N13,none,false,"trace-id=1f7c3e9a-5d2b-4864-9c1f-7a3e5d8b2c4f",uuid as trace id
+N14,none,false,"notify: alerts@monitoring.iam.company.internal",lookalike internal domain
+N15,none,false,"AKIAIOSFODNN7EXAMPLE",aws key belongs to aws detector not gcp azure
+N16,none,false,"uuid: 8b2e5c9a-1f4d-4726-a9e3-6c1b4f8d2e5a\nname: widget",uuid with unrelated neighbour
+N17,none,false,"hash: QwErTyUiOpAsDfGhJkLzXcVbNm1234567890QwErTyUiOpAsDfGh",long base64ish no keyword
+N18,none,false,"owner: platform-team@engineering.acme.io",team email
+N19,none,false,"build_id = 5b9d2f4a-7c1e-4836-9a2d-4e7f1b5c8d3a",uuid as build id
+N20,none,false,"connection: Server=tcp:sql.example.net;Database=app;",sql server string not azure storage
+N21,none,false,"password = ""correcthorsebatterystaple1234567890""",non-azure password near password keyword
+N22,none,false,"SMTP_PASSWORD=MailgunSmtp9876543210AbCdEfGhIjKlMnOp",smtp password long value
+N23,none,false,"db_password: PostgresProdPassword2026SuperSecure99",database password
+N24,none,false,"password: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dozjgNryP4J3jVmNHl0w5N_XgL0n3I9PlFUP0THsR8U",jwt stored under password key
+N25,none,false,"user_password_hash = ""2b12KIXQJm8eYh0uFm5o0qJ8eO8Yx9wZqLmNpQrStUvWxYz""",bcrypt style hash near password
+N26,none,false,"REDIS_PASSWORD=RedisAuthToken1234567890AbCdEfGhIjKlMn",redis auth token
+N27,none,false,"client_secret: ghp_16C7e42F292c6912E7710c838347Ae178B4a",github token mislabelled as client_secret
+N28,none,false,"password=""sk_live_4eC39HqLyjWDarjtT1zdp7dcQwErTyUi""",stripe key stored under password key
+G21,gcp,true,"{\n  ""type"": ""service_account"",\n  ""project_id"": ""ml-serving-8"",\n  ""private_key"": ""-----BEGIN PRIVATE KEY-----\\nMIIEvg"",\n  ""client_email"": ""inference@ml-serving-8.iam.gserviceaccount.com""\n}",key file with private key body
+G22,gcp,true,"GOOGLE_APPLICATION_CREDENTIALS_EMAIL=pipeline@etl-cluster-3.iam.gserviceaccount.com",credentials env var
+G23,gcp,true,"  ""client_email"": ""queue-worker@tasks-runner-17.iam.gserviceaccount.com"",\n  ""private_key_id"": ""b4c3d2e1f0a9b8c7d6e5f40312a4b5c6d7e8f901""",key file fragment with key id
+G24,gcp,true,"GCP_SA=nightly-sync@warehouse-ops-5.iam.gserviceaccount.com",gcp_sa env assignment
+G25,gcp,true,"gcloud auth activate-service-account release-bot@deploy-pipeline-9.iam.gserviceaccount.com --key-file=sa.json",activate-service-account with key file
+G26,gcp,true,"service_account_json: {""client_email"": ""audit-reader@compliance-22.iam.gserviceaccount.com""}",inline service account json
+N29,none,false,"Grant the Storage Admin role to ci-runner@my-proj-14.iam.gserviceaccount.com before deploying.",REAL gserviceaccount domain in prose — the actual FP mode
+N30,none,false,"# See docs: the deployer account is terraform@infra-mgmt-55.iam.gserviceaccount.com",real domain in a code comment
+N31,none,false,"members:\n  - serviceAccount:viewer@analytics-7.iam.gserviceaccount.com",real domain in an IAM members list
+N32,none,false,"Error: permission denied for scheduler@cron-jobs-88.iam.gserviceaccount.com",real domain in a log line
+N33,none,false,"| Account | reporting@finance-2.iam.gserviceaccount.com | read-only |",real domain in a markdown table
+N34,none,false,"resource_id = AC9f8e7d6c5b4a39281706f5e4d3c2b1a0",AC prefix + 32 hex with no twilio context
+N35,none,false,"correlation = ACdeadbeefdeadbeefdeadbeefdeadbeef",another bare AC hex string

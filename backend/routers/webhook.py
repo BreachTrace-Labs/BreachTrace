@@ -18,9 +18,9 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 import config
-from db.crud import create_incident, set_exposure_end
+from db.crud import create_incident, finalize_non_forensic_incident, set_exposure_end
 from db.database import SessionLocal, get_db
-from detector.patterns import AzureCredentialMatch, GCPCredentialMatch
+from detector.match_resolver import resolve_match
 from detector.scanner import scan
 from pipeline import run_collection_pipeline
 from window.calculator import is_key_revoked, record_exposure_start
@@ -169,7 +169,7 @@ async def github_webhook(
 
         # 5. Scan for AWS credentials
         logger.info(f"[WEBHOOK PROCESS] Scanning commit {sha}...")
-        matches = scan(diff_text)
+        matches = scan(diff_text, include_saas=True)
         if not matches:
             logger.info(f"[WEBHOOK RESULT] No AWS secrets detected in commit {sha}.")
             continue
@@ -177,51 +177,47 @@ async def github_webhook(
         logger.info(f"[WEBHOOK FOUND] Found {len(matches)} secret(s) in {sha}!")
 
         for match in matches:
-            # 6. Determine platform + unified credential identifier
-            if isinstance(match, GCPCredentialMatch):
-                match_platform = "gcp"
-                credential = match.client_email
-                incident_principal_id = match.client_email
-                incident_access_key_id = None
-            elif isinstance(match, AzureCredentialMatch):
-                match_platform = "azure"
-                credential = match.client_id or ""
-                incident_principal_id = match.client_id
-                incident_access_key_id = None
-            else:
-                # AWS CredentialMatch
-                match_platform = "aws"
-                credential = match.access_key_id
-                incident_principal_id = None
-                incident_access_key_id = match.access_key_id
+            # 6. Normalise the match — see detector/match_resolver.py
+            resolved = resolve_match(match)
+            match_platform = resolved.platform
+            credential = resolved.credential
 
             incident = create_incident(
                 db,
-                credential_type=match.credential_type,
-                credential_hint=match.credential_hint,
-                access_key_id=incident_access_key_id,
+                credential_type=resolved.credential_type,
+                credential_hint=resolved.credential_hint,
+                access_key_id=resolved.access_key_id,
                 repo_url=repo_url,
                 commit_hash=sha,
                 exposure_start=exposure_start,
-                principal_id=incident_principal_id,
+                principal_id=resolved.principal_id,
+                forensic_tier=resolved.forensic_tier,
+                unavailable_reason=resolved.unavailable_reason,
             )
             created_incidents.append(incident.incident_id)
             logger.info(
-                "Incident created: %s | platform: %s | hint: %s | repo: %s",
+                "Incident created: %s | platform: %s | tier: %s | hint: %s | repo: %s",
                 incident.incident_id,
                 match_platform,
-                match.credential_hint,
+                resolved.forensic_tier,
+                resolved.credential_hint,
                 repo_url,
             )
 
-            # Fire event collection in the background.
-            background_tasks.add_task(
-                run_collection_pipeline,
-                incident.incident_id,
-                credential,
-                exposure_start,
-                platform=match_platform,
-            )
+            if resolved.is_collectable:
+                background_tasks.add_task(
+                    run_collection_pipeline,
+                    incident.incident_id,
+                    credential,
+                    exposure_start,
+                    platform=match_platform,
+                )
+            else:
+                # Tier 2: nothing to query. Finalise now with the reason recorded
+                # rather than leaving the incident stuck in 'collecting' forever.
+                finalize_non_forensic_incident(
+                    db, incident.incident_id, resolved.unavailable_reason
+                )
 
             # Launch revocation monitor for known experiment credentials only.
             if match_platform == "aws" and credential == config.EXPERIMENT_AWS_ACCESS_KEY_ID:

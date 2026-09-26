@@ -545,7 +545,7 @@ Open a terminal and set the experiment credentials for this session only:
 ```powershell
 $env:AWS_ACCESS_KEY_ID     = "AKIA...your-experiment-key..."
 $env:AWS_SECRET_ACCESS_KEY = "...your-experiment-secret..."
-$env:AWS_DEFAULT_REGION    = "us-east-1"
+$env:AWS_DEFAULT_REGION    = "ap-south-1"
 ```
 
 Run these commands to create a realistic multi-stage attacker scenario:
@@ -686,9 +686,64 @@ print('Azure activity generated â€” Activity Logs appear within 1-2 minutes
 
 ---
 
-## PART 10 â€” Start the Application
+## PART 10 â€” Expose the Backend via ngrok (GitHub Webhook Path Only)
 
-Open two separate PowerShell windows.
+> **Skip this part entirely if you are only using `demo_trigger.py`** (Path A below).
+> ngrok is required only so that GitHub.com can POST webhook events to your local backend.
+> The React frontend does **not** need ngrok — it runs on the same machine and calls `localhost:8000` directly.
+
+---
+
+### Why ngrok is needed
+
+GitHub must deliver webhook POST requests to a public HTTPS URL. Your local `localhost:8000`
+is unreachable from the internet. ngrok creates a secure TLS tunnel from a public URL to it.
+
+---
+
+### Step 10.1 â€” Install ngrok
+
+1. Download from **https://ngrok.com/download** — Windows — extract `ngrok.exe` to any folder on your PATH.
+2. Sign up at **https://dashboard.ngrok.com** and copy your Authtoken.
+3. Register the authtoken (run once):
+
+```powershell
+ngrok config add-authtoken YOUR_TOKEN_HERE
+```
+
+---
+
+### Step 10.2 â€” Start the tunnel (Terminal C — after starting the backend in Part 11)
+
+```powershell
+ngrok http 8000
+```
+
+Expected output:
+
+```
+Forwarding    https://abc123def456.ngrok-free.app -> http://localhost:8000
+```
+
+Copy the **Forwarding URL** (e.g. `https://abc123def456.ngrok-free.app`).
+
+> ngrok free-tier URLs change on every restart. If you restart ngrok, repeat Step 10.3.
+
+---
+
+### Step 10.3 â€” Register the webhook via the Connect page
+
+1. Open **http://localhost:5173/connect**
+2. The Webhook URL field auto-populates with `http://localhost:8000/webhook/github`
+3. Edit it to: `https://abc123def456.ngrok-free.app/webhook/github`
+4. Enter your GitHub repo URL and click **Register Webhook**
+5. Verify: GitHub → repo **Settings** → **Webhooks** → green tick ✓
+
+---
+
+## PART 11 â€” Start the Application
+
+Open **two** separate PowerShell windows (add a third for ngrok if using the GitHub webhook path).
 
 ### Terminal A â€” Backend
 
@@ -699,14 +754,7 @@ cd backend
 python -m uvicorn main:app --reload --host 0.0.0.0 --port 8000
 ```
 
-**Expected:**
-```
-INFO:     Application startup complete.
-INFO:     Uvicorn running on http://0.0.0.0:8000
-```
-
-Verify: `http://localhost:8000` â†’ `{"status":"ok","message":"BreachTrace running"}`
-API docs: `http://localhost:8000/docs`
+Expected: `Uvicorn running on http://0.0.0.0:8000`
 
 ### Terminal B â€” Frontend
 
@@ -715,60 +763,57 @@ cd C:\Users\ritwi\Downloads\BreachTrace\client
 npm run dev
 ```
 
-**Expected:**
-```
-  VITE ready in 312ms
-  âžœ  Local:   http://localhost:5173/
+Open **http://localhost:5173** — the dashboard should appear empty (live backend, no mock data).
+
+> If the dashboard shows sample/mock incidents: confirm there is **no** file at `client/.env.local`.
+
+### Terminal C â€” ngrok (only for GitHub webhook path)
+
+```powershell
+ngrok http 8000
 ```
 
-Open `http://localhost:5173` â€” should show empty dashboard (no mock data, hitting real backend).
+Then follow Step 10.3 to register the public URL with GitHub.
 
 ---
 
-## PART 11 â€” Run the Demo Trigger
+## PART 12 â€” Trigger Demo Incidents
 
-The `demo_trigger.py` file (already updated in the repo) can trigger incidents for all three platforms.
-
-**Before running, update the placeholder values at the top of `demo_trigger.py`:**
-
-```powershell
-# Open the file
-code C:\Users\ritwi\Downloads\BreachTrace\demo_trigger.py
-```
-
-Replace these values:
-```python
-# AWS
-AWS_KEY_ID = "AKIA...your-experiment-key..."        # from Step 1.3
-
-# GCP
-GCP_CLIENT_EMAIL = "breachtrace-experiment@your-project-id.iam.gserviceaccount.com"
-GCP_PRIVATE_KEY_ID = "abc123..."                    # 40-char hex from experiment SA JSON
-
-# Azure
-AZURE_CLIENT_ID = "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"  # Object ID from Step 3.5
-AZURE_CLIENT_SECRET = "AzureExperimentSecret~..."         # secret from Step 3.4
-```
-
-**Run all three platforms** (Terminal C, while backend is running):
+### Path A â€” Simulate (fastest, no ngrok needed) — USE THIS FOR DEMO
 
 ```powershell
 cd C:\Users\ritwi\Downloads\BreachTrace
-python demo_trigger.py
-```
-
-Or run a single platform:
-```powershell
-python demo_trigger.py aws
+python demo_trigger.py          # AWS + GCP + Azure at once
+python demo_trigger.py aws      # single platform
 python demo_trigger.py gcp
 python demo_trigger.py azure
 ```
 
-Each run prints the incident ID and direct URL. Copy the URL and open it in the browser.
+> GCP and Azure values in `demo_trigger.py` are pre-filled from `.env`. No edits needed.
+> AWS and Azure incidents will show full forensic timelines.
+> GCP incidents will work once you complete PART 2 (GCP service account setup).
 
 ---
 
-## PART 12 â€” What Evaluators Will See
+### Path B â€” Real GitHub Push (requires ngrok + Connect page from Part 10)
+
+```powershell
+# In a fresh directory outside the project:
+git clone https://github.com/YOUR_USERNAME/YOUR_REPO.git test-repo
+cd test-repo
+
+# Add a file that contains the experiment AWS key
+"AWS_ACCESS_KEY_ID=AKIAUDOTYKQPCWNJ4GXV" | Out-File leaked-creds.txt
+git add leaked-creds.txt
+git commit -m "chore: config update"
+git push
+```
+
+GitHub sends a webhook POST → backend detects the key → incident appears on the dashboard in **2–3 seconds**.
+
+---
+
+## PART 13 â€” What Evaluators Will See
 
 After triggering, here is the second-by-second progression for each platform:
 
@@ -787,7 +832,7 @@ After triggering, here is the second-by-second progression for each platform:
 
 ---
 
-## PART 13 â€” Incident Detail Page â€” What to Show
+## PART 14 â€” Incident Detail Page â€” What to Show
 
 ### For all platforms
 
@@ -815,7 +860,7 @@ After triggering, here is the second-by-second progression for each platform:
 
 ---
 
-## PART 14 â€” Troubleshooting
+## PART 15 â€” Troubleshooting
 
 ### AWS: Pipeline completes but 0 events in timeline
 
@@ -924,7 +969,7 @@ Make sure the same email is in the `GCP_DIFF` string in `demo_trigger.py`.
 
 ---
 
-## PART 15 â€” Pre-Demo Checklist (Night Before)
+## PART 16 â€” Pre-Demo Checklist (Night Before)
 
 ### AWS
 ```
@@ -969,7 +1014,7 @@ Make sure the same email is in the `GCP_DIFF` string in `demo_trigger.py`.
 
 ---
 
-## PART 16 â€” Demo Day Sequence (30 Minutes Before Evaluators Arrive)
+## PART 17 â€” Demo Day Sequence (30 Minutes Before Evaluators Arrive)
 
 ```powershell
 # â”€â”€ Terminal A: Backend â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -982,12 +1027,16 @@ python -m uvicorn main:app --reload --host 0.0.0.0 --port 8000
 cd C:\Users\ritwi\Downloads\BreachTrace\client
 npm run dev
 
-# â”€â”€ Terminal C: Generate cloud activity NOW (25 min before trigger for AWS) â”€â”€â”€
+# â”€â”€ Terminal C: ngrok (only if using GitHub webhook path) â”€â”€
+ngrok http 8000
+# After it starts, update the webhook URL in the Connect page (Part 10)
+
+# â”€â”€ Terminal D: Generate cloud activity NOW (25 min before trigger for AWS) â”€â”€â”€
 
 # --- AWS (run now, wait ~20 min before triggering) ---
 $env:AWS_ACCESS_KEY_ID = "AKIA...experiment..."
 $env:AWS_SECRET_ACCESS_KEY = "...experiment-secret..."
-$env:AWS_DEFAULT_REGION = "us-east-1"
+$env:AWS_DEFAULT_REGION = "ap-south-1"
 aws sts get-caller-identity; aws iam get-user; aws iam list-users; aws iam list-roles
 aws s3 ls; aws s3 ls; aws s3 ls; aws s3 ls; aws s3 ls; aws s3 ls
 aws ec2 describe-instances; aws iam get-account-summary
@@ -1013,7 +1062,7 @@ az logout
 # â”€â”€ Open browser at http://localhost:5173 â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 # Dashboard should show: "No incidents detected yet"
 
-# â”€â”€ When evaluators are watching: Terminal D â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# â”€â”€ When evaluators are watching: Terminal E â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 cd C:\Users\ritwi\Downloads\BreachTrace
 python demo_trigger.py          # fires all three platforms at once
 # OR one by one:
@@ -1024,7 +1073,7 @@ python demo_trigger.py azure    # then show Azure incident
 
 ---
 
-## PART 17 â€” Research Page
+## PART 18 â€” Research Page
 
 Navigate to `http://localhost:5173/research` to show:
 
