@@ -128,6 +128,8 @@ class FinancialImpactLineOut(BaseModel):
 class IncidentDetailOut(IncidentSummaryOut):
     events: list[ForensicEventOut] = []
     report_text: Optional[str] = None
+    # deterministic | local_model | gemini — who wrote the report prose.
+    report_source: Optional[str] = None
     remediation_steps: list[str] = []
     estimated_financial_impact: Optional[str] = Field(None, validation_alias="financial_impact")
     # Computed fields — not stored in DB, derived from events at request time.
@@ -377,6 +379,7 @@ def patch_incident(
 
     if body.report_text is not None:
         incident.report_text = body.report_text
+        incident.report_source = None  # edited by hand; no longer any writer's output
 
     if body.remediation_steps is not None:
         incident.remediation_steps = body.remediation_steps

@@ -44,8 +44,20 @@ breachtrace/
 │   │   └── taxonomy_twilio.py
 │   ├── scorer/              # Severity aggregation (GDPR, financial impact)
 │   │   └── severity.py
-│   ├── reporter/            # Gemini LLM report generation
-│   │   └── gemini.py
+│   ├── reporter/            # Reports: verified facts → prose → checklist (all local)
+│   │   ├── facts.py         # Fact sheet every writer works from
+│   │   ├── compose.py       # Template writer + final markdown
+│   │   ├── remediation.py   # Deterministic remediation checklist
+│   │   ├── validate.py      # Grounding validator for model-written prose
+│   │   ├── local_model.py   # In-process specialised report model (llama.cpp)
+│   │   ├── writers.py       # Validated upgrade: local model / optional Gemini
+│   │   └── prompt.py        # The one prompt + output contract (train = run)
+│   ├── rag/                 # Natural-language search (retrieval only)
+│   │   ├── knowledge/       # Hand-written playbooks + FAQ
+│   │   ├── build_kb.py      # KB = playbooks + sections generated from code
+│   │   ├── index.py         # Hybrid BM25 + embedding search
+│   │   ├── query_parser.py  # Rules: platform / severity / category / dates
+│   │   └── search.py        # Incidents + highlighted passages
 │   ├── db/                  # SQLAlchemy models + session
 │   │   ├── database.py
 │   │   ├── models.py        # IncidentRecord, ForensicEvent, collection_status
@@ -188,6 +200,64 @@ ngrok http 8000
 ```
 
 ---
+
+## Reports and Search (local, offline)
+
+Everything runs inside the backend process on the CPU. No model server, no GPU,
+and no incident data sent to a cloud AI service.
+
+**Reports.** Every incident first gets a report built from a verified fact sheet
+by a template, so it completes within the 60-second target on any machine. When
+the specialised report model is installed, it rewrites the prose on this
+computer. Its output is accepted only if every IP, resource, amount and count it
+mentions is in the facts; otherwise the template report stays. The badge on the
+report says which writer produced it. Severity, money and the remediation
+checklist are computed in code and identical either way.
+
+**Search.** The *Search* page (and "Ask about this incident") answers in plain
+English by retrieval only: matching incidents plus exact passages from the
+knowledge base and your reports, with the best sentence highlighted. Nothing is
+generated, so nothing can be made up. Hybrid recall@5 on the eval set is 1.00
+(keyword-only fallback 0.95): `python -m rag.evaluate` from `backend/`.
+
+**Model files** (downloaded once into `MODEL_CACHE_DIR`, then offline):
+`python -m models_setup` from `backend/`. The embedding model is ~64 MB. The
+report model (~400 MB GGUF) is fetched from `REPORT_MODEL_URL` once published.
+
+### Building the report model
+
+The model is a ~0.5B model fine-tuned for one narrow job: turning a fact sheet
+into report prose. It is distilled from a large teacher and **only runs after it
+passes a quality gate against Gemini** (`<model>.gguf.gate.json` must record a
+pass for that exact file).
+
+```bash
+cd backend
+pip install -r requirements-research.txt
+# 1. Synthetic incidents from the real taxonomies → fact sheets (train/val/test)
+python -m research.report_distill facts --n 3000 --out ../data/report_facts.jsonl
+# 2. Teacher writes the targets with the shipped prompt; invalid drafts dropped
+GEMINI_API_KEY=... python -m research.report_distill teach \
+    --facts ../data/report_facts.jsonl --out ../data/report_sft.jsonl --teacher gemini-2.5-pro --drafts 3
+# 3. LoRA fine-tune on a GPU (e.g. Colab), then convert to GGUF Q4_K_M
+python research/report_train.py --data ../data/report_sft.jsonl --out reporter-0.5b
+# 4. Quality gate on the held-out test split (see research/report_eval.py)
+python -m research.report_eval generate --facts ../data/report_facts.jsonl \
+    --writer local:breachtrace-reporter-q4_k_m.gguf --out ../data/eval_local.jsonl
+python -m research.report_eval generate --facts ../data/report_facts.jsonl \
+    --writer gemini:gemini-2.5-flash --out ../data/eval_gemini.jsonl
+python -m research.report_eval judge --a ../data/eval_local.jsonl --b ../data/eval_gemini.jsonl --out ../data/judge.jsonl
+python -m research.report_eval human-sheet --a ../data/eval_local.jsonl --b ../data/eval_gemini.jsonl --out ../data/human.csv
+python -m research.report_eval gate --candidate ../data/eval_local.jsonl --reference ../data/eval_gemini.jsonl \
+    --judge ../data/judge.jsonl --human ../data/human_filled.csv --human-key ../data/human.csv.key.json \
+    --model breachtrace-reporter-q4_k_m.gguf
+```
+
+Gate (all must pass): grounding ≥ Gemini and ≥ 98%; fact coverage ≥ Gemini;
+blind pairwise win-or-tie vs Gemini ≥ 50% from both the LLM judge and the team's
+human ratings; p95 latency ≤ 15 s and peak RAM ≤ 1 GB on a CPU-only laptop. If
+the 0.5B model misses, step up: more data with best-of-3 drafts, then
+Qwen3-0.6B, then Qwen2.5-1.5B-Instruct.
 
 ## Environment Variables
 

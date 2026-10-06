@@ -39,14 +39,21 @@ services:
       # Overrides .env so the container reaches the db service rather than the
       # host's localhost, which inside a container is the container itself.
       DATABASE_URL: postgresql://${POSTGRES_USER:-breachtrace}:${POSTGRES_PASSWORD:-breachtrace_local_only}@db:5432/${POSTGRES_DB:-breachtrace}
+      # Report model + embedding model live on a volume so they download once.
+      MODEL_CACHE_DIR: /models
     ports:
       - "8000:8000"
     volumes:
       # Live reload during development.
       - ./backend:/app/backend
+      - breachtrace_models:/models
+    # models_setup is a no-op once the files are on the volume, so restarts
+    # stay fast and the stack runs offline after the first start.
     command: >
       sh -c "alembic upgrade head &&
+             python -m models_setup &&
              uvicorn main:app --host 0.0.0.0 --port 8000 --reload"
 
 volumes:
   breachtrace_pgdata:
+  breachtrace_models:

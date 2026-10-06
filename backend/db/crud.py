@@ -228,6 +228,7 @@ def finalize_non_forensic_incident(
     if unavailable_reason:
         incident.unavailable_reason = unavailable_reason
     incident.report_text = _non_forensic_report(incident, unavailable_reason)
+    incident.report_source = "deterministic"
     incident.remediation_steps = _non_forensic_remediation(incident)
     db.commit()
     db.refresh(incident)

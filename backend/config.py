@@ -13,7 +13,6 @@ REQUIRED_KEYS = [
     "GITHUB_TOKEN",
     "GITHUB_WEBHOOK_SECRET",
     "GITHUB_TEST_REPO",
-    "GEMINI_API_KEY",
     "DATABASE_URL",
     "ENVIRONMENT",
 ]
@@ -40,7 +39,34 @@ GITHUB_TOKEN: str = os.getenv("GITHUB_TOKEN", "")
 GITHUB_WEBHOOK_SECRET: str = os.getenv("GITHUB_WEBHOOK_SECRET", "")
 GITHUB_TEST_REPO: str = os.getenv("GITHUB_TEST_REPO", "")
 
+# Optional. Reports are written on this machine; Gemini is only an interim
+# upgrade provider and the teacher for building the distillation dataset.
 GEMINI_API_KEY: str = os.getenv("GEMINI_API_KEY", "")
+
+# ---------------------------------------------------------------------------
+# Local report model + knowledge base (see reporter/local_model.py, rag/)
+#
+# Everything runs in-process on the CPU. Model files live under MODEL_CACHE_DIR
+# (a Docker volume, or the app-data folder of a native install).
+# ---------------------------------------------------------------------------
+MODEL_CACHE_DIR: str = os.path.expanduser(
+    os.getenv("MODEL_CACHE_DIR", os.path.join("~", ".breachtrace", "models"))
+)
+# Which writer upgrades the template report: auto | local | gemini | none.
+# "auto" uses the local model when present, otherwise Gemini when a key is set.
+REPORT_PROVIDER: str = os.getenv("REPORT_PROVIDER", "auto").lower()
+REPORT_MODEL_ENABLED: bool = os.getenv("REPORT_MODEL_ENABLED", "true").lower() in ("1", "true", "yes")
+REPORT_MODEL_PATH: str = os.path.expanduser(
+    os.getenv("REPORT_MODEL_PATH", os.path.join(MODEL_CACHE_DIR, "breachtrace-reporter-q4_k_m.gguf"))
+)
+REPORT_MODEL_URL: str = os.getenv("REPORT_MODEL_URL", "")
+REPORT_MODEL_SHA256: str = os.getenv("REPORT_MODEL_SHA256", "")
+REPORT_MODEL_THREADS: int = int(os.getenv("REPORT_MODEL_THREADS", "0"))  # 0 = cores - 1
+# The model runs only with a passing `<model>.gate.json` (research/report_eval.py).
+REPORT_MODEL_REQUIRE_GATE: bool = os.getenv("REPORT_MODEL_REQUIRE_GATE", "true").lower() in ("1", "true", "yes")
+REPORT_MODEL_IDLE_S: int = int(os.getenv("REPORT_MODEL_IDLE_S", "300"))
+GEMINI_REPORT_MODEL: str = os.getenv("GEMINI_REPORT_MODEL", "gemini-2.5-flash")
+EMBED_MODEL: str = os.getenv("EMBED_MODEL", "BAAI/bge-small-en-v1.5")
 
 DATABASE_URL: str = os.getenv("DATABASE_URL", "")
 

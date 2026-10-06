@@ -16,9 +16,12 @@ import {
   Radio,
   RefreshCw,
   Timer,
+  Loader2,
+  Search as SearchIcon,
 } from 'lucide-react'
 import client from '@/api/client'
-import type { IncidentRecord } from '@/types'
+import type { IncidentRecord, ReportSource, SearchResult } from '@/types'
+import SearchResults from '@/components/SearchResults'
 import { derivePlatform, isForensicTier, PLATFORM_META, platformIdentity } from '@/lib/platform'
 import SeverityBadge from '@/components/SeverityBadge'
 import ForensicTimeline from '@/components/ForensicTimeline'
@@ -61,6 +64,91 @@ function duration(start: string, end: string | null) {
 }
 
 /* ─── markdown renderer ────────────────────────────────────────── */
+
+/**
+ * Who wrote the report prose. The facts, figures and checklist are computed in
+ * code and identical whichever writer ran; only the wording differs.
+ */
+function ReportSourceBadge({ source }: { source?: ReportSource | null }) {
+  if (!source) return null
+  const label = {
+    deterministic: 'Template',
+    local_model: 'On-device model',
+    gemini: 'Gemini',
+  }[source]
+  const title = {
+    deterministic: 'Written from verified facts by a fixed template.',
+    local_model: 'Written on this computer by the BreachTrace report model, and checked against the facts.',
+    gemini: 'Written by Gemini, and checked against the facts.',
+  }[source]
+  return (
+    <span
+      title={title}
+      className="ml-auto text-[10px] font-semibold uppercase tracking-wider border rounded-full px-2 py-0.5"
+      style={{ borderColor: 'var(--color-border)', color: 'var(--color-muted-foreground)' }}
+    >
+      {label}
+    </span>
+  )
+}
+
+/** Search scoped to one incident: its report passages plus the knowledge base. */
+function AskAboutIncident({ incidentId }: { incidentId: string }) {
+  const [question, setQuestion] = useState('')
+  const [result, setResult] = useState<SearchResult | null>(null)
+  const [loading, setLoading] = useState(false)
+
+  async function ask(q: string) {
+    if (q.trim().length < 2) return
+    setQuestion(q)
+    setLoading(true)
+    try {
+      const { data } = await client.post<SearchResult>('/assistant/search', {
+        question: q.trim(),
+        incident_id: incidentId,
+      })
+      setResult(data)
+    } catch {
+      setResult(null)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  return (
+    <div className="bg-card border rounded-sm shadow-sm p-6 sm:p-8 space-y-4">
+      <h2 className="text-lg font-semibold text-foreground flex items-center gap-2">
+        <div className="p-1.5 bg-primary/10 text-primary rounded-sm">
+          <SearchIcon size={18} />
+        </div>
+        Ask about this incident
+      </h2>
+      <form
+        className="flex gap-2"
+        onSubmit={(e) => {
+          e.preventDefault()
+          void ask(question)
+        }}
+      >
+        <input
+          value={question}
+          onChange={(e) => setQuestion(e.target.value)}
+          placeholder="e.g. how do I revoke this key?"
+          maxLength={500}
+          aria-label="Question about this incident"
+          className="flex-1 h-9 px-3 text-sm border rounded-sm bg-transparent outline-none focus:ring-2"
+          style={{ borderColor: 'var(--color-border)' }}
+        />
+        <Button type="submit" size="sm" disabled={loading || question.trim().length < 2}>
+          {loading ? <Loader2 size={14} className="animate-spin" /> : 'Ask'}
+        </Button>
+      </form>
+      {result && !loading && (
+        <SearchResults result={result} showIncidents={false} onSuggestion={(q) => void ask(q)} />
+      )}
+    </div>
+  )
+}
 
 function MarkdownReport({ text }: { text: string }) {
   return (
@@ -448,13 +536,16 @@ const IncidentDetail: React.FC = () => {
                 <div className="p-1.5 bg-primary/10 text-primary rounded-sm">
                    <AlertTriangle size={18} />
                 </div>
-                Executive Summary
+                Incident Report
+                <ReportSourceBadge source={incident.report_source} />
               </h2>
               <div className="prose prose-sm xl:prose-base dark:prose-invert max-w-none prose-p:leading-relaxed prose-headings:font-semibold">
                 <MarkdownReport text={incident.report_text} />
               </div>
             </div>
           )}
+
+          {incident.status === 'complete' && <AskAboutIncident incidentId={incident.incident_id} />}
 
           {/* Timeline, or an explanation of why there cannot be one.
               Tier-2 platforms expose no queryable audit log, so rendering an

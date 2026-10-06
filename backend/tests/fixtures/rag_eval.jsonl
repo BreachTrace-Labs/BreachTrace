@@ -1,0 +1,43 @@
+{"question": "my aws key ended up on github, how do I kill it", "expected": ["kb:playbooks_cloud-how-to-revoke-a-leaked-aws-access-key", "kb:platform-aws"]}
+{"question": "disable an AKIA key", "expected": ["kb:playbooks_cloud-how-to-revoke-a-leaked-aws-access-key", "kb:platform-aws"]}
+{"question": "what should I look for in my aws account after the leak", "expected": ["kb:playbooks_cloud-what-to-check-after-an-aws-key-leak"]}
+{"question": "attackers mining crypto in unused regions", "expected": ["kb:playbooks_cloud-what-to-check-after-an-aws-key-leak"]}
+{"question": "delete a gcp service account json key", "expected": ["kb:playbooks_cloud-how-to-revoke-a-leaked-google-cloud-service-account-key", "kb:platform-gcp"]}
+{"question": "firebase admin sdk key leaked", "expected": ["kb:playbooks_cloud-what-to-check-after-a-google-cloud-or-firebase-key-leak"]}
+{"question": "are google cloud data access logs on by default", "expected": ["kb:playbooks_cloud-what-to-check-after-a-google-cloud-or-firebase-key-leak", "kb:platform-gcp", "kb:faq-does-an-empty-audit-log-mean-the-credential-was-not-used"]}
+{"question": "reset an azure app registration secret", "expected": ["kb:playbooks_cloud-how-to-revoke-a-leaked-azure-client-secret-or-service-principal", "kb:platform-azure"]}
+{"question": "rotate azure storage account key", "expected": ["kb:playbooks_cloud-how-to-revoke-a-leaked-azure-client-secret-or-service-principal"]}
+{"question": "does the azure activity log show blob downloads", "expected": ["kb:playbooks_cloud-what-to-check-after-an-azure-credential-leak", "kb:platform-azure"]}
+{"question": "scrub a password out of old commits", "expected": ["kb:playbooks_cloud-how-to-remove-a-secret-from-git-history"]}
+{"question": "git filter-repo", "expected": ["kb:playbooks_cloud-how-to-remove-a-secret-from-git-history"]}
+{"question": "stop secrets being committed in future", "expected": ["kb:playbooks_cloud-how-to-prevent-the-next-leak"]}
+{"question": "roll my stripe api key", "expected": ["kb:playbooks_saas-how-to-roll-a-leaked-stripe-secret-key", "kb:platform-stripe"]}
+{"question": "someone changed where my stripe payouts go", "expected": ["kb:playbooks_saas-what-to-check-after-a-stripe-key-leak"]}
+{"question": "can stripe events show that customers were viewed", "expected": ["kb:playbooks_saas-what-to-check-after-a-stripe-key-leak", "kb:platform-stripe"]}
+{"question": "change twilio auth token", "expected": ["kb:playbooks_saas-how-to-rotate-a-leaked-twilio-auth-token", "kb:platform-twilio"]}
+{"question": "lots of sms to countries we don't serve", "expected": ["kb:playbooks_saas-what-to-check-after-a-twilio-leak"]}
+{"question": "my personal access token was pushed publicly", "expected": ["kb:playbooks_saas-how-to-revoke-a-leaked-github-personal-access-token", "kb:tier2-github-personal-access-token"]}
+{"question": "regenerate a slack incoming webhook", "expected": ["kb:playbooks_saas-how-to-revoke-a-leaked-slack-webhook-or-token"]}
+{"question": "npm token revoke", "expected": ["kb:playbooks_saas-how-to-revoke-a-leaked-npm-token"]}
+{"question": "someone published a malicious version of my package", "expected": ["kb:playbooks_saas-how-to-revoke-a-leaked-npm-token"]}
+{"question": "sendgrid key leaked what now", "expected": ["kb:playbooks_saas-how-to-revoke-a-leaked-sendgrid-api-key", "kb:tier2-sendgrid-api-key"]}
+{"question": "hugging face token exposed", "expected": ["kb:playbooks_saas-how-to-revoke-a-leaked-hugging-face-token", "kb:tier2-hugging-face-token"]}
+{"question": "postgres password in a connection string was committed", "expected": ["kb:playbooks_saas-what-to-do-about-a-leaked-database-connection-string", "kb:tier2-database-connection-string"]}
+{"question": "why can't I see what my github token did", "expected": ["kb:tier2-github-personal-access-token", "kb:playbooks_saas-how-to-revoke-a-leaked-github-personal-access-token"]}
+{"question": "why no activity for slack webhook", "expected": ["kb:tier2-slack-webhook-or-token", "kb:playbooks_saas-how-to-revoke-a-leaked-slack-webhook-or-token"]}
+{"question": "what is tier 2", "expected": ["kb:faq-what-is-the-difference-between-tier-1-and-tier-2-credentials"]}
+{"question": "which platforms support full forensics", "expected": ["kb:faq-what-is-the-difference-between-tier-1-and-tier-2-credentials"]}
+{"question": "timeline is empty does that mean I'm safe", "expected": ["kb:faq-does-an-empty-audit-log-mean-the-credential-was-not-used", "kb:faq-why-is-there-no-activity-timeline-for-my-incident"]}
+{"question": "when does the exposure window start", "expected": ["kb:faq-what-is-the-exposure-window"]}
+{"question": "how are incidents rated critical", "expected": ["kb:faq-how-is-the-overall-severity-calculated"]}
+{"question": "what does resource abuse mean", "expected": ["kb:faq-what-are-the-impact-categories"]}
+{"question": "when do reads count as exfiltration", "expected": ["kb:faq-when-is-data-access-escalated-to-exfiltration"]}
+{"question": "is the dollar amount real or estimated", "expected": ["kb:faq-are-the-financial-figures-exact"]}
+{"question": "do I have to report this under GDPR", "expected": ["kb:compliance-gdpr", "kb:faq-when-does-breachtrace-flag-gdpr-pci-dss-or-soc-2"]}
+{"question": "PCI DSS incident response", "expected": ["kb:compliance-pci-dss", "kb:faq-when-does-breachtrace-flag-gdpr-pci-dss-or-soc-2"]}
+{"question": "does my data get sent to the cloud", "expected": ["kb:faq-does-breachtrace-send-my-data-anywhere"]}
+{"question": "who wrote this report", "expected": ["kb:faq-who-writes-the-incident-report"]}
+{"question": "what does CreateAccessKey mean", "expected": ["kb:taxonomy-aws-privilege_escalation*"]}
+{"question": "is charge.succeeded serious", "expected": ["kb:taxonomy-stripe-financial_abuse*"]}
+{"question": "setIamPolicy", "expected": ["kb:taxonomy-gcp-privilege_escalation*"]}
+{"question": "roleAssignments write azure", "expected": ["kb:taxonomy-azure-privilege_escalation*", "kb:playbooks_cloud-what-to-check-after-an-azure-credential-leak"]}

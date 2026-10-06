@@ -3,6 +3,7 @@ from datetime import datetime
 
 from sqlalchemy import (
     Boolean,
+    LargeBinary,
     CheckConstraint,
     Column,
     DateTime,
@@ -128,7 +129,12 @@ class IncidentRecord(Base):
         nullable=True,
         comment="1=Low 2=Medium 3=High 4=Critical",
     )
-    report_text = Column(Text, nullable=True, comment="Full Gemini-generated report")
+    report_text = Column(Text, nullable=True, comment="Full incident report (markdown)")
+    report_source = Column(
+        VARCHAR(20),
+        nullable=True,
+        comment="Who wrote the prose: deterministic | local_model | gemini",
+    )
     remediation_steps = Column(
         JSONB,
         nullable=False,
@@ -455,6 +461,38 @@ class CollectionStatus(Base):
             f"platform={self.platform!r} status={self.status!r} "
             f"events={self.event_count}>"
         )
+
+
+# ---------------------------------------------------------------------------
+# 3b. knowledge_chunks — natural-language search index (rag/)
+# ---------------------------------------------------------------------------
+class KnowledgeChunk(Base):
+    """
+    One searchable passage: a knowledge-base section or part of an incident.
+
+    Embeddings are stored as raw float32 bytes and searched in-process, so the
+    table needs no vector extension and works on Postgres and SQLite alike —
+    BreachTrace may ship without Docker.
+    """
+
+    __tablename__ = "knowledge_chunks"
+
+    id = Column(String(120), primary_key=True, comment="'kb:<slug>' or 'incident:<id>:<n>'")
+    source_type = Column(VARCHAR(10), nullable=False, comment="kb | incident")
+    source_id = Column(String(120), nullable=False, comment="KB section slug or incident_id")
+    title = Column(Text, nullable=False)
+    text = Column(Text, nullable=False)
+    embedding = Column(LargeBinary, nullable=True, comment="float32 vector; NULL = keyword search only")
+    content_hash = Column(VARCHAR(64), nullable=False, comment="sha256 of title+text")
+    updated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+    __table_args__ = (
+        CheckConstraint("source_type IN ('kb', 'incident')", name="ck_knowledge_chunks_source_type"),
+        Index("ix_knowledge_chunks_source", "source_type", "source_id"),
+    )
+
+    def __repr__(self) -> str:
+        return f"<KnowledgeChunk {self.id!r}>"
 
 
 # ---------------------------------------------------------------------------

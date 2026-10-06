@@ -23,6 +23,7 @@ from db.database import SessionLocal, get_db
 from detector.match_resolver import resolve_match
 from detector.scanner import scan
 from pipeline import run_collection_pipeline
+from rag.index import index_incident_in_background
 from window.calculator import is_key_revoked, record_exposure_start
 
 logger = logging.getLogger(__name__)
@@ -218,6 +219,7 @@ async def github_webhook(
                 finalize_non_forensic_incident(
                     db, incident.incident_id, resolved.unavailable_reason
                 )
+                background_tasks.add_task(index_incident_in_background, incident.incident_id)
 
             # Launch revocation monitor for known experiment credentials only.
             if match_platform == "aws" and credential == config.EXPERIMENT_AWS_ACCESS_KEY_ID:

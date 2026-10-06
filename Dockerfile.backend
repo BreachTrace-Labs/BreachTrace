@@ -7,8 +7,9 @@ FROM python:3.12-slim
 
 # psycopg2-binary ships wheels, but build-essential + libpq-dev keep the image
 # buildable if a dependency ever needs to compile from source.
+# cmake: llama-cpp-python builds llama.cpp from source for the image's CPU.
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends build-essential libpq-dev curl \
+    && apt-get install -y --no-install-recommends build-essential cmake libpq-dev curl \
     && rm -rf /var/lib/apt/lists/*
 
 ENV PYTHONDONTWRITEBYTECODE=1 \

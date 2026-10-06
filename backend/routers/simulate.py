@@ -23,6 +23,7 @@ from db.database import SessionLocal, get_db
 from detector.match_resolver import match_credential_value, resolve_match
 from detector.scanner import scan
 from pipeline import run_collection_pipeline
+from rag.index import index_incident_in_background
 from window.calculator import is_key_revoked
 
 logger = logging.getLogger(__name__)
@@ -160,6 +161,7 @@ async def simulate(
             finalize_non_forensic_incident(
                 db, incident.incident_id, resolved.unavailable_reason
             )
+            background_tasks.add_task(index_incident_in_background, incident.incident_id)
 
         # Start revocation monitor if a secret was provided.
         if body.secret_access_key and resolved.platform == "aws":

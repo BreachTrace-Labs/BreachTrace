@@ -18,8 +18,10 @@ pydantic-settings
 python-dotenv
 tenacity
 
-# AI
-google-generativeai
+# Reports + search — everything runs in-process on the CPU (no model server).
+llama-cpp-python>=0.3.0   # local report model (GGUF); CPU build
+fastembed>=0.4            # bge-small embeddings for search (ONNX, ~70 MB model)
+numpy
 
 # GitHub
 PyGithub

@@ -1,11 +1,12 @@
 import { NavLink, useLocation } from 'react-router-dom'
-import { Moon, Sun, Activity, FlaskConical, ShieldAlert, Link2 } from 'lucide-react'
+import { Moon, Sun, Activity, FlaskConical, ShieldAlert, Link2, Search } from 'lucide-react'
 import { useTheme } from '@/lib/theme'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 
 const NAV = [
   { to: '/', label: 'Monitor', icon: Activity, exact: true },
+  { to: '/search', label: 'Search', icon: Search, exact: false },
   { to: '/research', label: 'Research', icon: FlaskConical, exact: false },
   { to: '/connect', label: 'Connect', icon: Link2, exact: false },
 ]

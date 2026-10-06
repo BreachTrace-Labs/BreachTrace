@@ -1,4 +1,12 @@
-"""Gemini-based incident report generator."""
+"""
+Legacy Gemini report generator (free-form prompt).
+
+No longer called by the pipeline: reports are now built from a verified fact
+sheet (reporter/facts.py) and written by the template or the local report model
+(reporter/writers.py), with Gemini available there only as an optional writer
+speaking the same structured contract. Kept for the vocabulary tests and the
+research harness; PLATFORM_PROFILES now lives in reporter/profiles.py.
+"""
 
 from __future__ import annotations
 
@@ -6,143 +14,29 @@ import logging
 from collections import Counter
 from typing import Iterable, Sequence
 
-import google.generativeai as genai
-
 import config
 from normalizer.schema import ForensicEvent
+from reporter.profiles import PLATFORM_PROFILES, _PlatformProfile  # noqa: F401 — re-exported
 
 logger = logging.getLogger(__name__)
 
-_model: genai.GenerativeModel | None = None
-
-
-# ---------------------------------------------------------------------------
-# Platform profiles
-# ---------------------------------------------------------------------------
-# A report about a GCP leak that talks about S3 buckets and `aws iam` commands
-# is worse than no report — it tells the reader to run commands that do not
-# exist on their platform. Each profile supplies the vocabulary and the
-# revocation command Gemini must use for that platform.
-
-class _PlatformProfile:
-    def __init__(
-        self,
-        *,
-        name: str,
-        audit_log: str,
-        identity_term: str,
-        vocabulary: str,
-        revoke_command: str,
-        review_command: str,
-        blind_spot: str = "",
-    ) -> None:
-        self.name = name
-        self.audit_log = audit_log
-        self.identity_term = identity_term
-        self.vocabulary = vocabulary
-        self.revoke_command = revoke_command
-        self.review_command = review_command
-        # What this platform's audit log CANNOT see. Surfaced in the prompt so
-        # the model cannot describe an empty result as "nothing happened".
-        self.blind_spot = blind_spot
-
-
-PLATFORM_PROFILES: dict[str, _PlatformProfile] = {
-    "aws": _PlatformProfile(
-        name="AWS",
-        audit_log="CloudTrail",
-        blind_spot=(
-            "CloudTrail records management events reliably, but S3 and Lambda data events are only logged when data-event logging is explicitly enabled, which it often is not."
-        ),
-        identity_term="access key ID",
-        vocabulary=(
-            "Use AWS terms only: S3 buckets and objects, EC2 instances, IAM users, "
-            "roles and policies, regions. Never mention Cloud Storage, resource "
-            "groups, service accounts or subscriptions."
-        ),
-        revoke_command="aws iam delete-access-key --access-key-id <KEY_ID>",
-        review_command="aws cloudtrail lookup-events --lookup-attributes "
-                       "AttributeKey=AccessKeyId,AttributeValue=<KEY_ID>",
-    ),
-    "gcp": _PlatformProfile(
-        name="Google Cloud",
-        audit_log="Cloud Audit Logs",
-        blind_spot=(
-            "Admin Activity logs are always on, but Data Access logs — which cover object reads — must be explicitly enabled per service and are off by default."
-        ),
-        identity_term="service account email",
-        vocabulary=(
-            "Use Google Cloud terms only: Cloud Storage buckets and objects, Compute "
-            "Engine instances, service accounts, IAM roles and bindings, projects, "
-            "regions and zones. Never mention S3, EC2, access keys, resource groups "
-            "or subscriptions."
-        ),
-        revoke_command="gcloud iam service-accounts keys delete <KEY_ID> "
-                       "--iam-account=<SERVICE_ACCOUNT_EMAIL>",
-        review_command='gcloud logging read \'protoPayload.authenticationInfo.'
-                       'principalEmail="<SERVICE_ACCOUNT_EMAIL>"\'',
-    ),
-    "azure": _PlatformProfile(
-        name="Microsoft Azure",
-        audit_log="Activity Log",
-        blind_spot=(
-            "The Azure Activity Log records control-plane operations only. Data-plane reads, such as downloading a blob, do not appear unless diagnostic settings were configured in advance."
-        ),
-        identity_term="client ID (app registration)",
-        vocabulary=(
-            "Use Azure terms only: storage accounts and blobs, virtual machines, "
-            "service principals and app registrations, role assignments, resource "
-            "groups, subscriptions and tenants. Never mention S3, EC2, IAM users, "
-            "buckets or service account keys."
-        ),
-        revoke_command="az ad app credential delete --id <CLIENT_ID> --key-id <KEY_ID>",
-        review_command="az monitor activity-log list --caller <CLIENT_ID>",
-    ),
-    # Without these two, a Stripe or Twilio incident fell back to the AWS
-    # profile and told the developer to run `aws iam delete-access-key`.
-    "stripe": _PlatformProfile(
-        name="Stripe",
-        audit_log="Stripe Events",
-        blind_spot=(
-            "Stripe Events record state changes only — charges, refunds, payouts, account changes. Reading customer or payment records creates no event, so data that was only viewed or exported does not appear. Events also cover the whole account, so some may be the owner's own legitimate activity."
-        ),
-        identity_term="secret API key",
-        vocabulary=(
-            "Use Stripe terms only: charges, payment intents, refunds, payouts, "
-            "customers, payment methods, bank accounts and the Dashboard. Never "
-            "mention S3, EC2, IAM, buckets, instances or cloud regions."
-        ),
-        revoke_command="Stripe Dashboard → Developers → API keys → Roll key "
-                       "(set the old key to expire now)",
-        review_command="stripe events list --limit 100 "
-                       "(or Dashboard → Developers → Events and Logs)",
-    ),
-    "twilio": _PlatformProfile(
-        name="Twilio",
-        audit_log="Twilio Messages and Calls logs",
-        blind_spot=(
-            "Twilio lists messages sent and calls placed, but reading message history leaves no record, so one-time passcodes or personal data in past messages may have been viewed without trace. Account configuration changes are not covered either."
-        ),
-        identity_term="Account SID",
-        vocabulary=(
-            "Use Twilio terms only: messages (SMS), calls, phone numbers, the "
-            "Account SID, the Auth Token and the Console. Never mention S3, EC2, "
-            "IAM, buckets, instances or cloud regions."
-        ),
-        revoke_command="Twilio Console → Account → API keys & tokens → request a "
-                       "secondary Auth Token, then promote it to primary",
-        review_command="twilio api:core:messages:list and "
-                       "twilio api:core:calls:list (or Console → Monitor → Logs)",
-    ),
-}
+_model = None  # google.generativeai.GenerativeModel, created lazily
 
 _DEFAULT_PLATFORM = "aws"
 
 
-def _get_model() -> genai.GenerativeModel:
-    """Return the Gemini model, initialising it on first use."""
+def _get_model():
+    """
+    Return the Gemini model, initialising it on first use.
+
+    The SDK is imported here, not at module level: Gemini is optional (used for
+    training-data generation), and the shipped app must import this module
+    without it installed.
+    """
     global _model
     if _model is None:
+        import google.generativeai as genai
+
         genai.configure(api_key=config.GEMINI_API_KEY)
         _model = genai.GenerativeModel("gemma-3-27b-it")
     return _model

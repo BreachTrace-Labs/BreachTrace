@@ -1,0 +1,11 @@
+# Research-only dependencies — NOT shipped to users.
+# Install on top of requirements.txt when building or evaluating the report model:
+#   pip install -r backend/requirements.txt -r backend/requirements-research.txt
+#
+# google-genai  — Gemini as distillation teacher, pairwise judge, and optional
+#                 interim report writer (reporter/writers.py).
+# GPU training dependencies are listed in research/report_train.py; run that
+# script on a GPU machine (e.g. Colab), not here.
+
+google-genai>=1.0
+google-generativeai       # legacy reporter/gemini.py only

@@ -8,7 +8,8 @@ FastAPI BackgroundTask (non-blocking) and executes all five stages:
   2. Persists each ForensicEvent to the database.
   3. Classifies every event (impact_category + severity_weight).
   4. Scores the incident (overall severity, GDPR flag, financial impact).
-  5. Generates a Gemini forensic report + remediation checklist.
+  5. Writes the report from verified facts (template first; the local report
+     model may upgrade the prose once the incident is complete).
 
 Status transitions: collecting → classifying → scoring → reporting → complete
 Each stage is timed; a warning is logged if total pipeline exceeds 60 seconds.
@@ -37,7 +38,10 @@ from db.crud import (
 from db.database import SessionLocal
 from detector.patterns import mask_secret
 from db.models import IncidentRecord
-from reporter.gemini import generate_report
+from rag.index import index_incident
+from reporter.compose import deterministic_sections, render_report
+from reporter.facts import build_fact_sheet
+from reporter.writers import upgrade_report
 from scorer.severity import (
     check_gdpr_flag,
     check_pcidss_flag,
@@ -96,6 +100,43 @@ def _extract_remediation_steps(report_text: str) -> list[str]:
                 steps.append(stripped)
 
     return steps
+
+
+def _index_incident_safely(db: Session, incident_id: str) -> None:
+    try:
+        index_incident(db, incident_id)
+    except Exception:
+        db.rollback()
+        logger.exception("Search indexing failed for incident %s", incident_id)
+
+
+def _upgrade_report(db: Session, incident_id: str, facts: dict) -> bool:
+    """
+    Replace the template prose with a model-written version if one validates.
+
+    The remediation checklist is built in code and identical in both versions,
+    so remediation_steps is left as is.
+    """
+    t0 = time.monotonic()
+    try:
+        upgraded = upgrade_report(facts)
+    except Exception:
+        logger.exception("Report upgrade failed for incident %s", incident_id)
+        return False
+    if upgraded is None:
+        return False
+
+    report_text, source = upgraded
+    incident = db.get(IncidentRecord, incident_id)
+    if incident is None:
+        return False
+    incident.report_text = report_text
+    incident.report_source = source
+    db.commit()
+    logger.info(
+        "Report for incident %s upgraded by %s in %.1fs", incident_id, source, time.monotonic() - t0
+    )
+    return True
 
 
 def run_collection_pipeline(
@@ -272,7 +313,7 @@ def run_collection_pipeline(
         )
         update_status(db, incident_id, "reporting")
 
-        # ── STAGE 5: Generate Gemini report ───────────────────────────────
+        # ── STAGE 5: Report (template now, model upgrade after completion) ─
         t0 = time.monotonic()
         try:
             incident_record = db.get(IncidentRecord, incident_id)
@@ -290,24 +331,23 @@ def run_collection_pipeline(
                 exp_end = exp_end.replace(tzinfo=timezone.utc)
             exposure_duration_s = max(0, int((exp_end - exp_start).total_seconds()))
 
-            affected_resources = sorted(
-                {e.affected_resource for e in classified_events if e.affected_resource}
-            )
-            source_ips = sorted(
-                {e.source_ip for e in classified_events if e.source_ip}
-            )
-
-            report_text = generate_report(
-                events=classified_events,
+            # Facts are computed once; every writer works from the same sheet.
+            facts = build_fact_sheet(
+                classified_events,
+                platform=platform,
                 overall_severity=overall_severity,
                 exposure_duration_seconds=exposure_duration_s,
-                affected_resources=affected_resources,
-                source_ips=source_ips,
-                platform=platform,
+                credential_type=incident_record.credential_type,
+                credential_hint=incident_record.credential_hint,
             )
+            # The template report lands immediately, so the incident completes
+            # within the 60s target on any machine. A model may upgrade the
+            # prose afterwards (see _upgrade_report).
+            report_text = render_report(facts, deterministic_sections(facts))
             remediation_steps = _extract_remediation_steps(report_text)
 
             incident_record.report_text = report_text
+            incident_record.report_source = "deterministic"
             incident_record.remediation_steps = remediation_steps
             db.commit()
         except Exception:
@@ -336,6 +376,14 @@ def run_collection_pipeline(
                 incident_id,
                 total_elapsed,
             )
+
+
+        # ── After completion: search index + optional model-written prose ──
+        # Outside the timed stages on purpose: neither may delay or fail the
+        # incident, which is already complete with a grounded report.
+        _index_incident_safely(db, incident_id)
+        if _upgrade_report(db, incident_id, facts):
+            _index_incident_safely(db, incident_id)
 
     except Exception:
         logger.exception("Unexpected error in pipeline for %s", incident_id)

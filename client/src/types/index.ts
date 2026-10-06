@@ -68,6 +68,8 @@ export interface IncidentRecord {
   events: ForensicEvent[]
   overall_severity: 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL' | null
   report_text: string | null
+  /** Who wrote the report prose. The facts and checklist are the same either way. */
+  report_source?: ReportSource | null
   remediation_steps: string[]
   gdpr_flag: boolean
   estimated_financial_impact: string | null
@@ -159,4 +161,43 @@ export interface PlatformComparison {
   by_platform: Record<string, PlatformStats>
   /** Platforms with no timing data are omitted entirely, never reported as 0. */
   detection_latency_by_platform: Record<string, number>
+}
+
+/** deterministic = template from verified facts; local_model = the on-device report model. */
+export type ReportSource = 'deterministic' | 'local_model' | 'gemini'
+
+/* ─── Natural-language search (POST /assistant/search) ─────────────────── */
+
+export interface SearchIncident {
+  incident_id: string
+  platform: string
+  credential_type: string
+  credential_hint: string
+  repo_url: string
+  exposure_start: string | null
+  status: string
+  overall_severity: IncidentRecord['overall_severity']
+  forensic_tier: number
+}
+
+export interface SearchPassage {
+  id: string
+  source_type: 'kb' | 'incident'
+  source_id: string
+  title: string
+  text: string
+  /** The sentence of `text` that best answers the question. */
+  highlight: string
+  similarity: number | null
+}
+
+export interface SearchResult {
+  question: string
+  intent: 'incidents' | 'knowledge'
+  filters: Record<string, unknown>
+  incidents: SearchIncident[]
+  passages: SearchPassage[]
+  confident: boolean
+  semantic: boolean
+  suggestions: string[]
 }

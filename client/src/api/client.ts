@@ -72,7 +72,7 @@ const mockClient = {
     throw { response: { status: 404, data: { detail: `No mock for ${url}` } } }
   },
   // Stub — POST is not used while VITE_USE_MOCK=true; throws clearly instead of silently failing
-  post: async (_url: string) => {
+  post: async (_url: string, _body?: unknown) => {
     const refreshMatch = _url.match(/^\/incidents\/([^/]+)\/refresh$/)
     if (refreshMatch) {
       await sleep(MOCK_DELAY_MS)
@@ -90,9 +90,43 @@ const mockClient = {
         },
       }
     }
+    if (_url === '/assistant/search') {
+      await sleep(MOCK_DELAY_MS)
+      return { data: mockSearch(String((_body as { question?: string })?.question ?? '')) }
+    }
     throw new Error(`POST ${_url} is not implemented in the mock client`)
   },
 } as Pick<ReturnType<typeof axios.create>, 'get' | 'post'>
+
+/** Mock search: platform-word match over mock incidents. The real one is retrieval over a KB. */
+function mockSearch(question: string) {
+  const q = question.toLowerCase()
+  const incidents = MOCK_INCIDENTS.filter((i) =>
+    ['aws', 'gcp', 'azure', 'stripe', 'twilio'].some(
+      (p) => q.includes(p) && (i.platform ?? '').toLowerCase() === p,
+    ),
+  ).map((i) => ({
+    incident_id: i.incident_id,
+    platform: i.platform ?? 'aws',
+    credential_type: i.credential_type,
+    credential_hint: i.credential_hint,
+    repo_url: i.repo_url,
+    exposure_start: i.exposure_start,
+    status: i.status,
+    overall_severity: i.overall_severity,
+    forensic_tier: i.forensic_tier ?? 1,
+  }))
+  return {
+    question,
+    intent: incidents.length ? 'incidents' : 'knowledge',
+    filters: {},
+    incidents,
+    passages: [],
+    confident: incidents.length > 0,
+    semantic: false,
+    suggestions: incidents.length ? [] : ['aws incidents', 'stripe incidents'],
+  }
+}
 
 /* ─── real client ─────────────────────────────────────────────── */
 

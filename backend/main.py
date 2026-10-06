@@ -8,7 +8,7 @@ import config
 
 config.validate_config()
 
-from routers import incidents, research, simulate, webhook  # noqa: E402 — must come after validate_config
+from routers import assistant, incidents, research, simulate, webhook  # noqa: E402 — must come after validate_config
 
 app = FastAPI(
     title="BreachTrace",
@@ -32,6 +32,12 @@ app.include_router(incidents.router)
 app.include_router(incidents.legacy_router)
 app.include_router(research.router)
 app.include_router(simulate.router)
+app.include_router(assistant.router)
+
+
+@app.on_event("startup")
+def _warm_search_index() -> None:
+    assistant.warm_index_in_background()
 
 
 # ---------------------------------------------------------------------------

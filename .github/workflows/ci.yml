@@ -38,7 +38,10 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -r backend/requirements.txt -r backend/requirements-dev.txt
+          # llama-cpp-python compiles llama.cpp from source (minutes) and the
+          # tests never load it — the report model is stubbed — so skip it here.
+          grep -v '^llama-cpp-python' backend/requirements.txt > /tmp/requirements-ci.txt
+          pip install -r /tmp/requirements-ci.txt -r backend/requirements-dev.txt
 
       - name: Run test suite
         # No credentials needed — every collector is stubbed and conftest.py
