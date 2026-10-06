@@ -40,11 +40,12 @@ Stripe omits the field.
 from __future__ import annotations
 
 import logging
+import re
 import uuid
 from datetime import datetime, timezone
 from typing import Any, Iterator
 
-from tenacity import retry, stop_after_attempt, wait_exponential
+from tenacity import retry, retry_if_exception, stop_after_attempt, wait_exponential
 
 from collectors.base import BaseCollector
 from normalizer.schema import ForensicEvent
@@ -58,12 +59,50 @@ _PAGE_SIZE = 100
 # is already a maximal-severity finding; more pages add cost, not information.
 _MAX_EVENTS = 10_000
 
+_SECRET_KEY_PATTERN = re.compile(r"^(?:sk|rk)_(?:live|test)_[0-9a-zA-Z]+$")
+
 
 def _to_unix(moment: datetime) -> int:
     """Stripe filters on Unix seconds. Naive datetimes are assumed UTC."""
     if moment.tzinfo is None:
         moment = moment.replace(tzinfo=timezone.utc)
     return int(moment.timestamp())
+
+
+def _is_usable_key(value: str | None) -> bool:
+    """True for a full secret/restricted key; False for a masked hint or None."""
+    return bool(value) and _SECRET_KEY_PATTERN.match(value) is not None
+
+
+def _is_transient(exc: BaseException) -> bool:
+    """
+    Retry rate limits, timeouts and 5xx only. A revoked key or a bad request
+    will fail identically every time, and retrying it would delay the fallback
+    to STRIPE_API_KEY by the whole backoff schedule.
+    """
+    import stripe
+
+    return not isinstance(
+        exc,
+        (stripe.AuthenticationError, stripe.PermissionError, stripe.InvalidRequestError),
+    )
+
+
+def _event_to_dict(event: Any) -> dict:
+    """
+    Plain-dict view of a Stripe event, nested objects included.
+
+    `dict(event)` is shallow — `data.object` stays a StripeObject, which breaks
+    both `.get()` chains and JSON serialisation into raw_data. Newer SDKs
+    recurse in `to_dict()`; older ones only via `to_dict_recursive()`.
+    """
+    if isinstance(event, dict):
+        return event
+    try:
+        return event.to_dict(recursive=True, for_json=True)
+    except TypeError:
+        # stripe < 8: to_dict() takes no arguments and is shallow.
+        return event.to_dict_recursive()
 
 
 class StripeEventsCollector(BaseCollector):
@@ -77,19 +116,18 @@ class StripeEventsCollector(BaseCollector):
         import config
 
         self._stripe = stripe
-        # The leaked key itself is the natural credential to query with, but it
-        # may already be revoked by the time the pipeline runs. Fall back to the
-        # configured account key so collection still works post-revocation.
-        self._api_key = api_key or getattr(config, "STRIPE_API_KEY", "")
-        if not self._api_key:
-            raise ValueError(
-                "No Stripe API key available: set STRIPE_API_KEY or pass one explicitly"
-            )
+        # The leaked key itself is the natural credential to query with: it is
+        # the only one guaranteed to read the account (and mode — live vs test)
+        # it belongs to. It may already be revoked by the time the pipeline
+        # runs, so the configured account key is kept as a fallback.
+        self._fallback_key = api_key or getattr(config, "STRIPE_API_KEY", "")
+        self._api_key = self._fallback_key
 
     # ------------------------------------------------------------------
     # Retryable page fetch
     # ------------------------------------------------------------------
     @retry(
+        retry=retry_if_exception(_is_transient),
         wait=wait_exponential(multiplier=1, min=2, max=30),
         stop=stop_after_attempt(5),
         reraise=True,
@@ -153,13 +191,45 @@ class StripeEventsCollector(BaseCollector):
         logger.info(
             "[STRIPE] Querying events %s -> %s", start_time.isoformat(), end_time.isoformat()
         )
-        events = [self._map_event(e) for e in self._iter_events(start_time, end_time)]
-        logger.info("[STRIPE] Collected %d forensic events", len(events))
-        return events
+        candidates = [
+            key
+            for key in dict.fromkeys(
+                (credential if _is_usable_key(credential) else "", self._fallback_key)
+            )
+            if key
+        ]
+        if not candidates:
+            raise ValueError(
+                "No Stripe API key available: the leaked key is not usable and "
+                "STRIPE_API_KEY is not set"
+            )
+
+        for attempt, key in enumerate(candidates):
+            self._api_key = key
+            try:
+                events = [self._map_event(e) for e in self._iter_events(start_time, end_time)]
+            except (self._stripe.AuthenticationError, self._stripe.PermissionError) as exc:
+                # Revoked, rolled, or a restricted key without events:read.
+                if attempt == len(candidates) - 1:
+                    raise
+                logger.warning(
+                    "[STRIPE] Leaked key cannot read events (%s); "
+                    "falling back to STRIPE_API_KEY",
+                    type(exc).__name__,
+                )
+                continue
+            logger.info(
+                "[STRIPE] Collected %d forensic events using the %s key",
+                len(events),
+                "leaked" if key == credential else "configured",
+            )
+            return events
+
+        return []  # unreachable: the loop returns or raises
 
     def _map_event(self, event: Any) -> ForensicEvent:
         """Map one Stripe event onto the shared ForensicEvent schema."""
-        raw = event.to_dict() if hasattr(event, "to_dict") else dict(event)
+        raw = _event_to_dict(event)
 
         data_object = (raw.get("data") or {}).get("object") or {}
         request = raw.get("request") or {}
@@ -186,7 +256,9 @@ class StripeEventsCollector(BaseCollector):
             user_agent=None,
             affected_resource=data_object.get("id"),
             resource_type=data_object.get("object"),
-            principal_id=request.get("idempotency_key") or request.get("id"),
+            # The request id (req_…) is what Stripe's dashboard request log is
+            # keyed by, so it is the useful attribution handle.
+            principal_id=request.get("id") or request.get("idempotency_key"),
             success=True,  # Stripe only emits events for actions that happened
             error_code=None,
             raw_data=raw,

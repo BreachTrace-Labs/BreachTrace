@@ -195,6 +195,47 @@ def _azure_classify(event: ForensicEvent) -> tuple[str, int]:
 
 
 # ────────────────────────────────────────────────────────────────────────────
+# Stripe / Twilio heuristics (dot-separated `resource.action` names)
+# ────────────────────────────────────────────────────────────────────────────
+# Both taxonomies are exact-match tables, but the vendors emit far more event
+# types than any table lists (Stripe alone has 200+). An unlisted type must not
+# fall through to the AWS heuristic, which files every one of them as
+# reconnaissance/1 — a `charge.dispute.closed` is not reconnaissance.
+
+# Stripe resources whose events mean money moved or was set up to move.
+_STRIPE_MONEY_PREFIXES = (
+    "charge.", "payment_intent.", "payout.", "transfer.", "refund.",
+    "invoice.", "checkout.", "subscription_schedule.", "topup.",
+)
+
+
+def _stripe_classify(event: ForensicEvent) -> tuple[str, int]:
+    taxonomy_entry = STRIPE_API_TAXONOMY.get(event.api_action)
+    if taxonomy_entry:
+        return taxonomy_entry["category"], taxonomy_entry["severity"]
+
+    if event.api_action.startswith(_STRIPE_MONEY_PREFIXES):
+        return FINANCIAL_ABUSE, 2
+    # The Events API records state changes only, so an unlisted event is still
+    # a write against the account rather than a read.
+    return RESOURCE_ABUSE, 2
+
+
+def _twilio_classify(event: ForensicEvent) -> tuple[str, int]:
+    taxonomy_entry = TWILIO_API_TAXONOMY.get(event.api_action)
+    if taxonomy_entry:
+        return taxonomy_entry["category"], taxonomy_entry["severity"]
+
+    # The collector emits `message.<status>` / `call.<status>` and Twilio has
+    # more statuses than the taxonomy lists (sending, accepted, ringing, …).
+    if event.api_action.startswith("message."):
+        return COMMUNICATION_ABUSE, 2
+    if event.api_action.startswith("call."):
+        return COMMUNICATION_ABUSE, 3
+    return RECONNAISSANCE, 1
+
+
+# ────────────────────────────────────────────────────────────────────────────
 # Unified dispatch
 # ────────────────────────────────────────────────────────────────────────────
 
@@ -203,6 +244,10 @@ def _classify_action(event: ForensicEvent) -> tuple[str, int]:
         return _gcp_classify(event)
     if event.platform == "azure":
         return _azure_classify(event)
+    if event.platform == "stripe":
+        return _stripe_classify(event)
+    if event.platform == "twilio":
+        return _twilio_classify(event)
 
     # AWS (default)
     taxonomy_classification = _taxonomy_classification(event)

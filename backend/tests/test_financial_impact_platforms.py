@@ -144,20 +144,20 @@ def test_stripe_reports_actual_charged_amount():
     Stripe amounts arrive in minor units (cents). Reporting 41250 instead of
     412.50 would overstate the impact by 100x in the incident report.
     """
-    events = [_stripe_event("charge.created", 41250)]
+    events = [_stripe_event("charge.succeeded", 41250)]
     result = compute_financial_impact(events)
     assert "412.50 USD charged" in result
 
 
 def test_stripe_sums_multiple_charges():
-    events = [_stripe_event("charge.created", 10000), _stripe_event("charge.created", 5050)]
+    events = [_stripe_event("charge.succeeded", 10000), _stripe_event("charge.succeeded", 5050)]
     assert "150.50 USD charged" in compute_financial_impact(events)
     assert "2 transaction(s)" in compute_financial_impact(events)
 
 
 def test_stripe_refunds_reported_separately_from_charges():
     """Charges and refunds are different harms and must not be netted to zero."""
-    events = [_stripe_event("charge.created", 20000), _stripe_event("refund.created", 20000)]
+    events = [_stripe_event("charge.succeeded", 20000), _stripe_event("refund.created", 20000)]
     result = compute_financial_impact(events)
     assert "charged" in result
     assert "refunded" in result
@@ -165,7 +165,7 @@ def test_stripe_refunds_reported_separately_from_charges():
 
 
 def test_stripe_respects_non_usd_currency():
-    events = [_stripe_event("charge.created", 25000, currency="eur")]
+    events = [_stripe_event("charge.succeeded", 25000, currency="eur")]
     assert "250.00 EUR charged" in compute_financial_impact(events)
 
 
@@ -217,7 +217,7 @@ def test_multi_platform_incident_reports_every_platform():
     events = [
         _event("RunInstances", event_source="ec2.amazonaws.com"),
         _event("compute.instances.insert", platform="gcp"),
-        _stripe_event("charge.created", 50000),
+        _stripe_event("charge.succeeded", 50000),
     ]
     result = compute_financial_impact(events)
     assert "EC2" in result
@@ -228,7 +228,7 @@ def test_multi_platform_incident_reports_every_platform():
 def test_platform_ordering_is_stable():
     """Report text must not churn between identical runs."""
     events = [
-        _stripe_event("charge.created", 100),
+        _stripe_event("charge.succeeded", 100),
         _event("RunInstances", event_source="ec2.amazonaws.com"),
     ]
     assert compute_financial_impact(events) == compute_financial_impact(list(reversed(events)))

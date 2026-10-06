@@ -157,7 +157,7 @@ class FinancialImpactLine:
     """
 
     platform: str            # aws | gcp | azure | stripe | twilio
-    kind: str                # compute|egress|database|cluster|charge|refund|messaging|number
+    kind: str                # compute|egress|database|cluster|charge|refund|payout|messaging|number
     label: str               # 'EC2' | 'Cloud Storage egress' | 'Stripe'
     text: str                # the rendered sentence
     amount: float | None     # numeric magnitude, in major currency units
@@ -433,102 +433,175 @@ def _azure_impacts(events: list[ForensicEvent]) -> list[FinancialImpactLine]:
     return impacts
 
 
-def _stripe_amount(event: ForensicEvent) -> tuple[float, str] | None:
-    """
-    Pull the transacted amount out of a Stripe event.
+# Stripe emits several events per payment — payment_intent.created,
+# payment_intent.succeeded, charge.succeeded, charge.updated — and every one of
+# them carries the full amount. Summing them reported a single $10 payment as
+# $40. Money is therefore counted once per underlying object, and only from the
+# events that mean it actually moved. `charge.failed` and friends carry an
+# amount too, but nothing was charged.
+_STRIPE_CHARGE_EVENTS = frozenset({
+    "charge.succeeded", "charge.captured", "payment_intent.succeeded",
+})
+_STRIPE_PAYOUT_EVENTS = frozenset({"payout.created", "payout.paid"})
 
-    Stripe reports amounts in the currency's minor unit (cents for USD), nested
-    at data.object.amount in the raw event payload.
-    """
+
+def _stripe_object(event: ForensicEvent) -> dict | None:
+    """The `data.object` payload of a stored Stripe event, if well-formed."""
     raw = getattr(event, "raw_data", None)
     if not isinstance(raw, dict):
         return None
+    data = raw.get("data")
+    obj = data.get("object") if isinstance(data, dict) else None
+    return obj if isinstance(obj, dict) else None
 
-    obj = raw.get("data", {})
-    if isinstance(obj, dict):
-        obj = obj.get("object", {})
-    if not isinstance(obj, dict):
-        return None
 
-    amount = obj.get("amount", obj.get("amount_captured"))
-    if not isinstance(amount, (int, float)) or isinstance(amount, bool):
-        return None
-
-    currency = str(obj.get("currency", "usd")).upper()
-    return float(amount) / 100.0, currency
+def _minor_units(obj: dict, *fields: str) -> float | None:
+    """First numeric amount among ``fields``, converted from minor units."""
+    for field in fields:
+        value = obj.get(field)
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            return float(value) / 100.0
+    return None
 
 
 def _stripe_impacts(events: list[ForensicEvent]) -> list[FinancialImpactLine]:
     """
     Stripe reports real money, not an estimated rate. This is the single most
-    concrete financial figure BreachTrace can produce, so charges and refunds
-    are reported separately rather than netted — they are different harms.
+    concrete financial figure BreachTrace can produce, so charges, refunds and
+    payouts are reported separately rather than netted — they are different
+    harms.
 
-    Counts are tracked per currency. They were previously two shared counters
-    emitted on every line, so a USD+EUR incident reported the same transaction
-    count twice — invisible while every test was single-currency.
+    Every figure is keyed by the Stripe object it belongs to, so the multiple
+    events Stripe emits for one payment, refund or payout count once. Events
+    without an object id (hand-built fixtures) fall back to the event's own id.
     """
-    impacts: list[FinancialImpactLine] = []
-    charged: dict[str, float] = {}
-    refunded: dict[str, float] = {}
-    charge_counts: dict[str, int] = {}
-    refund_counts: dict[str, int] = {}
+    # key -> (amount, currency); max() keeps the final captured/refunded total.
+    charges: dict[str, tuple[float, str]] = {}
+    refunds: dict[str, tuple[float, str]] = {}
+    refunded_charges: dict[str, tuple[float, str]] = {}  # from charge.refunded
+    charges_with_refund_objects: set[str] = set()
+    payouts: dict[str, tuple[float, str]] = {}
+
+    def _keep_max(bucket: dict[str, tuple[float, str]], key: str, amount: float, currency: str) -> None:
+        if key not in bucket or amount > bucket[key][0]:
+            bucket[key] = (amount, currency)
 
     for event in events:
         action = (event.api_action or "").lower()
-        parsed = _stripe_amount(event)
-        if parsed is None:
+        obj = _stripe_object(event)
+        if obj is None:
             continue
-        amount, currency = parsed
+        currency = str(obj.get("currency") or "usd").upper()
+        fallback_key = str(getattr(event, "event_id", None) or id(event))
+        obj_id = obj.get("id") or fallback_key
 
-        if "refund" in action:
-            refunded[currency] = refunded.get(currency, 0.0) + amount
-            refund_counts[currency] = refund_counts.get(currency, 0) + 1
-        elif "charge" in action or "payment_intent" in action or "payout" in action:
-            charged[currency] = charged.get(currency, 0.0) + amount
-            charge_counts[currency] = charge_counts.get(currency, 0) + 1
+        if action in _STRIPE_CHARGE_EVENTS:
+            # A charge and its payment intent are the same money.
+            key = obj.get("payment_intent") if obj.get("object") == "charge" else None
+            amount = _minor_units(obj, "amount_received", "amount", "amount_captured")
+            if amount is not None:
+                _keep_max(charges, str(key or obj_id), amount, currency)
+        elif action == "refund.created":
+            amount = _minor_units(obj, "amount")
+            if amount is not None:
+                _keep_max(refunds, str(obj_id), amount, currency)
+                if obj.get("charge"):
+                    charges_with_refund_objects.add(str(obj["charge"]))
+        elif action == "charge.refunded":
+            # The payload is the CHARGE: `amount` is what was charged, and
+            # `amount_refunded` is the cumulative refunded total.
+            amount = _minor_units(obj, "amount_refunded", "amount")
+            if amount is not None:
+                _keep_max(refunded_charges, str(obj_id), amount, currency)
+        elif action in _STRIPE_PAYOUT_EVENTS:
+            amount = _minor_units(obj, "amount")
+            if amount is not None:
+                _keep_max(payouts, str(obj_id), amount, currency)
 
-    for currency, total in sorted(charged.items()):
-        count = charge_counts[currency]
-        impacts.append(FinancialImpactLine(
-            platform="stripe", kind="charge", label="Stripe",
-            text=f"Stripe: {total:,.2f} {currency} charged ({count} transaction(s))",
-            amount=total, currency=currency, unit=None,
-            quantity=count,
-            # The only place in the system where money demonstrably moved.
-            actual=True,
-        ))
-    for currency, total in sorted(refunded.items()):
-        count = refund_counts[currency]
-        impacts.append(FinancialImpactLine(
-            platform="stripe", kind="refund", label="Stripe",
-            text=f"Stripe: {total:,.2f} {currency} refunded ({count} refund(s))",
-            amount=total, currency=currency, unit=None,
-            quantity=count, actual=True,
-        ))
+    # charge.refunded only fills the gap where no refund.created was recorded.
+    for charge_id, value in refunded_charges.items():
+        if charge_id not in charges_with_refund_objects:
+            refunds[f"charge:{charge_id}"] = value
 
-    return impacts
+    def _lines(
+        bucket: dict[str, tuple[float, str]], kind: str, verb: str, noun: str
+    ) -> list[FinancialImpactLine]:
+        totals: dict[str, float] = {}
+        counts: dict[str, int] = {}
+        for amount, currency in bucket.values():
+            totals[currency] = totals.get(currency, 0.0) + amount
+            counts[currency] = counts.get(currency, 0) + 1
+        return [
+            FinancialImpactLine(
+                platform="stripe", kind=kind, label="Stripe",
+                text=f"Stripe: {total:,.2f} {currency} {verb} ({counts[currency]} {noun})",
+                amount=total, currency=currency, unit=None,
+                quantity=counts[currency],
+                # The only place in the system where money demonstrably moved.
+                actual=True,
+            )
+            for currency, total in sorted(totals.items())
+        ]
+
+    return (
+        _lines(charges, "charge", "charged", "transaction(s)")
+        + _lines(refunds, "refund", "refunded", "refund(s)")
+        + _lines(payouts, "payout", "paid out", "payout(s)")
+    )
+
+
+# Twilio actions that describe reading data rather than a billable send.
+_TWILIO_NON_BILLABLE_SUFFIXES = (".read", ".list")
+
+
+def _twilio_cost(events: list[ForensicEvent], estimate_each: float) -> float:
+    """
+    Billed cost of a set of Twilio messages or calls.
+
+    The collector stores Twilio's own per-item price, which already reflects
+    segments, destination and call duration. The flat list-price estimate is
+    used only for items Twilio has not priced yet (price is null until the
+    message or call is finalised).
+    """
+    total = 0.0
+    for event in events:
+        raw = getattr(event, "raw_data", None)
+        price = raw.get("price") if isinstance(raw, dict) else None
+        if isinstance(price, (int, float)) and not isinstance(price, bool):
+            total += abs(float(price))
+        else:
+            total += estimate_each
+    return total
 
 
 def _twilio_impacts(events: list[ForensicEvent]) -> list[FinancialImpactLine]:
     """Twilio abuse is billed per message/call, so volume maps directly to cost."""
     impacts: list[FinancialImpactLine] = []
-    actions = [(e.api_action or "").lower() for e in events]
 
-    messages = sum(1 for a in actions if "message" in a)
-    calls = sum(1 for a in actions if "call" in a)
+    def _billable(prefix: str) -> list[ForensicEvent]:
+        return [
+            e for e in events
+            if (e.api_action or "").lower().startswith(prefix)
+            and not (e.api_action or "").lower().endswith(_TWILIO_NON_BILLABLE_SUFFIXES)
+        ]
+
+    message_events = _billable("message.")
+    call_events = _billable("call.")
+    actions = [(e.api_action or "").lower() for e in events]
     numbers = sum(1 for a in actions if "number" in a and ("purchase" in a or "create" in a))
 
-    if messages > 0:
-        cost = messages * _TWILIO_SMS_COST
+    if message_events:
+        messages = len(message_events)
+        cost = _twilio_cost(message_events, _TWILIO_SMS_COST)
         impacts.append(FinancialImpactLine(
             platform="twilio", kind="messaging", label="Twilio",
             text=f"Twilio: {messages} message(s) at ${cost:.2f}",
             amount=cost, currency="USD", unit=None,
             quantity=messages, actual=False,
         ))
-    if calls > 0:
-        cost = calls * _TWILIO_CALL_COST
+    if call_events:
+        calls = len(call_events)
+        cost = _twilio_cost(call_events, _TWILIO_CALL_COST)
         impacts.append(FinancialImpactLine(
             platform="twilio", kind="messaging", label="Twilio",
             text=f"Twilio: {calls} call(s) at ${cost:.2f}",

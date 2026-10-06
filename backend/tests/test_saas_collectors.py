@@ -27,6 +27,8 @@ def stripe_sdk(monkeypatch):
     """Minimal stand-in for the `stripe` package."""
     module = types.ModuleType("stripe")
     module.Event = MagicMock()
+    for name in ("AuthenticationError", "PermissionError", "InvalidRequestError"):
+        setattr(module, name, type(name, (Exception,), {}))
     monkeypatch.setitem(sys.modules, "stripe", module)
     return module
 
@@ -37,6 +39,12 @@ def twilio_sdk(monkeypatch):
     twilio_module = types.ModuleType("twilio")
     rest_module = types.ModuleType("twilio.rest")
     client_instance = MagicMock()
+    # The collector scopes every query to the LEAKED account
+    # (client.api.v2010.accounts(sid)); alias it so tests can stub
+    # `client.messages.list` / `client.calls.list` directly.
+    scoped = client_instance.api.v2010.accounts.return_value
+    client_instance.messages = scoped.messages
+    client_instance.calls = scoped.calls
     rest_module.Client = MagicMock(return_value=client_instance)
     twilio_module.rest = rest_module
     monkeypatch.setitem(sys.modules, "twilio", twilio_module)
@@ -193,13 +201,18 @@ def test_stripe_requires_an_api_key(stripe_sdk, monkeypatch):
     from collectors.stripe import StripeEventsCollector
 
     monkeypatch.setattr(config, "STRIPE_API_KEY", "", raising=False)
+    # A masked hint (what a refresh has) is not a usable key either.
     with pytest.raises(ValueError, match="Stripe API key"):
-        StripeEventsCollector()
+        StripeEventsCollector().collect("sk_live_****abcd", datetime(2026, 8, 1), datetime(2026, 8, 2))
 
 
 # ==========================================================================
 # Twilio
 # ==========================================================================
+
+LEAKED_SID = "AC" + "1f" * 16
+CONFIGURED_SID = "AC" + "2e" * 16
+
 
 def _twilio_message(status="sent", to="+15551234567", price="-0.0079", body="Your code is 123456"):
     message = MagicMock()
@@ -213,7 +226,8 @@ def _twilio_message(status="sent", to="+15551234567", price="-0.0079", body="You
     message.num_segments = "1"
     message.body = body
     message.error_code = None
-    message.account_sid = "AC123"
+    message.account_sid = LEAKED_SID
+    message.direction = "outbound-api"
     return message
 
 
@@ -228,7 +242,7 @@ def _twilio_call(status="completed", to="+15551234567"):
     call.price_unit = "USD"
     call.duration = "42"
     call.direction = "outbound-api"
-    call.account_sid = "AC123"
+    call.account_sid = LEAKED_SID
     return call
 
 
@@ -238,8 +252,8 @@ def test_twilio_maps_message_fields(twilio_sdk):
     twilio_sdk.messages.list.return_value = [_twilio_message()]
     twilio_sdk.calls.list.return_value = []
 
-    collector = TwilioUsageCollector(account_sid="AC123", auth_token="tok")
-    events = collector.collect("AC123", datetime(2026, 8, 1), datetime(2026, 8, 2))
+    collector = TwilioUsageCollector(account_sid=CONFIGURED_SID, auth_token="tok")
+    events = collector.collect(LEAKED_SID, datetime(2026, 8, 1), datetime(2026, 8, 2))
 
     assert len(events) == 1
     event = events[0]
@@ -264,8 +278,8 @@ def test_twilio_does_not_store_message_bodies(twilio_sdk):
     twilio_sdk.messages.list.return_value = [_twilio_message(body=secret_body)]
     twilio_sdk.calls.list.return_value = []
 
-    collector = TwilioUsageCollector(account_sid="AC123", auth_token="tok")
-    event = collector.collect("AC123", datetime(2026, 8, 1), datetime(2026, 8, 2))[0]
+    collector = TwilioUsageCollector(account_sid=CONFIGURED_SID, auth_token="tok")
+    event = collector.collect(LEAKED_SID, datetime(2026, 8, 1), datetime(2026, 8, 2))[0]
 
     assert secret_body not in str(event.raw_data)
     assert event.raw_data["body_length"] == len(secret_body)
@@ -278,8 +292,8 @@ def test_twilio_price_normalised_to_positive(twilio_sdk):
     twilio_sdk.messages.list.return_value = [_twilio_message(price="-0.0079")]
     twilio_sdk.calls.list.return_value = []
 
-    collector = TwilioUsageCollector(account_sid="AC123", auth_token="tok")
-    event = collector.collect("AC123", datetime(2026, 8, 1), datetime(2026, 8, 2))[0]
+    collector = TwilioUsageCollector(account_sid=CONFIGURED_SID, auth_token="tok")
+    event = collector.collect(LEAKED_SID, datetime(2026, 8, 1), datetime(2026, 8, 2))[0]
 
     assert event.raw_data["price"] == pytest.approx(0.0079)
 
@@ -290,8 +304,8 @@ def test_twilio_failed_message_marked_unsuccessful(twilio_sdk):
     twilio_sdk.messages.list.return_value = [_twilio_message(status="failed")]
     twilio_sdk.calls.list.return_value = []
 
-    collector = TwilioUsageCollector(account_sid="AC123", auth_token="tok")
-    event = collector.collect("AC123", datetime(2026, 8, 1), datetime(2026, 8, 2))[0]
+    collector = TwilioUsageCollector(account_sid=CONFIGURED_SID, auth_token="tok")
+    event = collector.collect(LEAKED_SID, datetime(2026, 8, 1), datetime(2026, 8, 2))[0]
 
     assert event.success is False
     assert event.api_action == "message.failed"
@@ -303,8 +317,8 @@ def test_twilio_collects_messages_and_calls_sorted(twilio_sdk):
     twilio_sdk.messages.list.return_value = [_twilio_message()]
     twilio_sdk.calls.list.return_value = [_twilio_call()]
 
-    collector = TwilioUsageCollector(account_sid="AC123", auth_token="tok")
-    events = collector.collect("AC123", datetime(2026, 8, 1), datetime(2026, 8, 2))
+    collector = TwilioUsageCollector(account_sid=CONFIGURED_SID, auth_token="tok")
+    events = collector.collect(LEAKED_SID, datetime(2026, 8, 1), datetime(2026, 8, 2))
 
     assert [e.api_action for e in events] == ["message.sent", "call.completed"]
     assert events[0].timestamp <= events[1].timestamp
@@ -326,8 +340,116 @@ def test_twilio_empty_window_returns_empty_list(twilio_sdk):
     twilio_sdk.messages.list.return_value = []
     twilio_sdk.calls.list.return_value = []
 
-    collector = TwilioUsageCollector(account_sid="AC123", auth_token="tok")
-    assert collector.collect("AC123", datetime(2026, 8, 1), datetime(2026, 8, 2)) == []
+    collector = TwilioUsageCollector(account_sid=CONFIGURED_SID, auth_token="tok")
+    assert collector.collect(LEAKED_SID, datetime(2026, 8, 1), datetime(2026, 8, 2)) == []
+
+
+def test_twilio_queries_the_leaked_account_not_the_configured_one(twilio_sdk):
+    """
+    `client.messages` reads the account the client authenticated as. If the
+    leaked SID is a subaccount (or a different account) that reports someone
+    else's traffic as the attacker's.
+    """
+    from collectors.twilio import TwilioUsageCollector
+
+    twilio_sdk.messages.list.return_value = []
+    twilio_sdk.calls.list.return_value = []
+
+    collector = TwilioUsageCollector(account_sid=CONFIGURED_SID, auth_token="tok")
+    collector.collect(LEAKED_SID, datetime(2026, 8, 1), datetime(2026, 8, 2))
+
+    twilio_sdk.api.v2010.accounts.assert_called_with(LEAKED_SID)
+
+
+def test_twilio_skips_inbound_traffic(twilio_sdk):
+    """Inbound messages and calls are not actions taken with the credential."""
+    from collectors.twilio import TwilioUsageCollector
+
+    inbound_message = _twilio_message()
+    inbound_message.direction = "inbound"
+    inbound_call = _twilio_call()
+    inbound_call.direction = "inbound"
+    twilio_sdk.messages.list.return_value = [inbound_message, _twilio_message()]
+    twilio_sdk.calls.list.return_value = [inbound_call]
+
+    collector = TwilioUsageCollector(account_sid=CONFIGURED_SID, auth_token="tok")
+    events = collector.collect(LEAKED_SID, datetime(2026, 8, 1), datetime(2026, 8, 2))
+
+    assert [e.api_action for e in events] == ["message.sent"]
+
+
+def test_twilio_unsent_message_uses_creation_time(twilio_sdk):
+    """date_sent is null until a carrier accepts the message; never stamp it 'now'."""
+    from collectors.twilio import TwilioUsageCollector
+
+    queued = _twilio_message(status="queued")
+    queued.date_sent = None
+    queued.date_created = datetime(2026, 8, 1, 11, 0, tzinfo=timezone.utc)
+    twilio_sdk.messages.list.return_value = [queued]
+    twilio_sdk.calls.list.return_value = []
+
+    collector = TwilioUsageCollector(account_sid=CONFIGURED_SID, auth_token="tok")
+    event = collector.collect(LEAKED_SID, datetime(2026, 8, 1), datetime(2026, 8, 2))[0]
+
+    assert event.timestamp == queued.date_created
+
+
+def test_twilio_whatsapp_read_status_is_not_a_body_read(twilio_sdk):
+    """`message.read` in the taxonomy means message bodies were read (data access)."""
+    from collectors.twilio import TwilioUsageCollector
+
+    twilio_sdk.messages.list.return_value = [_twilio_message(status="read")]
+    twilio_sdk.calls.list.return_value = []
+
+    collector = TwilioUsageCollector(account_sid=CONFIGURED_SID, auth_token="tok")
+    event = collector.collect(LEAKED_SID, datetime(2026, 8, 1), datetime(2026, 8, 2))[0]
+
+    assert event.api_action == "message.read_by_recipient"
+
+
+# ==========================================================================
+# Stripe — which key is used
+# ==========================================================================
+
+def test_stripe_queries_with_the_leaked_key_first(stripe_sdk):
+    """The leaked key is the only one guaranteed to read the right account and mode."""
+    from collectors.stripe import StripeEventsCollector
+
+    stripe_sdk.Event.list.return_value = _page([])
+    StripeEventsCollector(api_key="sk_test_configured").collect(
+        "sk_live_leakedKey123", datetime(2026, 8, 1), datetime(2026, 8, 2)
+    )
+
+    assert stripe_sdk.Event.list.call_args.kwargs["api_key"] == "sk_live_leakedKey123"
+
+
+def test_stripe_falls_back_when_leaked_key_is_revoked(stripe_sdk):
+    from collectors.stripe import StripeEventsCollector
+
+    stripe_sdk.Event.list.side_effect = [
+        stripe_sdk.AuthenticationError("expired key"),
+        _page([_stripe_event()]),
+    ]
+    events = StripeEventsCollector(api_key="sk_test_configured").collect(
+        "sk_live_leakedKey123", datetime(2026, 8, 1), datetime(2026, 8, 2)
+    )
+
+    assert len(events) == 1
+    # One failed call with the leaked key — auth errors must not be retried.
+    keys = [c.kwargs["api_key"] for c in stripe_sdk.Event.list.call_args_list]
+    assert keys == ["sk_live_leakedKey123", "sk_test_configured"]
+
+
+def test_stripe_masked_hint_uses_configured_key(stripe_sdk):
+    """A refresh only has the masked hint, since the key itself is never stored."""
+    from collectors.stripe import StripeEventsCollector
+
+    stripe_sdk.Event.list.return_value = _page([])
+    StripeEventsCollector(api_key="sk_test_configured").collect(
+        "sk_live_****abcd", datetime(2026, 8, 1), datetime(2026, 8, 2)
+    )
+
+    assert stripe_sdk.Event.list.call_args.kwargs["api_key"] == "sk_test_configured"
 
 
 # ==========================================================================

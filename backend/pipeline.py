@@ -35,6 +35,7 @@ from db.crud import (
     update_status,
 )
 from db.database import SessionLocal
+from detector.patterns import mask_secret
 from db.models import IncidentRecord
 from reporter.gemini import generate_report
 from scorer.severity import (
@@ -148,7 +149,8 @@ def run_collection_pipeline(
             "Refresh" if refresh_existing else "Collection",
             incident_id,
             platform,
-            credential[:30],
+            # A Stripe credential is the secret key itself; never log it whole.
+            mask_secret(credential) if platform == "stripe" else credential[:30],
         )
 
         # ── STAGE 1: Collect events ────────────────────────────────────────

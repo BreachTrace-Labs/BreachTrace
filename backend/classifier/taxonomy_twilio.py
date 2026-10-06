@@ -60,11 +60,29 @@ TWILIO_API_TAXONOMY: dict[str, dict] = {
     # A failed send still costs money and still signals a campaign in progress.
     "message.failed": {"category": "communication_abuse", "severity": 2, "label": "Message Failed"},
     "message.undelivered": {"category": "communication_abuse", "severity": 2, "label": "Message Undelivered"},
+    # Remaining Message statuses the collector can emit (`message.<status>`).
+    "message.accepted": {"category": "communication_abuse", "severity": 2, "label": "Message Accepted"},
+    "message.scheduled": {"category": "communication_abuse", "severity": 2, "label": "Message Scheduled"},
+    "message.sending": {"category": "communication_abuse", "severity": 2, "label": "Message Sending"},
+    # Twilio's WhatsApp `read` delivery status. The collector renames it so it
+    # cannot collide with `message.read` below, which means a body was READ.
+    "message.read_by_recipient": {"category": "communication_abuse", "severity": 2, "label": "Message Read By Recipient"},
+    "message.partially_delivered": {"category": "communication_abuse", "severity": 2, "label": "Message Partially Delivered"},
+    "message.canceled": {"category": "communication_abuse", "severity": 2, "label": "Message Canceled"},
 
     # Voice — premium-rate fraud is the expensive variant.
     "call.created": {"category": "communication_abuse", "severity": 3, "label": "Call Placed"},
     "call.completed": {"category": "communication_abuse", "severity": 3, "label": "Call Completed"},
     "call.initiated": {"category": "communication_abuse", "severity": 3, "label": "Call Initiated"},
+    # Remaining Call statuses the collector can emit (`call.<status>`). A call
+    # that never connected is still an attempt, but carries little cost.
+    "call.queued": {"category": "communication_abuse", "severity": 3, "label": "Call Queued"},
+    "call.ringing": {"category": "communication_abuse", "severity": 3, "label": "Call Ringing"},
+    "call.in-progress": {"category": "communication_abuse", "severity": 3, "label": "Call In Progress"},
+    "call.busy": {"category": "communication_abuse", "severity": 2, "label": "Call Attempt (Busy)"},
+    "call.no-answer": {"category": "communication_abuse", "severity": 2, "label": "Call Attempt (No Answer)"},
+    "call.canceled": {"category": "communication_abuse", "severity": 2, "label": "Call Canceled"},
+    "call.failed": {"category": "communication_abuse", "severity": 2, "label": "Call Failed"},
 
     # Verification abuse — burning the victim's verification quota.
     "verification.sent": {"category": "communication_abuse", "severity": 3, "label": "Verification Sent"},

@@ -38,6 +38,10 @@ NO_PRINCIPAL_REASON = (
 )
 
 
+# Platforms whose collector principal is the secret itself, not an identifier.
+_SECRET_PRINCIPAL_PLATFORMS = frozenset({"stripe"})
+
+
 @dataclass(frozen=True)
 class ResolvedMatch:
     """Platform-agnostic view of a detector match."""
@@ -106,13 +110,22 @@ def resolve_match(match: object) -> ResolvedMatch:
         return _resolve_azure(match)
 
     if isinstance(match, SaaSCredentialMatch):
+        # For most families the principal is an identifier (a Twilio Account
+        # SID). For Stripe it IS the secret key, and principal_id is persisted
+        # and served by GET /incidents — storing it would re-leak the key to
+        # anyone who can see the dashboard. The full key only travels in memory
+        # to the collector; the stored principal is the masked hint.
+        stored_principal = (
+            match.credential_hint if match.platform in _SECRET_PRINCIPAL_PLATFORMS
+            else match.principal
+        )
         return ResolvedMatch(
             platform=match.platform,
             credential_type=match.credential_type,
             credential_hint=match.credential_hint,
             credential=match.principal,
             access_key_id=None,
-            principal_id=match.principal,
+            principal_id=stored_principal if match.principal else None,
             forensic_tier=match.forensic_tier,
             unavailable_reason=match.unavailable_reason,
         )

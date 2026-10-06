@@ -130,8 +130,9 @@ const FinancialImpactPanel: React.FC<Props> = ({ incident }) => {
 
   const charged = totalsByCurrency(lines, 'charge')
   const refunded = totalsByCurrency(lines, 'refund')
+  const paidOut = totalsByCurrency(lines, 'payout')
   const estimates = lines.filter(l => !l.actual)
-  const hasActual = charged.length > 0 || refunded.length > 0
+  const hasActual = charged.length > 0 || refunded.length > 0 || paidOut.length > 0
 
   // Group estimates by platform so a multi-vendor leak reads as separate bills.
   const byPlatform = new Map<Platform, FinancialImpactLine[]>()
@@ -175,6 +176,13 @@ const FinancialImpactPanel: React.FC<Props> = ({ incident }) => {
               label="Refunded"
               entries={refunded}
               color="var(--color-sev-high)"
+            />
+            {/* Payouts move the balance to a bank account — the attack that
+                follows a changed payout destination. */}
+            <ActualFigure
+              label="Paid out"
+              entries={paidOut}
+              color="var(--color-sev-critical)"
             />
           </div>
         )}

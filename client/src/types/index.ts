@@ -33,7 +33,7 @@ export interface FinancialImpactLine {
   platform: string
   kind:
     | 'compute' | 'egress' | 'database' | 'cluster'
-    | 'charge' | 'refund' | 'messaging' | 'number'
+    | 'charge' | 'refund' | 'payout' | 'messaging' | 'number'
   /** Short vendor-facing name, e.g. 'EC2', 'Cloud Storage egress', 'Stripe'. */
   label: string
   /** The rendered sentence. Joining these reproduces estimated_financial_impact. */

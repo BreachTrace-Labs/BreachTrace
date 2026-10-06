@@ -294,6 +294,10 @@ def _queue_incident_refresh(
         "aws": "CloudTrail can take up to 15 minutes to surface fresh events.",
         "gcp": "GCP Cloud Audit Logs query started.",
         "azure": "Azure Activity Log query started.",
+        # The leaked Stripe key is never stored, so a refresh reads the account
+        # through the configured key.
+        "stripe": "Stripe Events query started using STRIPE_API_KEY.",
+        "twilio": "Twilio Messages and Calls query started.",
     }.get(platform, "Log query started.")
 
     reset_incident_for_refresh(db, incident_id)

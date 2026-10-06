@@ -98,6 +98,42 @@ PLATFORM_PROFILES: dict[str, _PlatformProfile] = {
         revoke_command="az ad app credential delete --id <CLIENT_ID> --key-id <KEY_ID>",
         review_command="az monitor activity-log list --caller <CLIENT_ID>",
     ),
+    # Without these two, a Stripe or Twilio incident fell back to the AWS
+    # profile and told the developer to run `aws iam delete-access-key`.
+    "stripe": _PlatformProfile(
+        name="Stripe",
+        audit_log="Stripe Events",
+        blind_spot=(
+            "Stripe Events record state changes only — charges, refunds, payouts, account changes. Reading customer or payment records creates no event, so data that was only viewed or exported does not appear. Events also cover the whole account, so some may be the owner's own legitimate activity."
+        ),
+        identity_term="secret API key",
+        vocabulary=(
+            "Use Stripe terms only: charges, payment intents, refunds, payouts, "
+            "customers, payment methods, bank accounts and the Dashboard. Never "
+            "mention S3, EC2, IAM, buckets, instances or cloud regions."
+        ),
+        revoke_command="Stripe Dashboard → Developers → API keys → Roll key "
+                       "(set the old key to expire now)",
+        review_command="stripe events list --limit 100 "
+                       "(or Dashboard → Developers → Events and Logs)",
+    ),
+    "twilio": _PlatformProfile(
+        name="Twilio",
+        audit_log="Twilio Messages and Calls logs",
+        blind_spot=(
+            "Twilio lists messages sent and calls placed, but reading message history leaves no record, so one-time passcodes or personal data in past messages may have been viewed without trace. Account configuration changes are not covered either."
+        ),
+        identity_term="Account SID",
+        vocabulary=(
+            "Use Twilio terms only: messages (SMS), calls, phone numbers, the "
+            "Account SID, the Auth Token and the Console. Never mention S3, EC2, "
+            "IAM, buckets, instances or cloud regions."
+        ),
+        revoke_command="Twilio Console → Account → API keys & tokens → request a "
+                       "secondary Auth Token, then promote it to primary",
+        review_command="twilio api:core:messages:list and "
+                       "twilio api:core:calls:list (or Console → Monitor → Logs)",
+    ),
 }
 
 _DEFAULT_PLATFORM = "aws"
