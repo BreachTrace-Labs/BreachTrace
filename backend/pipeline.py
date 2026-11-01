@@ -156,6 +156,18 @@ def run_collection_pipeline(
         # made just before the commit (pre-exposure recon) are included.
         collection_start = exposure_start - timedelta(minutes=_COLLECTION_LOOKBACK_MINUTES)
 
+        def abort_collection(error_message: str) -> None:
+            """Record why collection could not run, and mark the incident failed."""
+            save_collection_status(
+                db,
+                incident_id=incident_id,
+                platform=platform,
+                status="error",
+                event_count=0,
+                error_message=error_message,
+            )
+            update_status(db, incident_id, "error")
+
         collector_cls = _COLLECTOR_MAP.get(platform)
         if collector_cls is None:
             logger.error(
@@ -163,20 +175,47 @@ def run_collection_pipeline(
                 platform,
                 incident_id,
             )
-            save_collection_status(
-                db,
-                incident_id=incident_id,
-                platform=platform,
-                status="error",
-                event_count=0,
-                error_message=f"Unsupported platform: {platform}",
-            )
-            update_status(db, incident_id, "error")
+            abort_collection(f"Unsupported platform: {platform}")
             return
 
         t0 = time.monotonic()
+
+        # Construction is deliberately separated from collection so the recorded
+        # error names the real cause. Stripe and Twilio import their SDKs lazily
+        # inside __init__ (both are optional for AWS-only installs), and every
+        # collector validates its credentials there too — so a missing package
+        # and a missing API key both surface here, before a single retry has
+        # happened. Reporting either of them as "failed after retries" sends
+        # whoever debugs it hunting API credentials for what is a missing
+        # `pip install`.
         try:
             collector = collector_cls()
+        except ImportError:
+            logger.exception(
+                "%s collector unavailable — SDK not installed (incident %s)",
+                platform.upper(),
+                incident_id,
+            )
+            abort_collection(
+                f"{platform.upper()} collector unavailable: its Python SDK is not "
+                f"installed. Run: pip install -r backend/requirements.txt"
+            )
+            return
+        except Exception as exc:
+            logger.exception(
+                "%s collector could not be initialised for incident %s",
+                platform.upper(),
+                incident_id,
+            )
+            # Truncated: this string reaches the DB and the UI, and an SDK is
+            # free to raise with an arbitrarily large payload attached.
+            abort_collection(
+                f"{platform.upper()} collector could not be initialised "
+                f"({type(exc).__name__}): {str(exc)[:200]}"
+            )
+            return
+
+        try:
             events = collector.collect(
                 credential=credential,
                 start_time=collection_start,
@@ -186,15 +225,9 @@ def run_collection_pipeline(
             logger.exception(
                 "%s event collection failed for incident %s", platform.upper(), incident_id
             )
-            save_collection_status(
-                db,
-                incident_id=incident_id,
-                platform=platform,
-                status="error",
-                event_count=0,
-                error_message=f"{platform.upper()} event collection failed after retries",
+            abort_collection(
+                f"{platform.upper()} event collection failed after retries"
             )
-            update_status(db, incident_id, "error")
             return
 
         logger.info(

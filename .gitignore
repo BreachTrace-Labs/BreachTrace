@@ -46,3 +46,6 @@ Thumbs.db
 .idea/
 *.swp
 *.swo
+
+# ── Private notes (not shared with the team) ───────────────────────────────────
+decisions.md

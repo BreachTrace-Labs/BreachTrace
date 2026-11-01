@@ -38,5 +38,12 @@ azure-mgmt-resource
 azure-mgmt-storage
 azure-mgmt-monitor>=6.0.0
 
+# SaaS forensic tier (Tier 1)
+# Both are imported lazily inside their collectors' __init__, so an AWS-only
+# install still works without them — but the pipeline cannot collect Stripe or
+# Twilio incidents unless they are present.
+stripe>=7.0.0
+twilio>=8.0.0
+
 # Testing
 pytest  # dev-only
