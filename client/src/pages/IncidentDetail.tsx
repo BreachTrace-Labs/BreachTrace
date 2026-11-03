@@ -19,10 +19,12 @@ import {
   Loader2,
   Search as SearchIcon,
 } from 'lucide-react'
-import client from '@/api/client'
+import client, { USE_MOCK } from '@/api/client'
 import type { IncidentRecord, ReportSource, SearchResult } from '@/types'
 import SearchResults from '@/components/SearchResults'
 import { derivePlatform, isForensicTier, PLATFORM_META, platformIdentity } from '@/lib/platform'
+import { completeLabel, exposureDuration, exposureLabel, isSyntheticIncident, repositoryLink } from '@/lib/incidentPresentation'
+import SyntheticNotice from '@/components/SyntheticNotice'
 import SeverityBadge from '@/components/SeverityBadge'
 import ForensicTimeline from '@/components/ForensicTimeline'
 import ForensicsUnavailable from '@/components/ForensicsUnavailable'
@@ -52,17 +54,6 @@ function fmtTime(ts: string) {
   })
 }
 
-function duration(start: string, end: string | null) {
-  const startMs = new Date(start).getTime()
-  const endMs = end ? new Date(end).getTime() : Date.now()
-  if (Number.isNaN(startMs) || Number.isNaN(endMs)) return '--'
-  const diff = Math.floor((endMs - startMs) / 1000)
-  const h = Math.floor(diff / 3600)
-  const m = Math.floor((diff % 3600) / 60)
-  const s = diff % 60
-  return h > 0 ? `${h}h ${m}m ${s}s` : m > 0 ? `${m}m ${s}s` : `${s}s`
-}
-
 /* ─── markdown renderer ────────────────────────────────────────── */
 
 /**
@@ -75,11 +66,17 @@ function ReportSourceBadge({ source }: { source?: ReportSource | null }) {
     deterministic: 'Template',
     local_model: 'On-device model',
     gemini: 'Gemini',
+    openai: 'OpenAI',
+    anthropic: 'Anthropic',
+    ollama: 'Local Ollama model',
   }[source]
   const title = {
     deterministic: 'Written from verified facts by a fixed template.',
     local_model: 'Written on this computer by the BreachTrace report model, and checked against the facts.',
     gemini: 'Written by Gemini, and checked against the facts.',
+    openai: 'Written by your selected OpenAI model, and checked against the facts.',
+    anthropic: 'Written by your selected Anthropic model, and checked against the facts.',
+    ollama: 'Written by your selected local Ollama model, and checked against the facts.',
   }[source]
   return (
     <span
@@ -97,11 +94,14 @@ function AskAboutIncident({ incidentId }: { incidentId: string }) {
   const [question, setQuestion] = useState('')
   const [result, setResult] = useState<SearchResult | null>(null)
   const [loading, setLoading] = useState(false)
+  const [error, setError] = useState('')
 
   async function ask(q: string) {
     if (q.trim().length < 2) return
     setQuestion(q)
     setLoading(true)
+    setError('')
+    setResult(null)
     try {
       const { data } = await client.post<SearchResult>('/assistant/search', {
         question: q.trim(),
@@ -110,6 +110,7 @@ function AskAboutIncident({ incidentId }: { incidentId: string }) {
       setResult(data)
     } catch {
       setResult(null)
+      setError('Search is unavailable. Check the backend connection and try again.')
     } finally {
       setLoading(false)
     }
@@ -143,6 +144,7 @@ function AskAboutIncident({ incidentId }: { incidentId: string }) {
           {loading ? <Loader2 size={14} className="animate-spin" /> : 'Ask'}
         </Button>
       </form>
+      {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
       {result && !loading && (
         <SearchResults result={result} showIncidents={false} onSuggestion={(q) => void ask(q)} />
       )}
@@ -152,7 +154,7 @@ function AskAboutIncident({ incidentId }: { incidentId: string }) {
 
 function MarkdownReport({ text }: { text: string }) {
   return (
-    <div className="space-y-2">
+    <div className="space-y-3 break-words [&_h2]:mt-5 [&_h2]:mb-2 [&_h2]:text-base [&_h2]:font-semibold [&_p]:text-sm [&_p]:leading-relaxed [&_ul]:list-disc [&_ul]:pl-5 [&_li]:text-sm [&_code]:break-all [&_code]:text-xs">
       <ReactMarkdown>{text}</ReactMarkdown>
     </div>
   )
@@ -170,29 +172,14 @@ const STATUS_LABELS: Record<string, string> = {
   error: 'Needs Attention',
 }
 
-const PLATFORM_STYLES: Record<string, { label: string; className: string }> = {
-  gcp: { label: 'GCP', className: 'bg-blue-500/10 text-blue-700 dark:text-blue-300 border-blue-500/20' },
-  azure: { label: 'Azure', className: 'bg-teal-500/10 text-teal-700 dark:text-teal-300 border-teal-500/20' },
-  aws: { label: 'AWS', className: 'bg-orange-500/10 text-orange-700 dark:text-orange-300 border-orange-500/20' },
-}
-
-function PlatformBadge({ platform }: { platform: string | undefined }) {
-  if (!platform) return null
-  const style = PLATFORM_STYLES[platform.toLowerCase()] ?? PLATFORM_STYLES.aws
-  return (
-    <span className={`inline-flex items-center px-2.5 py-1 rounded-sm border text-xs font-bold uppercase tracking-wide ${style.className}`}>
-      {style.label}
-    </span>
-  )
-}
-
 type RefreshResponse = {
   incident_id: string
   status: IncidentRecord['status'] | string
   message: string
 }
 
-function StatusPill({ status }: { status: string }) {
+function StatusPill({ incident }: { incident: IncidentRecord }) {
+  const status = incident.status
   const complete = status === 'complete'
   const errored = status === 'error'
 
@@ -206,7 +193,7 @@ function StatusPill({ status }: { status: string }) {
         }`}
     >
       <span className={`h-2 w-2 rounded-full ${complete ? 'bg-emerald-500' : errored ? 'bg-red-500' : 'bg-primary animate-pulse'}`} />
-      {complete ? 'Investigation Complete' : STATUS_LABELS[status] ?? status}
+      {complete ? completeLabel(incident) : STATUS_LABELS[status] ?? status}
     </span>
   )
 }
@@ -311,14 +298,17 @@ const IncidentDetail: React.FC = () => {
         </Button>
         <div className="p-12 text-center bg-card border rounded-sm shadow-sm">
           <AlertTriangle size={48} className="mx-auto mb-4 text-muted-foreground opacity-50" />
-          <h3 className="text-lg font-semibold text-foreground mb-1">Incident Not Found</h3>
+          <h3 className="text-lg font-semibold text-foreground mb-1">Incident unavailable</h3>
           <p className="text-sm text-muted-foreground">{error ?? 'The incident you are looking for does not exist or has been removed.'}</p>
         </div>
       </div>
     )
   }
 
-  const dur = duration(incident.exposure_start, incident.exposure_end)
+  const dur = exposureDuration(incident)
+  const synthetic = isSyntheticIncident(incident)
+  const forensic = isForensicTier(incident)
+  const repoLink = repositoryLink(incident.repo_url)
   const repoDisplay = incident.repo_url.replace('https://github.com/', '')
   const platform = derivePlatform(incident)
   const platformMeta = PLATFORM_META[platform]
@@ -326,36 +316,39 @@ const IncidentDetail: React.FC = () => {
 
   return (
     <div className="max-w-7xl mx-auto space-y-8 pb-12 animate-in fade-in duration-500">
+      {synthetic && <SyntheticNotice />}
       {/* Top Header Section */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b pb-6">
-        <div className="flex items-center gap-4">
-          <Button variant="outline" size="icon" onClick={() => navigate('/')} className="rounded-sm shadow-sm">
+        <div className="flex min-w-0 items-center gap-4">
+          <Button variant="outline" size="icon" aria-label="Back to incident monitor" onClick={() => navigate('/')} className="rounded-sm shadow-sm">
             <ArrowLeft size={18} />
           </Button>
-          <div>
-            <h1 className="text-2xl font-bold tracking-tight text-foreground flex items-center gap-3">
+          <div className="min-w-0">
+            <h1 className="text-2xl font-bold tracking-tight text-foreground flex flex-wrap items-center gap-3">
               Incident Detail
               <SeverityBadge severity={incident.overall_severity} />
+              {!incident.overall_severity && <span className="rounded border px-2 py-1 text-xs font-medium text-muted-foreground">Severity not assessed</span>}
             </h1>
             <p className="text-sm text-muted-foreground mt-1 flex items-center gap-2">
-              <span className="font-mono bg-muted px-2 py-0.5 rounded text-xs">{id}</span>
+              <span className="font-mono bg-muted px-2 py-0.5 rounded text-xs break-all">{id}</span>
             </p>
           </div>
         </div>
 
         <div className="flex flex-wrap items-center gap-3">
-          <StatusPill status={incident.status} />
-          <Button
+          <StatusPill incident={incident} />
+          {forensic && !synthetic && !USE_MOCK && <Button
             variant="outline"
             className="shadow-sm bg-background rounded-sm"
             onClick={handleRefreshForensics}
             disabled={refreshing}
+            title="Refresh available provider logs"
           >
             <RefreshCw size={16} className={`mr-2 ${refreshing ? 'animate-spin' : ''}`} />
-            {refreshing ? 'Refreshing...' : 'Refresh Logs'}
-          </Button>
+            {refreshing ? 'Refreshing…' : 'Refresh logs'}
+          </Button>}
           <Button variant="outline" className="shadow-sm bg-background hidden sm:flex rounded-sm" onClick={() => window.print()}>
-            <Printer size={16} className="mr-2" /> Export PDF
+            <Printer size={16} className="mr-2" /> Print / save PDF
           </Button>
         </div>
       </div>
@@ -389,7 +382,7 @@ const IncidentDetail: React.FC = () => {
                         backgroundColor: `color-mix(in srgb, ${platformMeta.color} 14%, transparent)`,
                         color: platformMeta.color,
                       }}
-                      title={`Forensic events collected from ${platformMeta.auditLog}`}
+                      title={`Coverage: ${platformMeta.auditLog}`}
                     >
                       <span
                         className="w-1.5 h-1.5 rounded-full shrink-0"
@@ -400,12 +393,11 @@ const IncidentDetail: React.FC = () => {
                     <span className="inline-flex items-center px-2.5 py-1 rounded-sm bg-secondary text-secondary-foreground font-medium">
                       {incident.credential_type}
                     </span>
-                    <PlatformBadge platform={incident.platform} />
                     <span className="text-muted-foreground">•</span>
-                    <a href={incident.repo_url} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1.5 text-primary hover:text-primary/80 hover:underline font-medium transition-colors">
+                    {repoLink ? <a href={repoLink} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1.5 text-primary hover:text-primary/80 hover:underline font-medium transition-colors">
                       {repoDisplay}
                       <ExternalLink size={14} />
-                    </a>
+                    </a> : <span className="break-all text-muted-foreground">{repoDisplay}</span>}
                   </div>
                 </div>
               </div>
@@ -413,23 +405,23 @@ const IncidentDetail: React.FC = () => {
               <div className="border-t bg-muted/30 p-6 sm:p-8 lg:border-l lg:border-t-0">
                 <div className="flex items-center justify-between gap-3">
                   <p className="text-xs font-bold uppercase tracking-widest text-muted-foreground">Current State</p>
-                  <StatusPill status={incident.status} />
+                  <span className="text-xs font-semibold text-muted-foreground">{forensic ? 'Forensic analysis' : 'Detection only'}</span>
                 </div>
 
                 <div className="mt-6 rounded-sm border bg-background p-5 shadow-sm">
                   <div className="flex items-center gap-3">
-                    <span className="flex h-10 w-10 items-center justify-center rounded-sm bg-red-500/10 text-red-600 dark:text-red-400">
+                    <span className={`flex h-10 w-10 items-center justify-center rounded-sm ${synthetic ? 'bg-sky-500/10 text-sky-600 dark:text-sky-300' : 'bg-muted text-muted-foreground'}`}>
                       <Radio size={18} />
                     </span>
                     <div>
                       <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Exposure</p>
                       <p className="text-base font-bold text-foreground">
-                        {incident.exposure_end ? 'Revoked' : <span className="text-red-500">Still Exposed</span>}
+                        {exposureLabel(incident)}
                       </p>
                     </div>
                   </div>
                   <div className="mt-5 border-t pt-4">
-                    <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Duration</p>
+                    <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Confirmed window</p>
                     <p className="mt-1 font-mono text-2xl font-bold tracking-tight text-foreground">{dur}</p>
                   </div>
                 </div>
@@ -439,14 +431,14 @@ const IncidentDetail: React.FC = () => {
             {/* Stats Grid */}
             <div className="border-t bg-muted/20 p-4 sm:p-6">
               <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
-                <SummaryTile icon={Clock3} label="Exposed">
+                <SummaryTile icon={Clock3} label={synthetic ? "Sample exposure start" : "Exposure start"}>
                   {fmtTime(incident.exposure_start)}
                 </SummaryTile>
-                <SummaryTile icon={Timer} label="Revoked" accent={!incident.exposure_end}>
-                  {incident.exposure_end ? fmtTime(incident.exposure_end) : <span className="font-semibold text-red-500 animate-pulse">Still Exposed</span>}
+                <SummaryTile icon={Timer} label="Window closure">
+                  {synthetic ? 'Demo only' : incident.exposure_end ? fmtTime(incident.exposure_end) : 'Not confirmed'}
                 </SummaryTile>
                 <SummaryTile icon={GitCommitHorizontal} label="Commit">
-                  <span className="font-mono">{incident.commit_hash ? incident.commit_hash.slice(0, 7) : '—'}</span>
+                  <span className="font-mono">{synthetic ? 'Demo source' : incident.commit_hash ? incident.commit_hash.slice(0, 7) : '—'}</span>
                 </SummaryTile>
                 <SummaryTile icon={KeyRound} label="Credential Type">
                   <span className="break-words">{incident.credential_type}</span>
@@ -479,7 +471,7 @@ const IncidentDetail: React.FC = () => {
               <div className="border-t bg-orange-500/5 dark:bg-orange-500/10 border-orange-500/20 px-6 sm:px-8 py-5">
                 <div className="flex items-center gap-2 mb-4">
                   <AlertTriangle className="text-orange-500" size={18} />
-                  <h3 className="text-sm font-semibold text-orange-700 dark:text-orange-400">Compliance & Regulatory Impact</h3>
+                  <h3 className="text-sm font-semibold text-orange-700 dark:text-orange-400">Potential compliance relevance</h3>
                 </div>
                 <div className="grid sm:grid-cols-3 gap-4">
                   {incident.gdpr_flag && (
@@ -488,7 +480,7 @@ const IncidentDetail: React.FC = () => {
                         <ShieldAlert size={14} />
                         <span className="text-xs font-bold uppercase">GDPR — Art. 33</span>
                       </div>
-                      <p className="text-xs text-muted-foreground">Notify Data Protection Authority within 72h of confirming breach.</p>
+                      <p className="text-xs text-muted-foreground">Review the evidence with your privacy team. This flag does not establish a reportable breach.</p>
                     </div>
                   )}
                   {incident.pcidss_flag && (
@@ -497,7 +489,7 @@ const IncidentDetail: React.FC = () => {
                         <Scale size={14} />
                         <span className="text-xs font-bold uppercase">PCI-DSS — Req 12</span>
                       </div>
-                      <p className="text-xs text-muted-foreground">Notify acquiring bank and card brands immediately.</p>
+                      <p className="text-xs text-muted-foreground">Review payment-data exposure and your incident response obligations with the responsible team.</p>
                     </div>
                   )}
                   {incident.soc2_flag && (
@@ -506,7 +498,7 @@ const IncidentDetail: React.FC = () => {
                         <Building2 size={14} />
                         <span className="text-xs font-bold uppercase">SOC 2 — CC6/A1</span>
                       </div>
-                      <p className="text-xs text-muted-foreground">Document in SOC 2 evidence records and inform auditor.</p>
+                      <p className="text-xs text-muted-foreground">Review the relevant security controls and incident evidence with your compliance team.</p>
                     </div>
                   )}
                 </div>
@@ -568,14 +560,21 @@ const IncidentDetail: React.FC = () => {
 
         {/* Right Column (Sidebar) */}
         <div className="xl:col-span-4 space-y-6">
-          <div className="sticky top-6 space-y-6">
+          <div className="xl:sticky xl:top-24 space-y-6">
             {/* First in the stack: on a Stripe incident this is real money
                 moved, which should not sit below three other cards. Self-hides
                 when there is nothing to report. */}
-            <FinancialImpactPanel incident={incident} />
-            <BlastRadiusSummary incident={incident} />
-            <SourceIPs events={incident.events} />
-            <AffectedResources events={incident.events} />
+            {forensic ? <>
+              <FinancialImpactPanel incident={incident} />
+              <BlastRadiusSummary incident={incident} />
+              <SourceIPs events={incident.events} />
+              <AffectedResources events={incident.events} />
+            </> : <div className="rounded-sm border bg-card p-5 space-y-3 text-sm">
+              <h2 className="font-semibold">Detection evidence</h2>
+              <p>Credential candidate found · validity not verified</p>
+              <p className="text-muted-foreground">Usage, billing impact and severity have not been assessed by BreachTrace. Review available records in the provider console.</p>
+              {synthetic && <p className="text-muted-foreground">This example uses a fabricated key. No provider request was made.</p>}
+            </div>}
             <RemediationChecklist steps={incident.remediation_steps} />
           </div>
         </div>

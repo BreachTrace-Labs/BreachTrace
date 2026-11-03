@@ -1,4 +1,5 @@
 from detector.scanner import scan, scan_diff
+import time
 
 
 def test_scan_detects_key_in_added_line():
@@ -193,3 +194,11 @@ def test_scan_diff_alias_matches_scan_output():
     diff_text = "+AKIAIOSFODNN7EXAMPLE\n"
 
     assert scan_diff(diff_text) == scan(diff_text)
+
+
+def test_many_aws_keys_do_not_rebuild_the_full_context_for_every_match():
+    source = "\n".join("+AWS_ACCESS_KEY_ID=AKIA" + format(i, "016X") for i in range(20_000))
+    start = time.perf_counter()
+    matches = scan(source)
+    assert len(matches) == 20_000
+    assert time.perf_counter() - start < 3

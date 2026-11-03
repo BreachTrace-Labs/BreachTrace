@@ -104,15 +104,15 @@ function MiniDonut({
   const circ = 2 * Math.PI * r
   const gap = 1.5  // gap between segments in px
 
-  let offset = circ * 0.25  // start at 12 o'clock
+  const visibleSegments = segments.filter(s => s.pct > 0)
 
   return (
     <svg width={72} height={72} className="shrink-0">
       {/* Track */}
       <circle cx={cx} cy={cy} r={r} fill="none" stroke="var(--color-muted)" strokeWidth={10} />
-      {segments
-        .filter(s => s.pct > 0)
+      {visibleSegments
         .map((s, i) => {
+          const offset = circ * (0.25 - visibleSegments.slice(0, i).reduce((sum, segment) => sum + segment.pct, 0))
           const dash   = Math.max(0, s.pct * circ - gap)
           const space  = circ - dash
           const circle = (
@@ -129,7 +129,6 @@ function MiniDonut({
               strokeLinecap="butt"
             />
           )
-          offset -= s.pct * circ
           return circle
         })}
     </svg>

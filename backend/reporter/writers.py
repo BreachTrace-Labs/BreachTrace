@@ -15,6 +15,7 @@ Writers, all speaking the one contract in reporter/prompt.py:
 from __future__ import annotations
 
 import logging
+import threading
 from typing import Callable
 
 import config
@@ -26,6 +27,8 @@ from reporter.validate import validate_sections
 logger = logging.getLogger(__name__)
 
 Writer = Callable[[dict, "list[str] | None"], "dict | None"]
+_selected_local = None
+_local_lock = threading.Lock()
 
 
 def local_writer() -> Writer | None:
@@ -81,19 +84,27 @@ def gemini_writer(model_name: str | None = None) -> Writer | None:
 
 
 def _writers() -> list[tuple[str, Writer]]:
-    provider = config.REPORT_PROVIDER
-    candidates: list[tuple[str, Callable[[], Writer | None]]] = []
-    if provider in ("auto", "local"):
-        candidates.append(("local_model", local_writer))
-    if provider in ("auto", "gemini"):
-        candidates.append(("gemini", gemini_writer))
+    global _selected_local
+    import model_settings
+    from llm_client import generate
+    settings = model_settings.current()
+    if settings.provider == "none":
+        return []
+    if settings.provider == "local":
+        from reporter.local_model import LocalReportModel
+        with _local_lock:
+            if _selected_local is None or _selected_local.model_path != settings.model_path:
+                if _selected_local is not None:
+                    _selected_local.unload()
+                _selected_local = LocalReportModel(settings.model_path, threads=config.REPORT_MODEL_THREADS,
+                                                   idle_seconds=config.REPORT_MODEL_IDLE_S)
+            model = _selected_local
+            return [("local_model", model.generate)] if model.available() else []
 
-    writers = []
-    for name, factory in candidates:
-        writer = factory()
-        if writer is not None:
-            writers.append((name, writer))
-    return writers
+    def write(facts: dict, feedback: list[str] | None = None) -> dict | None:
+        return parse_sections(generate(settings, build_messages(facts, feedback), json_output=True))
+
+    return [(settings.provider, write)]
 
 
 def write_validated(writer: Writer, facts: dict) -> tuple[dict | None, list[str]]:

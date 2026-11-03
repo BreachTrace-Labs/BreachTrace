@@ -14,14 +14,68 @@
  * backend/routers/incidents.py.
  */
 
-export type Platform =
+export const AI_LABELS = {
+  openai: "OpenAI / GPT",
+  anthropic: "Anthropic / Claude",
+  gemini: "Google Gemini",
+  googleai: "Google API key (AI usage unconfirmed)",
+  groq: "Groq",
+  xai: "xAI / Grok",
+  openrouter: "OpenRouter",
+  deepseek: "DeepSeek",
+  mistral: "Mistral",
+  cohere: "Cohere",
+  together: "Together AI",
+  perplexity: "Perplexity",
+  replicate: "Replicate",
+  sarvam: "Sarvam AI",
+  cerebras: "Cerebras",
+  fireworks: "Fireworks AI",
+  nvidia: "NVIDIA NIM",
+  ai21: "AI21",
+  deepinfra: "DeepInfra",
+  sambanova: "SambaNova",
+  anyscale: "Anyscale",
+  lepton: "Lepton AI",
+  siliconflow: "SiliconFlow",
+  moonshot: "Moonshot / Kimi",
+  zhipu: "Zhipu / Z.ai",
+  dashscope: "Alibaba DashScope / Qwen",
+  minimax: "MiniMax",
+  baidu: "Baidu / Qianfan",
+  azureopenai: "Azure OpenAI / Foundry",
+  huggingface: "Hugging Face",
+  voyage: "Voyage AI",
+  jina: "Jina AI",
+  runpod: "RunPod",
+  fal: "fal.ai",
+  stability: "Stability AI",
+  elevenlabs: "ElevenLabs",
+  assemblyai: "AssemblyAI",
+  deepgram: "Deepgram",
+  cartesia: "Cartesia",
+  novita: "Novita AI",
+  nebius: "Nebius AI",
+  baseten: "Baseten",
+  friendli: "FriendliAI",
+  aimlapi: "AI/ML API",
+  bedrock: "Amazon Bedrock bearer token",
+  vertexai: "Google Vertex AI",
+  volcengine: "Volcengine / Doubao",
+  hunyuan: "Tencent Hunyuan",
+  ollama: "Ollama cloud",
+} as const
+type AIPlatform = keyof typeof AI_LABELS
+
+export type Platform = AIPlatform
   | 'aws' | 'gcp' | 'azure'          // cloud, Tier 1
   | 'stripe' | 'twilio'              // SaaS, Tier 1
   | 'github' | 'slack' | 'npm' | 'sendgrid' | 'huggingface' | 'db'  // Tier 2
 
 export const PLATFORMS: Platform[] = [
   'aws', 'gcp', 'azure', 'stripe', 'twilio',
-  'github', 'slack', 'npm', 'sendgrid', 'huggingface', 'db',
+  'github', 'slack', 'npm', 'sendgrid', 'db',
+  ...Object.keys(AI_LABELS) as AIPlatform[],
 ]
 
 /** Platforms with a queryable audit log — these produce a real timeline. */
@@ -46,6 +100,10 @@ interface PlatformMeta {
 }
 
 export const PLATFORM_META: Record<Platform, PlatformMeta> = {
+  ...Object.fromEntries(Object.entries(AI_LABELS).map(([key, label]) => [key, {
+    label, auditLog: 'AI credential detection only', color: 'var(--color-platform-tier2)',
+    identityLabel: 'API Key',
+  }])) as Record<AIPlatform, PlatformMeta>,
   aws: {
     label: 'AWS',
     auditLog: 'CloudTrail',
@@ -146,6 +204,7 @@ export function derivePlatform(source: PlatformSource | null | undefined): Platf
  * mis-routing is silent.
  */
 const CREDENTIAL_TYPE_TO_PLATFORM: Record<string, Platform> = {
+  ...Object.fromEntries(Object.keys(AI_LABELS).map(p => [`${p}_api_key`, p])) as Record<string, AIPlatform>,
   aws_access_key: 'aws',
   gcp_service_account: 'gcp',
   // Firebase keys ARE GCP service account keys and collect through Cloud Audit

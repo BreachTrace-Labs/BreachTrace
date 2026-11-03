@@ -63,6 +63,7 @@ const RemediationChecklist: React.FC<Props> = ({ steps }) => {
         </CardTitle>
       </CardHeader>
       <CardContent>
+        {steps.length > 0 && <p className="mb-3 text-xs text-muted-foreground">Checks are for this view only and are not saved. Checking an item does not perform the action.</p>}
         {steps.length === 0 ? (
           <p className="text-sm" style={{ color: 'var(--color-muted-foreground)' }}>
             Awaiting report generation

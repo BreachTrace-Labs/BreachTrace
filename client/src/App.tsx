@@ -7,6 +7,7 @@ import IncidentDetail from "./pages/IncidentDetail";
 import Research from "./pages/Research";
 import Connect from "./pages/Connect";
 import Search from "./pages/Search";
+import Settings from "./pages/Settings";
 
 function App() {
   return (
@@ -20,6 +21,7 @@ function App() {
               <Route path="/research" element={<Research />} />
               <Route path="/connect" element={<Connect />} />
               <Route path="/search" element={<Search />} />
+              <Route path="/settings" element={<Settings />} />
             </Routes>
           </Layout>
         </BrowserRouter>

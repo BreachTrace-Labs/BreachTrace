@@ -13,6 +13,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 
 from db.models import VALID_PLATFORMS
+from detector.ai_keys import RULES as AI_RULES
 
 # Alias -> platform. Matched as whole words, longest first.
 PLATFORM_ALIASES: dict[str, str] = {
@@ -27,6 +28,10 @@ PLATFORM_ALIASES: dict[str, str] = {
     "database": "db", "postgres": "db", "postgresql": "db", "mysql": "db",
     "mongodb": "db", "redis": "db", "connection string": "db",
 }
+PLATFORM_ALIASES.update({rule.provider: rule.provider for rule in AI_RULES})
+PLATFORM_ALIASES.update({"claude": "anthropic", "gpt": "openai", "chatgpt": "openai",
+                         "grok": "xai", "sarvam ai": "sarvam", "google gemini": "gemini",
+                         "google api key": "googleai", "azure openai": "azureopenai"})
 
 SEVERITY_WORDS = {"critical": 4, "high": 3, "medium": 2, "low": 1}
 

@@ -15,7 +15,7 @@ from datetime import datetime, timezone
 from typing import Optional
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from db.crud import create_incident, finalize_non_forensic_incident, set_exposure_end
@@ -37,7 +37,7 @@ router = APIRouter(prefix="/test", tags=["test"])
 
 class SimulateRequest(BaseModel):
     repo_url: str = "simulated"
-    diff_text: str
+    diff_text: str = Field(max_length=2 * 1024 * 1024)
     # Platform selector: 'aws' | 'gcp' | 'azure'
     platform: str = "aws"
     # Optional: force a specific credential so a match can be filtered.
@@ -118,7 +118,7 @@ async def simulate(
         if not matches:
             raise HTTPException(
                 status_code=422,
-                detail=f"Credential '{forced_credential}' not found in the provided diff_text",
+                detail="Requested credential was not found in the provided diff_text",
             )
 
     exposure_start = body.exposure_start or datetime.now(tz=timezone.utc)

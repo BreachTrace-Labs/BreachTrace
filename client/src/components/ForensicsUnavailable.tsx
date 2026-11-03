@@ -50,7 +50,7 @@ const ForensicsUnavailable: React.FC<Props> = ({ incident }) => {
   return (
     <Card>
       <CardHeader className="pb-3">
-        <CardTitle className="flex items-center gap-2 text-sm">
+        <CardTitle className="flex flex-wrap items-center gap-2 text-sm">
           <ShieldQuestion size={14} strokeWidth={2} />
           Forensic reconstruction unavailable
           <span
@@ -69,7 +69,7 @@ const ForensicsUnavailable: React.FC<Props> = ({ incident }) => {
         {/* The reason, straight from the backend so UI and report never diverge. */}
         <p style={{ color: 'var(--color-foreground)' }}>
           {incident.unavailable_reason ??
-            `${meta.label} exposes no queryable audit log for this credential type, so activity during the exposure window cannot be reconstructed.`}
+            `BreachTrace does not collect activity for this ${meta.label} credential type. Activity during the exposure window has not been reconstructed.`}
         </p>
 
         {/* The critical distinction. Absence of evidence is not evidence of absence. */}
@@ -91,8 +91,8 @@ const ForensicsUnavailable: React.FC<Props> = ({ incident }) => {
               An empty timeline is not proof the credential went unused.
             </p>
             <p className="mt-1" style={{ color: 'var(--color-muted-foreground)' }}>
-              It means {meta.label} provides no way to find out. Treat this credential as
-              compromised and rotate it regardless.
+              Key validity and usage have not been verified. If this is a real
+              credential exposed in a repository, rotate it and review provider records.
             </p>
           </div>
         </div>
@@ -106,11 +106,10 @@ const ForensicsUnavailable: React.FC<Props> = ({ incident }) => {
             Why this platform differs
           </p>
           <p style={{ color: 'var(--color-muted-foreground)' }}>
-            Platforms like AWS, GCP and Stripe publish a per-credential audit log that a
-            third party can query, which is what makes a blast-radius timeline possible.{' '}
-            {meta.label} does not — its audit surface is{' '}
+            Cloud forensics requires authorized access to the organization’s audit logs.{' '}
+            For {meta.label}, BreachTrace’s current coverage is{' '}
             <span style={{ color: 'var(--color-foreground)' }}>{meta.auditLog}</span>.
-            Forensic observability is a property of the vendor, not of the tool.
+            Review available usage and security records in the provider console.
           </p>
         </div>
 

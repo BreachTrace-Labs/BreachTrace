@@ -6,6 +6,7 @@ import type {
   PlatformComparison,
   PlatformStats,
 } from '@/types'
+import AI_DEMO_INCIDENTS from './aiDemoIncidents.json'
 
 export type { ExperimentRun }
 
@@ -465,6 +466,7 @@ const STRIPE_EVENTS: ForensicEvent[] = [
 /* ─── incidents ───────────────────────────────────────────────── */
 
 export const MOCK_INCIDENTS: IncidentRecord[] = [
+  ...(AI_DEMO_INCIDENTS as IncidentRecord[]),
   {
     incident_id: 'inc-001',
     credential_type: 'AWS_ACCESS_KEY',

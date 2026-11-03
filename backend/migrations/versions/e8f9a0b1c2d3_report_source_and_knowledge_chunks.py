@@ -8,7 +8,7 @@ knowledge_chunks backs the natural-language search. Embeddings are plain bytes
 searched in-process, so no pgvector extension is required.
 
 Revision ID: e8f9a0b1c2d3
-Revises: d5e6f7a8b9c0
+Revises: 37cd4df9188c
 """
 from typing import Sequence, Union
 
@@ -16,7 +16,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision: str = "e8f9a0b1c2d3"
-down_revision: Union[str, None] = "d5e6f7a8b9c0"
+down_revision: Union[str, None] = "37cd4df9188c"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
