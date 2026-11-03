@@ -33,6 +33,19 @@ def local_writer() -> Writer | None:
     return model.generate if model else None
 
 
+# Gemini's response_schema is an OpenAPI subset: it rejects JSON-Schema keys
+# such as additionalProperties, which llama.cpp's grammar mode accepts.
+_GEMINI_UNSUPPORTED_KEYS = ("additionalProperties", "minItems", "maxItems")
+
+
+def _gemini_schema(schema: dict) -> dict:
+    return {
+        key: _gemini_schema(value) if isinstance(value, dict) else value
+        for key, value in schema.items()
+        if key not in _GEMINI_UNSUPPORTED_KEYS
+    }
+
+
 def gemini_writer(model_name: str | None = None) -> Writer | None:
     """
     Gemini through the supported `google-genai` SDK, or None if unavailable.
@@ -58,7 +71,7 @@ def gemini_writer(model_name: str | None = None) -> Writer | None:
             config={
                 "system_instruction": SYSTEM_PROMPT,
                 "response_mime_type": "application/json",
-                "response_schema": SECTIONS_SCHEMA,
+                "response_schema": _gemini_schema(SECTIONS_SCHEMA),
                 "temperature": 0.3,
             },
         )

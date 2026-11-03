@@ -161,19 +161,19 @@ function MarkdownReport({ text }: { text: string }) {
 /* ─── incident summary helpers ─────────────────────────────────── */
 
 const STATUS_LABELS: Record<string, string> = {
-  detecting:   'Detecting',
-  collecting:  'Collecting',
+  detecting: 'Detecting',
+  collecting: 'Collecting',
   classifying: 'Classifying',
-  scoring:     'Scoring',
-  reporting:   'Reporting',
-  complete:    'Complete',
-  error:        'Needs Attention',
+  scoring: 'Scoring',
+  reporting: 'Reporting',
+  complete: 'Complete',
+  error: 'Needs Attention',
 }
 
 const PLATFORM_STYLES: Record<string, { label: string; className: string }> = {
-  gcp:   { label: 'GCP',   className: 'bg-blue-500/10 text-blue-700 dark:text-blue-300 border-blue-500/20' },
+  gcp: { label: 'GCP', className: 'bg-blue-500/10 text-blue-700 dark:text-blue-300 border-blue-500/20' },
   azure: { label: 'Azure', className: 'bg-teal-500/10 text-teal-700 dark:text-teal-300 border-teal-500/20' },
-  aws:   { label: 'AWS',   className: 'bg-orange-500/10 text-orange-700 dark:text-orange-300 border-orange-500/20' },
+  aws: { label: 'AWS', className: 'bg-orange-500/10 text-orange-700 dark:text-orange-300 border-orange-500/20' },
 }
 
 function PlatformBadge({ platform }: { platform: string | undefined }) {
@@ -198,13 +198,12 @@ function StatusPill({ status }: { status: string }) {
 
   return (
     <span
-      className={`inline-flex items-center gap-2 rounded-sm border px-3 py-1.5 text-xs font-bold uppercase tracking-wider ${
-        complete
+      className={`inline-flex items-center gap-2 rounded-sm border px-3 py-1.5 text-xs font-bold uppercase tracking-wider ${complete
           ? 'border-emerald-500/25 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300'
           : errored
-          ? 'border-red-500/25 bg-red-500/10 text-red-600 dark:text-red-400'
-          : 'border-primary/20 bg-primary/10 text-primary'
-      }`}
+            ? 'border-red-500/25 bg-red-500/10 text-red-600 dark:text-red-400'
+            : 'border-primary/20 bg-primary/10 text-primary'
+        }`}
     >
       <span className={`h-2 w-2 rounded-full ${complete ? 'bg-emerald-500' : errored ? 'bg-red-500' : 'bg-primary animate-pulse'}`} />
       {complete ? 'Investigation Complete' : STATUS_LABELS[status] ?? status}
@@ -269,7 +268,7 @@ const IncidentDetail: React.FC = () => {
       client
         .get<IncidentRecord>(`/incidents/${id}`)
         .then(({ data }) => setIncident(data))
-        .catch(() => {})
+        .catch(() => { })
     }, 3000)
     return () => clearInterval(poll)
   }, [id])
@@ -331,7 +330,7 @@ const IncidentDetail: React.FC = () => {
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b pb-6">
         <div className="flex items-center gap-4">
           <Button variant="outline" size="icon" onClick={() => navigate('/')} className="rounded-sm shadow-sm">
-             <ArrowLeft size={18} />
+            <ArrowLeft size={18} />
           </Button>
           <div>
             <h1 className="text-2xl font-bold tracking-tight text-foreground flex items-center gap-3">
@@ -343,7 +342,7 @@ const IncidentDetail: React.FC = () => {
             </p>
           </div>
         </div>
-        
+
         <div className="flex flex-wrap items-center gap-3">
           <StatusPill status={incident.status} />
           <Button
@@ -363,10 +362,10 @@ const IncidentDetail: React.FC = () => {
 
       {/* Main Content Grid */}
       <div className="grid grid-cols-1 xl:grid-cols-12 gap-8">
-        
+
         {/* Left Column (Main Info) */}
         <div className="xl:col-span-8 space-y-8">
-          
+
           {/* Overview Card */}
           <div className="bg-card border rounded-sm shadow-sm overflow-hidden">
             {refreshNotice && (
@@ -475,7 +474,7 @@ const IncidentDetail: React.FC = () => {
                 </div>
               )}
             </div>
-            
+
             {(incident.gdpr_flag || incident.pcidss_flag || incident.soc2_flag) && (
               <div className="border-t bg-orange-500/5 dark:bg-orange-500/10 border-orange-500/20 px-6 sm:px-8 py-5">
                 <div className="flex items-center gap-2 mb-4">
@@ -512,17 +511,17 @@ const IncidentDetail: React.FC = () => {
                   )}
                 </div>
                 {incident.compliance_reasons && incident.compliance_reasons.length > 0 && (
-                   <div className="mt-4 pt-3 border-t border-orange-500/10">
+                  <div className="mt-4 pt-3 border-t border-orange-500/10">
                     <ul className="list-inside list-disc space-y-1">
                       {incident.compliance_reasons.map((reason, i) => (
                         <li key={i} className="text-xs text-orange-700/80 dark:text-orange-300/80 pl-2">{reason}</li>
                       ))}
                     </ul>
-                   </div>
+                  </div>
                 )}
               </div>
             )}
-            
+
             {/* Financial impact moved to FinancialImpactPanel in the sidebar.
                 It renders one figure per currency and separates money that
                 actually moved from list-price estimates, which this raw string
@@ -534,7 +533,7 @@ const IncidentDetail: React.FC = () => {
             <div className="bg-card border rounded-sm shadow-sm p-6 sm:p-8">
               <h2 className="text-lg font-semibold text-foreground mb-6 flex items-center gap-2">
                 <div className="p-1.5 bg-primary/10 text-primary rounded-sm">
-                   <AlertTriangle size={18} />
+                  <AlertTriangle size={18} />
                 </div>
                 Incident Report
                 <ReportSourceBadge source={incident.report_source} />
@@ -553,13 +552,13 @@ const IncidentDetail: React.FC = () => {
               "this is unknowable". */}
           {isForensicTier(incident) ? (
             <div className="bg-card border rounded-sm shadow-sm p-6 sm:p-8">
-                <h2 className="text-lg font-semibold text-foreground mb-6 flex items-center gap-2">
-                  <div className="p-1.5 bg-primary/10 text-primary rounded-sm">
-                     <Activity size={18} />
-                  </div>
-                  Forensic Timeline
-                </h2>
-               <ForensicTimeline events={incident.events} />
+              <h2 className="text-lg font-semibold text-foreground mb-6 flex items-center gap-2">
+                <div className="p-1.5 bg-primary/10 text-primary rounded-sm">
+                  <Activity size={18} />
+                </div>
+                Forensic Timeline
+              </h2>
+              <ForensicTimeline events={incident.events} />
             </div>
           ) : (
             <ForensicsUnavailable incident={incident} />
@@ -582,12 +581,12 @@ const IncidentDetail: React.FC = () => {
         </div>
 
       </div>
-      
+
       {/* Event Analytics */}
       {incident.events.length > 0 && (
-         <div className="mt-8">
-             <EventAnalytics events={incident.events} />
-         </div>
+        <div className="mt-8">
+          <EventAnalytics events={incident.events} />
+        </div>
       )}
 
     </div>

@@ -238,7 +238,7 @@ pip install -r requirements-research.txt
 python -m research.report_distill facts --n 3000 --out ../data/report_facts.jsonl
 # 2. Teacher writes the targets with the shipped prompt; invalid drafts dropped
 GEMINI_API_KEY=... python -m research.report_distill teach \
-    --facts ../data/report_facts.jsonl --out ../data/report_sft.jsonl --teacher gemini-2.5-pro --drafts 3
+    --facts ../data/report_facts.jsonl --out ../data/report_sft.jsonl   # resumable; Flash teachers rotated
 # 3. LoRA fine-tune on a GPU (e.g. Colab), then convert to GGUF Q4_K_M
 python research/report_train.py --data ../data/report_sft.jsonl --out reporter-0.5b
 # 4. Quality gate on the held-out test split (see research/report_eval.py)

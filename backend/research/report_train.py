@@ -1,8 +1,8 @@
 """
 Fine-tune the specialised report model (LoRA) and export it for llama.cpp.
 
-Run on a GPU (a free Colab T4 takes about an hour for ~3k examples), NOT on
-the user's machine. Install there:
+Run on a GPU (a free Colab T4 takes about an hour for ~3k examples) or an
+Apple Silicon Mac (uses MPS automatically), NOT on the user's machine. Install:
 
     pip install "torch" "transformers>=4.45" "peft>=0.12" "trl>=0.12" "datasets" "accelerate"
 
@@ -39,6 +39,8 @@ def main() -> None:
     parser.add_argument("--rank", type=int, default=16)
     parser.add_argument("--batch", type=int, default=8)
     parser.add_argument("--max-length", type=int, default=2048)
+    parser.add_argument("--max-steps", type=int, default=-1, help="cap steps (smoke tests)")
+    parser.add_argument("--cpu", action="store_true", help="force CPU (smoke tests; MPS can stall on 8 GB Macs)")
     args = parser.parse_args()
 
     import torch
@@ -60,9 +62,13 @@ def main() -> None:
     print(f"train {len(train)}  val {len(val)}  prompt_version {versions.pop()}")
 
     tokenizer = AutoTokenizer.from_pretrained(args.base)
-    model = AutoModelForCausalLM.from_pretrained(
-        args.base, torch_dtype=torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16
-    )
+    if torch.cuda.is_available():
+        dtype = torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16
+    else:
+        # Apple Silicon (MPS) and CPU: fp16 training is unstable there, and a
+        # 0.5B model fits comfortably in fp32.
+        dtype = torch.float32
+    model = AutoModelForCausalLM.from_pretrained(args.base, dtype=dtype)
 
     trainer = SFTTrainer(
         model=model,
@@ -80,12 +86,15 @@ def main() -> None:
             per_device_train_batch_size=args.batch,
             gradient_accumulation_steps=max(1, 16 // args.batch),
             lr_scheduler_type="cosine",
-            warmup_ratio=0.05,
+            warmup_steps=0.05,  # a float < 1 is a fraction of total steps
             logging_steps=10,
             eval_strategy="epoch" if len(val) else "no",
             save_strategy="epoch",
             max_length=args.max_length,
             completion_only_loss=True,
+            gradient_checkpointing=True,   # fits 8 GB machines; costs ~30% speed
+            max_steps=args.max_steps,
+            use_cpu=args.cpu,
             report_to="none",
         ),
     )

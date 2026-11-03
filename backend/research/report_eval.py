@@ -8,11 +8,11 @@ which the model never saw in training. Steps:
         python -m research.report_eval generate --facts ../data/report_facts.jsonl \\
             --writer local:/path/breachtrace-reporter-q4_k_m.gguf --out ../data/eval_local.jsonl
         python -m research.report_eval generate --facts ../data/report_facts.jsonl \\
-            --writer gemini:gemini-2.5-flash --out ../data/eval_gemini.jsonl
+            --writer gemini:gemini-3.5-flash --out ../data/eval_gemini.jsonl
 
   2. judge — blind pairwise LLM judging, both orders (position-bias control).
         python -m research.report_eval judge --a ../data/eval_local.jsonl \\
-            --b ../data/eval_gemini.jsonl --judge gemini-2.5-pro --out ../data/judge.jsonl
+            --b ../data/eval_gemini.jsonl --out ../data/judge.jsonl
 
   3. human-sheet / human-score — blind A/B sheet for team raters, then scoring.
         python -m research.report_eval human-sheet --a ... --b ... --n 40 --out ../data/human.csv
@@ -36,6 +36,7 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import os
 import random
 import re
 import resource
@@ -107,10 +108,11 @@ def _make_writer(spec: str):
     if kind == "gemini":
         from reporter.writers import gemini_writer
 
-        writer = gemini_writer(arg or None)
-        if writer is None:
-            raise SystemExit("Gemini unavailable: set GEMINI_API_KEY and install google-genai")
-        return writer
+        from research.report_distill import TeacherPool
+
+        pool = TeacherPool([arg] if arg else ["gemini-3.5-flash"])  # retries overload/quota
+        return lambda facts, feedback=None: pool.write(facts)[0] if feedback is None else \
+            pool.writers[next(iter(pool.writers))](facts, feedback)
     raise SystemExit(f"unknown writer {spec!r}; use deterministic | local:<gguf> | gemini:<model>")
 
 
@@ -169,12 +171,13 @@ DRAFT B:
 {b}"""
 
 
-def judge_pair(facts: dict, a: dict, b: dict, *, judge_model: str = "gemini-2.5-pro") -> str:
+def judge_pair(facts: dict, a: dict, b: dict, *, judge_model: str | None = None) -> str:
     """'A', 'B' or 'tie'. Judged in both orders; a split decision is a tie."""
     import config
     from google import genai
 
     client = genai.Client(api_key=config.GEMINI_API_KEY)
+    judge_model = judge_model or os.getenv("GEMINI_JUDGE_MODEL", "gemini-3.5-flash")
 
     def ask(first: dict, second: dict) -> str:
         prompt = JUDGE_PROMPT.format(
@@ -182,10 +185,18 @@ def judge_pair(facts: dict, a: dict, b: dict, *, judge_model: str = "gemini-2.5-
             a=json.dumps(first, ensure_ascii=False),
             b=json.dumps(second, ensure_ascii=False),
         )
-        response = client.models.generate_content(
-            model=judge_model, contents=prompt,
-            config={"response_mime_type": "application/json", "temperature": 0},
-        )
+        response = None
+        for attempt in range(6):  # free-tier overload is routine; back off and retry
+            try:
+                response = client.models.generate_content(
+                    model=judge_model, contents=prompt,
+                    config={"response_mime_type": "application/json", "temperature": 0},
+                )
+                break
+            except Exception as exc:
+                if not any(c in str(exc) for c in ("429", "500", "503", "504", "UNAVAILABLE")):
+                    raise
+                time.sleep(min(5 * 2 ** attempt, 120))
         try:
             return json.loads(response.text).get("winner", "tie")
         except (ValueError, AttributeError):
@@ -323,7 +334,8 @@ def main() -> None:
 
     p = sub.add_parser("judge"); p.set_defaults(func=cmd_judge)
     p.add_argument("--a", required=True, help="candidate outputs"); p.add_argument("--b", required=True, help="reference outputs")
-    p.add_argument("--judge", default="gemini-2.5-pro"); p.add_argument("--out", required=True)
+    p.add_argument("--judge", default=None, help="default: $GEMINI_JUDGE_MODEL or gemini-3.5-flash")
+    p.add_argument("--out", required=True)
     p.add_argument("--sleep", type=float, default=1.0)
 
     p = sub.add_parser("human-sheet"); p.set_defaults(func=cmd_human_sheet)
