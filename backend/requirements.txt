@@ -19,7 +19,7 @@ python-dotenv
 tenacity
 
 # Reports + search — everything runs in-process on the CPU (no model server).
-llama-cpp-python>=0.3.0   # local report model (GGUF); CPU build
+# Optional GGUF runtime is in requirements-local.txt; no generative model bundled.
 fastembed>=0.4            # bge-small embeddings for search (ONNX, ~70 MB model)
 numpy
 
@@ -43,6 +43,8 @@ azure-mgmt-monitor>=6.0.0
 # Stripe / Twilio (SaaS Tier 1 collectors)
 stripe>=7.0.0
 twilio>=8.0.0
+
+reportlab  # per-incident PDF reports
 
 # Testing
 pytest  # dev-only

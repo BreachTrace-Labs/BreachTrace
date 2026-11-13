@@ -19,7 +19,8 @@ REQUIRED_KEYS = [
 
 
 def validate_config() -> None:
-    missing = [key for key in REQUIRED_KEYS if not os.getenv(key)]
+    keys = ["DATABASE_URL"] if os.getenv("BREACHTRACE_LOCAL_TEST_MODE", "").lower() == "true" else REQUIRED_KEYS
+    missing = [key for key in keys if not os.getenv(key)]
     if missing:
         for key in missing:
             print(f"[config] MISSING required env var: {key}")
@@ -52,9 +53,9 @@ GEMINI_API_KEY: str = os.getenv("GEMINI_API_KEY", "")
 MODEL_CACHE_DIR: str = os.path.expanduser(
     os.getenv("MODEL_CACHE_DIR", os.path.join("~", ".breachtrace", "models"))
 )
-# Which writer upgrades the template report: auto | local | gemini | none.
-# "auto" uses the local model when present, otherwise Gemini when a key is set.
-REPORT_PROVIDER: str = os.getenv("REPORT_PROVIDER", "auto").lower()
+# Explicit legacy opt-in: local | gemini | none. The Settings UI takes precedence.
+# No automatic selection or bundled generative model.
+REPORT_PROVIDER: str = os.getenv("REPORT_PROVIDER", "none").lower()
 REPORT_MODEL_ENABLED: bool = os.getenv("REPORT_MODEL_ENABLED", "true").lower() in ("1", "true", "yes")
 REPORT_MODEL_PATH: str = os.path.expanduser(
     os.getenv("REPORT_MODEL_PATH", os.path.join(MODEL_CACHE_DIR, "breachtrace-reporter-q4_k_m.gguf"))
@@ -79,7 +80,8 @@ GCP_PROJECT_ID: str = os.getenv("GCP_PROJECT_ID", "")
 GCP_SERVICE_ACCOUNT_JSON: str = os.getenv("GCP_SERVICE_ACCOUNT_JSON", "")
 GCP_EXPERIMENT_CLIENT_EMAIL: str = os.getenv("GCP_EXPERIMENT_CLIENT_EMAIL", "")
 GCP_EXPERIMENT_PRIVATE_KEY_ID: str = os.getenv("GCP_EXPERIMENT_PRIVATE_KEY_ID", "")
-GCP_EXPERIMENT_PRIVATE_KEY: str = os.getenv("GCP_EXPERIMENT_PRIVATE_KEY", "")
+# .env files commonly store PEM newlines as the two characters "\n"
+GCP_EXPERIMENT_PRIVATE_KEY: str = os.getenv("GCP_EXPERIMENT_PRIVATE_KEY", "").replace("\\n", "\n")
 
 # ---------------------------------------------------------------------------
 # Azure (optional — system operates AWS-only when absent)

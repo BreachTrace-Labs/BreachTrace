@@ -119,7 +119,7 @@ def ensure_kb(db: Session) -> None:
 
 
 def incident_chunks(incident: IncidentRecord) -> list[dict]:
-    """Searchable passages for one incident: a header plus each report section."""
+    """Report passages and timestamped event evidence, without raw payloads."""
     platform = incident.platform
     severity = {1: "Low", 2: "Medium", 3: "High", 4: "Critical"}.get(incident.overall_severity or 0, "Unknown")
     title = f"{incident.credential_type.replace('_', ' ')} {incident.credential_hint} ({platform})"
@@ -149,7 +149,27 @@ def incident_chunks(incident: IncidentRecord) -> list[dict]:
                 "title": f"{title} — {heading.strip()}",
                 "text": body.strip(),
             })
+    for event in sorted(incident.events, key=lambda e: (e.timestamp, e.event_id)):
+        chunks.append(event_chunk(event))
     return chunks
+
+
+def event_chunk(event) -> dict:
+    from datetime import timezone
+    stamp = event.timestamp
+    if stamp.tzinfo is None:
+        stamp = stamp.replace(tzinfo=timezone.utc)
+    stamp = stamp.astimezone(timezone.utc).isoformat()
+    text = (f"At {stamp}, {event.api_action} on {event.platform}. "
+            f"Outcome: {'succeeded' if event.success else 'failed'}. "
+            f"Resource: {event.affected_resource or 'not recorded'}. "
+            f"Source IP: {event.source_ip or 'not recorded'}. "
+            f"Category: {event.impact_category or 'unclassified'}. "
+            f"Error code: {event.error_code or 'none recorded'}. "
+            f"Event ID: {event.event_id}.")
+    return {"id": f"incident:{event.incident_id}:event:{event.event_id}",
+            "source_type": "incident", "source_id": event.incident_id,
+            "title": f"Timeline: {event.api_action} at {stamp}", "text": text}
 
 
 def index_incident(db: Session, incident_id: str) -> None:

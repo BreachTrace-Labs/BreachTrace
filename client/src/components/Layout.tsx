@@ -3,12 +3,14 @@ import { Moon, Sun, Activity, FlaskConical, ShieldAlert, Link2, Search } from 'l
 import { useTheme } from '@/lib/theme'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
+import { USE_MOCK } from '@/api/client'
 
 const NAV = [
   { to: '/', label: 'Monitor', icon: Activity, exact: true },
   { to: '/search', label: 'Search', icon: Search, exact: false },
   { to: '/research', label: 'Research', icon: FlaskConical, exact: false },
   { to: '/connect', label: 'Connect', icon: Link2, exact: false },
+  { to: '/settings', label: 'Settings', icon: Link2, exact: false },
 ]
 
 export function Layout({ children }: { children: React.ReactNode }) {
@@ -28,7 +30,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
           borderColor: 'var(--color-border)',
         }}
       >
-        <div className="mx-auto max-w-7xl px-6 h-14 flex items-center gap-8">
+        <div className="mx-auto max-w-7xl px-4 sm:px-6 min-h-14 py-2 flex flex-wrap items-center gap-x-4 gap-y-2 sm:gap-x-8">
           {/* Logo */}
           <div className="flex items-center gap-2.5 shrink-0">
             <div
@@ -45,7 +47,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
           </div>
 
           {/* Nav */}
-          <nav className="flex items-center gap-1">
+          <nav aria-label="Main navigation" className="order-3 w-full flex flex-wrap items-center gap-1 sm:order-none sm:w-auto">
             {NAV.map(({ to, label, exact }) => {
               const active = exact ? location.pathname === to : location.pathname.startsWith(to)
               return (
@@ -86,14 +88,17 @@ export function Layout({ children }: { children: React.ReactNode }) {
       </header>
 
       {/* Main */}
-      <main className="flex-1 mx-auto w-full max-w-7xl px-6 py-8">{children}</main>
+      <main className="flex-1 mx-auto w-full min-w-0 max-w-7xl px-4 sm:px-6 py-8">
+        {USE_MOCK && <p role="note" className="mb-6 rounded border p-3 text-sm">Preview mode · All incidents and research metrics shown here are synthetic. Repository scans and model settings require a running backend.</p>}
+        {children}
+      </main>
 
       {/* Footer */}
       <footer
         className="border-t py-4"
         style={{ borderColor: 'var(--color-border)' }}
       >
-        <div className="mx-auto max-w-7xl px-6 flex items-center justify-between">
+        <div className="mx-auto max-w-7xl px-4 sm:px-6 flex flex-wrap gap-2 items-center justify-between">
           <span className="text-xs font-mono" style={{ color: 'var(--color-muted-foreground)' }}>
             BreachTrace — Credential Forensics Platform
           </span>

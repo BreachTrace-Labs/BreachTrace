@@ -3,6 +3,8 @@ import { BookOpen, FileSearch, Lightbulb } from 'lucide-react'
 import type { SearchPassage, SearchResult } from '@/types'
 import SeverityBadge from '@/components/SeverityBadge'
 import { derivePlatform, PLATFORM_META } from '@/lib/platform'
+import { isSyntheticIncident } from '@/lib/incidentPresentation'
+import SyntheticNotice from '@/components/SyntheticNotice'
 
 /**
  * Renders a retrieval-only search result: matching incidents, then verbatim
@@ -12,7 +14,7 @@ import { derivePlatform, PLATFORM_META } from '@/lib/platform'
 
 function Highlighted({ passage }: { passage: SearchPassage }) {
   const at = passage.text.indexOf(passage.highlight)
-  if (at < 0 || passage.highlight === passage.text) {
+  if (!passage.highlight || at < 0 || passage.highlight === passage.text) {
     return <p className="text-sm leading-relaxed">{passage.text}</p>
   }
   return (
@@ -80,6 +82,7 @@ export default function SearchResults({
 
   return (
     <div className="space-y-5">
+      {result.disclaimer && <p role="note" className="text-xs text-muted-foreground">{result.disclaimer}</p>}
       {showIncidents && incidents.length > 0 && (
         <div className="space-y-2">
           <p
@@ -102,6 +105,7 @@ export default function SearchResults({
                     {PLATFORM_META[platform].label}
                   </span>
                   <span className="font-mono text-xs">{inc.credential_hint}</span>
+                  {isSyntheticIncident(inc) && <SyntheticNotice compact />}
                   <span
                     className="text-xs truncate max-w-[16rem]"
                     style={{ color: 'var(--color-muted-foreground)' }}
@@ -125,6 +129,7 @@ export default function SearchResults({
 
       {passages.length > 0 && (
         <div className="space-y-2">
+          {result.truncated && <p className="text-sm">More events match this interval. Narrow the time range to inspect them.</p>}
           {showIncidents && incidents.length > 0 && (
             <p
               className="text-[11px] font-semibold uppercase tracking-wider"

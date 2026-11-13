@@ -93,10 +93,23 @@ def mask_access_key_id(access_key_id: str) -> str:
     return f"{access_key_id[:4]}****{access_key_id[-4:]}"
 
 
+def _context_window(lines: Sequence[str], index: int, radius: int) -> str:
+    """Keep context within the file/hunk barriers inserted by the scanner."""
+    lo, hi = max(0, index - radius), min(len(lines), index + radius + 1)
+    for position in range(index - 1, lo - 1, -1):
+        if lines[position] == "\x00":
+            lo = position + 1
+            break
+    for position in range(index + 1, hi):
+        if lines[position] == "\x00":
+            hi = position
+            break
+    return "\n".join(lines[lo:hi])
+
+
 def has_nearby_secret(lines: Sequence[str], index: int, *, radius: int = SECRET_CONTEXT_RADIUS) -> bool:
     """Check whether a secret-key-looking value appears within the shared context window."""
-    context_lines = lines[max(0, index - radius): min(len(lines), index + radius + 1)]
-    search_context = "\n".join(context_lines)
+    search_context = _context_window(lines, index, radius)
     context_lower = search_context.lower()
 
     return any(keyword in context_lower for keyword in SECRET_CONTEXT_KEYWORDS) and bool(
@@ -150,7 +163,7 @@ FIREBASE_SA_EMAIL_PATTERN = re.compile(
 )
 
 GCP_CLIENT_EMAIL_PATTERN = re.compile(
-    r'[a-z0-9\-\.]+@[a-z0-9\-]+\.iam\.gserviceaccount\.com'
+    r'(?<![a-z0-9.\-])[a-z0-9.\-]{1,64}@[a-z0-9\-]{1,63}\.iam\.gserviceaccount\.com'
 )
 # Evidence that the surrounding text carries KEY MATERIAL rather than merely
 # naming a service account.
@@ -228,16 +241,15 @@ def find_gcp_credentials(
     for i, line in enumerate(lines):
         if not _is_eligible(i, candidate_lines):
             continue
+        if ".iam.gserviceaccount.com" not in line or "@" not in line:
+            continue
         for m in GCP_CLIENT_EMAIL_PATTERN.finditer(line):
             email = m.group(0)
             if email in seen:
                 continue
-            seen.add(email)
 
             # Check surrounding lines for key-material evidence.
-            lo = max(0, i - GCP_CONTEXT_RADIUS)
-            hi = min(len(lines), i + GCP_CONTEXT_RADIUS + 1)
-            context_block = "\n".join(lines[lo:hi])
+            context_block = _context_window(lines, i, GCP_CONTEXT_RADIUS)
             normalised_context = context_block.lower().replace("-", "_")
             context_confirmed = any(
                 kw.lower().replace("-", "_") in normalised_context
@@ -256,6 +268,8 @@ def find_gcp_credentials(
             # README line — produced a collectable Tier-1 incident.
             if not context_confirmed:
                 continue
+
+            seen.add(email)
 
             # Extract private_key_id from the same context window if present
             key_id_match = GCP_PRIVATE_KEY_ID_PATTERN.search(context_block)
@@ -326,6 +340,12 @@ AZURE_CONN_STRING_PATTERN = re.compile(
     r'DefaultEndpointsProtocol=https;AccountName=[^;]+;AccountKey=[A-Za-z0-9+/=]{64,};'
 )
 AZURE_CONTEXT_RADIUS = 3
+# Same-line label before a UUID that marks it as a non-sign-in identifier.
+_AZURE_NON_PRINCIPAL_LABEL = re.compile(
+    r'(tenant|subscription|directory|object)[_\- ]?(id)?\W*$|'
+    r'(tenant|subscription|directory|object)[_\- ]?id["\']?\s*[:=]',
+    re.IGNORECASE,
+)
 
 
 @dataclass
@@ -349,6 +369,8 @@ def find_azure_credentials(
     for i, line in enumerate(lines):
         if not _is_eligible(i, candidate_lines):
             continue
+        if "DefaultEndpointsProtocol=" not in line:
+            continue
         for m in AZURE_CONN_STRING_PATTERN.finditer(line):
             conn_str = m.group(0)
             if conn_str in seen:
@@ -366,17 +388,23 @@ def find_azure_credentials(
     for i, line in enumerate(lines):
         if not _is_eligible(i, candidate_lines):
             continue
+        if line.count("-") < 4:
+            continue
         for m in AZURE_CLIENT_ID_PATTERN.finditer(line):
             uuid = m.group(0).lower()
             if uuid in seen:
                 continue
 
-            lo = max(0, i - AZURE_CONTEXT_RADIUS)
-            hi = min(len(lines), i + AZURE_CONTEXT_RADIUS + 1)
-            context = "\n".join(lines[lo:hi]).lower()
+            context = _context_window(lines, i, AZURE_CONTEXT_RADIUS).lower()
 
             if not any(kw in context for kw in AZURE_CLIENT_ID_CONTEXT_KEYWORDS):
                 continue  # UUID without Azure context — skip to avoid false positives
+
+            # Tenant/subscription/object IDs sit beside the client ID in every
+            # leaked SP config but are not a sign-in identity; treating them as
+            # one creates a second incident whose forensics are always empty.
+            if _AZURE_NON_PRINCIPAL_LABEL.search(line[:m.start()]):
+                continue
 
             seen.add(uuid)
             hint = uuid[:8] + "..."
@@ -392,14 +420,14 @@ def find_azure_credentials(
     for i, line in enumerate(lines):
         if not _is_eligible(i, candidate_lines):
             continue
+        if "~" not in line:
+            continue
         for m in AZURE_CLIENT_SECRET_PATTERN.finditer(line):
             secret = m.group(0)
             if secret.lower() in seen:
                 continue
 
-            lo = max(0, i - AZURE_CONTEXT_RADIUS)
-            hi = min(len(lines), i + AZURE_CONTEXT_RADIUS + 1)
-            context = "\n".join(lines[lo:hi]).lower()
+            context = _context_window(lines, i, AZURE_CONTEXT_RADIUS).lower()
 
             if not any(kw in context for kw in AZURE_CLIENT_SECRET_CONTEXT_KEYWORDS):
                 continue
@@ -412,6 +440,12 @@ def find_azure_credentials(
                 raw_match=f"Azure client secret @ line {i + 1}",
                 line_number=i + 1,
             ))
+
+    # A secret found alongside its client ID is the same credential: the client
+    # ID incident already covers it (and is the only one forensics can trace),
+    # so a second secret-only incident would just be an orphan detection.
+    if any(m.credential_type == "azure_service_principal" for m in matches):
+        matches = [m for m in matches if m.credential_type != "azure_client_secret"]
 
     return matches
 
@@ -517,6 +551,9 @@ class SaaSCredentialMatch:
     raw_match: str
     line_number: int | None = None
     unavailable_reason: str | None = None   # populated for Tier 2 only
+    detection_method: str | None = None
+    confidence: str | None = None
+    line_end: int | None = None
 
 
 def mask_secret(value: str, *, keep_prefix: int = 8, keep_suffix: int = 4) -> str:
@@ -573,6 +610,17 @@ _SAAS_PATTERN_SPECS: tuple[tuple[str, str, re.Pattern[str], int, str | None], ..
     ("db_connection_string",  "db",          DB_CONNECTION_STRING_PATTERN,     TIER_DETECTION_ONLY, _REASON_DB),
 )
 
+# Necessary literal substrings, used only to avoid regex work on unrelated source.
+_SAAS_ANCHORS = {
+    STRIPE_SECRET_KEY_PATTERN: ("sk_", "rk_"),
+    GITHUB_PAT_PATTERN: ("ghp_", "gho_", "ghu_", "ghs_", "ghr_"),
+    GITHUB_FINE_GRAINED_PAT_PATTERN: ("github_pat_",),
+    SLACK_WEBHOOK_PATTERN: ("https://hooks.slack.com/services/",),
+    SLACK_TOKEN_PATTERN: ("xox", "xapp-"), NPM_TOKEN_PATTERN: ("npm_",),
+    SENDGRID_API_KEY_PATTERN: ("SG.",), HUGGINGFACE_TOKEN_PATTERN: ("hf_",),
+    DB_CONNECTION_STRING_PATTERN: ("://",),
+}
+
 
 def _find_twilio_credentials(
     lines: Sequence[str],
@@ -590,15 +638,14 @@ def _find_twilio_credentials(
     for index, line in enumerate(lines):
         if not _is_eligible(index, candidate_lines):
             continue
+        if "AC" not in line:
+            continue
         for match in TWILIO_ACCOUNT_SID_PATTERN.finditer(line):
             account_sid = match.group(1)
             if account_sid in seen or _is_placeholder(account_sid):
                 continue
-            seen.add(account_sid)
 
-            lo = max(0, index - SECRET_CONTEXT_RADIUS)
-            hi = min(len(lines), index + SECRET_CONTEXT_RADIUS + 1)
-            context = "\n".join(lines[lo:hi])
+            context = _context_window(lines, index, SECRET_CONTEXT_RADIUS)
             context_lower = context.lower()
 
             has_keyword = any(kw in context_lower for kw in TWILIO_CONTEXT_KEYWORDS)
@@ -620,6 +667,8 @@ def _find_twilio_credentials(
             # signal for the report.
             if not has_keyword:
                 continue
+
+            seen.add(account_sid)
 
             raw = f"{account_sid} @ line {index + 1}"
             if paired:
@@ -643,13 +692,14 @@ def _find_twilio_credentials(
 def find_saas_credentials(
     text: str,
     candidate_lines: set[int] | None = None,
+    diagnostics: list[str] | None = None,
+    *, ai_text: str | None = None,
 ) -> list[SaaSCredentialMatch]:
     """
     Scan text for every credential family beyond AWS/GCP/Azure.
 
-    Each pattern is anchored on a vendor-specific literal prefix, so no keyword
-    context check is needed — the prefix alone is the evidence. Twilio is the one
-    exception and is handled separately.
+    SaaS prefix patterns are self-identifying. Twilio uses local keyword context;
+    AI matching additionally uses provider fields, static decoding and context.
     """
     matches: list[SaaSCredentialMatch] = []
     seen: set[str] = set()
@@ -659,6 +709,8 @@ def find_saas_credentials(
         if not _is_eligible(index, candidate_lines):
             continue
         for cred_type, platform, pattern, tier, reason in _SAAS_PATTERN_SPECS:
+            if not any(anchor in line for anchor in _SAAS_ANCHORS[pattern]):
+                continue
             for match in pattern.finditer(line):
                 value = match.group(1)
                 if value in seen or _is_placeholder(value):
@@ -680,4 +732,25 @@ def find_saas_credentials(
                 )
 
     matches.extend(_find_twilio_credentials(lines, candidate_lines))
+    from detector.ai_keys import find_candidates
+
+    for found in find_candidates(ai_text if ai_text is not None else text, candidate_lines, diagnostics):
+        if found.value in seen:
+            continue
+        seen.add(found.value)
+        matches.append(SaaSCredentialMatch(
+            credential_type=f"{found.provider}_api_key", platform=found.provider,
+            principal=None, credential_hint=mask_secret(found.value),
+            forensic_tier=TIER_DETECTION_ONLY,
+            raw_match=f"{found.provider}_api_key @ line {found.start_line} ({found.method}; {found.confidence} confidence)",
+            line_number=found.start_line, line_end=found.end_line,
+            detection_method=found.method, confidence=found.confidence,
+            unavailable_reason=(
+                "BreachTrace detects this AI provider credential but does not "
+                "collect its usage or attribute requests to it. Revoke the key "
+                "and review usage and billing in the provider console. "
+                f"Candidate detected using {found.method}; {found.confidence} confidence. "
+                "Key validity and AI usage have not been verified."
+            ),
+        ))
     return matches

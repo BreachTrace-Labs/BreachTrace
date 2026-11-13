@@ -42,7 +42,13 @@ def record_exposure_start(commit_timestamp: str) -> datetime:
     """
     Parse commit timestamp and return UTC datetime.
     """
-    return datetime.fromisoformat(commit_timestamp.replace("Z", "+00:00"))
+    parsed = datetime.fromisoformat(commit_timestamp.replace("Z", "+00:00"))
+    # GitHub sends the committer's local offset (e.g. +05:30). Normalise to UTC:
+    # several provider SDKs format the wall-clock time and append "Z" without
+    # converting, which silently shifts the collection window.
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
 
 
 def is_key_revoked(

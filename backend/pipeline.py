@@ -197,6 +197,9 @@ def run_collection_pipeline(
         # ── STAGE 1: Collect events ────────────────────────────────────────
         # Extend the window back from the commit timestamp so that API calls
         # made just before the commit (pre-exposure recon) are included.
+        if exposure_start.tzinfo is None:
+            exposure_start = exposure_start.replace(tzinfo=timezone.utc)
+        exposure_start = exposure_start.astimezone(timezone.utc)
         collection_start = exposure_start - timedelta(minutes=_COLLECTION_LOOKBACK_MINUTES)
 
         collector_cls = _COLLECTOR_MAP.get(platform)

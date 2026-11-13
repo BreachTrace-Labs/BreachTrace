@@ -57,7 +57,7 @@ function fmtTime(d: Date) {
  * ForensicsUnavailable panel instead of a timeline — but the map is total so
  * that adding a platform cannot produce an undefined symbol at runtime.
  */
-const PLATFORM_SYMBOL: Record<Platform, d3.SymbolType> = {
+const PLATFORM_SYMBOL: Partial<Record<Platform, d3.SymbolType>> = {
   aws: d3.symbolCircle,
   gcp: d3.symbolSquare,
   azure: d3.symbolDiamond,
@@ -324,7 +324,7 @@ const ForensicTimeline: React.FC<Props> = ({ events }) => {
       .attr('class', 'event-node')
       // Glyph encodes platform, fill encodes severity — the two channels stay
       // independent so severity is still readable within a single platform.
-      .attr('d', (d) => d3.symbol().type(PLATFORM_SYMBOL[d.plat]).size(120)())
+      .attr('d', (d) => d3.symbol().type(PLATFORM_SYMBOL[d.plat] ?? d3.symbolCross).size(120)())
       .attr('transform', (d) => `translate(${x(d.ts)}, ${(y(d.row) ?? 0) + y.bandwidth() / 2})`)
       .attr('fill', (d) => SEV_COLOR[d.severity_weight || 1] || 'var(--color-muted-foreground)')
       .attr('stroke', 'var(--color-background)')
@@ -456,7 +456,7 @@ const ForensicTimeline: React.FC<Props> = ({ events }) => {
                     <span key={p} className="flex items-center gap-1.5">
                       <svg width="11" height="11" viewBox="-6 -6 12 12" aria-hidden="true">
                         <path
-                          d={d3.symbol().type(PLATFORM_SYMBOL[p]).size(60)() ?? undefined}
+                          d={d3.symbol().type(PLATFORM_SYMBOL[p] ?? d3.symbolCross).size(60)() ?? undefined}
                           fill={meta.color}
                         />
                       </svg>

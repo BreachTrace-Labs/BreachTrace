@@ -1,0 +1,32 @@
+{
+  "files_scanned": 3045,
+  "bytes_scanned": 25009485,
+  "files_seen": 3235,
+  "findings": [],
+  "skipped": {
+    "binary_file": 190
+  },
+  "excluded_directories": [
+    ".git",
+    ".next",
+    ".venv",
+    "__pycache__",
+    "node_modules",
+    "venv"
+  ],
+  "complete": true,
+  "stopped_reason": null,
+  "duration_s": 4.550411,
+  "finding_count": 0,
+  "coverage": "current UTF-8 text files within listed exclusions and limits; not git history",
+  "archive_entries": 3672,
+  "expanded_bytes": 35591169,
+  "archive_skipped": {},
+  "repo_url": "https://github.com/fastapi/fastapi",
+  "revision": "5cb6272ed7e3e07eaf6978e1e65b94aca76fa8e0",
+  "branch": "master",
+  "downloaded_bytes": 18095190,
+  "snapshot_only": true,
+  "exposure_start": null,
+  "forensics_started": false
+}

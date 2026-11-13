@@ -1,5 +1,5 @@
-import { useEffect, useState, useRef } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useEffect, useState } from 'react'
+import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import {
   AlertTriangle,
   Clock,
@@ -17,6 +17,8 @@ import {
   PLATFORM_META,
   type Platform,
 } from '@/lib/platform'
+import { completeLabel, exposureDuration, filterIncident, isSyntheticIncident, type IncidentFilter } from '@/lib/incidentPresentation'
+import SyntheticNotice from '@/components/SyntheticNotice'
 import SeverityBadge from '@/components/SeverityBadge'
 import {
   Table,
@@ -41,16 +43,6 @@ function fmtTime(ts: string) {
     second: '2-digit',
     hour12: false,
   })
-}
-
-function duration(start: string, end: string | null, now: number) {
-  const s = new Date(start).getTime()
-  const e = end ? new Date(end).getTime() : now
-  if (Number.isNaN(s) || Number.isNaN(e)) return '--'
-  const diff = Math.floor((e - s) / 1000)
-  const m = Math.floor(diff / 60)
-  const sec = diff % 60
-  return m > 0 ? `${m}m ${sec}s` : `${sec}s`
 }
 
 const STATUS_DOT: Record<string, string> = {
@@ -93,7 +85,7 @@ function PlatformTag({ platform }: { platform: Platform }) {
   return (
     <span
       className="inline-flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wider"
-      title={`Forensic source: ${meta.auditLog}`}
+      title={`Coverage: ${meta.auditLog}`}
     >
       <span
         className="w-1.5 h-1.5 rounded-full shrink-0"
@@ -104,14 +96,15 @@ function PlatformTag({ platform }: { platform: Platform }) {
   )
 }
 
-function StatusPill({ status }: { status: IncidentSummary['status'] }) {
+function StatusPill({ incident }: { incident: IncidentSummary }) {
+  const status = incident.status
   return (
     <span className="inline-flex items-center gap-1.5 text-xs font-medium capitalize">
       <span
         className="w-1.5 h-1.5 rounded-full inline-block"
         style={{ backgroundColor: STATUS_DOT[status] ?? 'var(--color-muted-foreground)' }}
       />
-      {STATUS_LABELS[status] ?? status}
+      {status === 'complete' ? completeLabel(incident) : STATUS_LABELS[status] ?? status}
     </span>
   )
 }
@@ -207,6 +200,7 @@ function SeverityChart({ incidents }: { incidents: IncidentSummary[] }) {
           </span>
         </div>
       ))}
+      {incidents.some(i => !i.overall_severity) && <p className="text-xs text-muted-foreground">{incidents.filter(i => !i.overall_severity).length} not assessed · insufficient forensic evidence</p>}
     </div>
   )
 }
@@ -265,7 +259,7 @@ function CredentialChart({ incidents }: { incidents: IncidentSummary[] }) {
 /* ─── pipeline status distribution ─────────────────────────────── */
 
 function StatusBreakdown({ incidents }: { incidents: IncidentSummary[] }) {
-  const statuses = ['detecting', 'collecting', 'classifying', 'scoring', 'reporting', 'complete'] as const
+  const statuses = ['detecting', 'collecting', 'classifying', 'scoring', 'reporting', 'complete', 'error'] as const
   const counts = statuses.map(s => ({
     status: s,
     n: incidents.filter(i => i.status === s).length,
@@ -316,7 +310,7 @@ function StatusBreakdown({ incidents }: { incidents: IncidentSummary[] }) {
 
       {/* Summary line */}
       <p className="text-[11px]" style={{ color: 'var(--color-muted-foreground)' }}>
-        <span className="font-semibold" style={{ color: 'var(--color-foreground)' }}>{complete}</span> resolved ·{' '}
+        <span className="font-semibold" style={{ color: 'var(--color-foreground)' }}>{complete}</span> processed ·{' '}
         <span className="font-semibold" style={{ color: 'var(--color-sev-high)' }}>{active}</span> in pipeline
       </p>
     </div>
@@ -329,19 +323,13 @@ const Dashboard: React.FC = () => {
   const [incidents, setIncidents] = useState<IncidentSummary[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
-  // Filter options are the five Tier-1 platforms plus 'other'. Rendering a chip
-  // per platform would mean eleven chips, most of them empty most of the time.
-  const [filterPlatform, setFilterPlatform] = useState<Platform | 'all' | 'other'>('all')
-  const [now, setNow] = useState(Date.now())
-  const tickerRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const navigate = useNavigate()
-
-  useEffect(() => {
-    tickerRef.current = setInterval(() => setNow(Date.now()), 1000)
-    return () => {
-      if (tickerRef.current !== null) clearInterval(tickerRef.current)
-    }
-  }, [])
+  const [searchParams, setSearchParams] = useSearchParams()
+  const filters = ['all', ...FORENSIC_PLATFORMS, 'ai', 'other'] as const
+  const requestedFilter = searchParams.get('platform') ?? 'all'
+  const filterPlatform: IncidentFilter = filters.includes(requestedFilter as IncidentFilter) ? requestedFilter as IncidentFilter : 'all'
+  const setFilterPlatform = (filter: IncidentFilter) => setSearchParams(filter === 'all' ? {} : { platform: filter })
+  const filterLabel = (filter: IncidentFilter) => filter === 'all' ? 'All' : filter === 'ai' ? 'AI keys' : filter === 'other' ? 'Other' : PLATFORM_META[filter].label
 
   const fetchIncidents = async () => {
     setLoading(true)
@@ -362,28 +350,19 @@ const Dashboard: React.FC = () => {
     const poll = setInterval(() => {
       client
         .get<IncidentSummary[]>('/incidents')
-        .then(({ data }) => setIncidents(data))
+        .then(({ data }) => { setIncidents(data); setError(null); setLoading(false) })
         .catch(() => {})
     }, 3000)
     return () => clearInterval(poll)
   }, [])
 
-  const critical        = incidents.filter(i => i.overall_severity === 'CRITICAL').length
-  const active          = incidents.filter(i => i.status !== 'complete').length
-  const credTypes       = [...new Set(incidents.map(i => i.credential_type))].length
-  const complianceFlags = incidents.filter(i => i.gdpr_flag).length
-
-  // Platform is derived rather than read straight off the payload — see
-  // lib/platform.ts. Reading `i.platform` directly matched nothing against a
-  // backend that does not yet return the field.
   const platformOf = (i: IncidentSummary) => derivePlatform(i)
-
-  const filteredIncidents =
-    filterPlatform === 'all'
-      ? incidents
-      : filterPlatform === 'other'
-        ? incidents.filter(i => !FORENSIC_PLATFORMS.includes(platformOf(i)))
-        : incidents.filter(i => platformOf(i) === filterPlatform)
+  const filteredIncidents = incidents.filter(i => filterIncident(i, filterPlatform))
+  const critical = filteredIncidents.filter(i => i.overall_severity === 'CRITICAL').length
+  const active = filteredIncidents.filter(i => !['complete', 'error'].includes(i.status)).length
+  const credTypes = new Set(filteredIncidents.map(i => i.credential_type)).size
+  const complianceFlags = filteredIncidents.filter(i => i.gdpr_flag).length
+  const demoCount = filteredIncidents.filter(isSyntheticIncident).length
 
   const platformCounts = incidents.reduce<Record<string, number>>((acc, i) => {
     const p = platformOf(i)
@@ -394,11 +373,11 @@ const Dashboard: React.FC = () => {
   return (
     <div className="space-y-8">
       {/* Page header */}
-      <div className="flex items-end justify-between">
+      <div className="flex flex-wrap gap-4 items-end justify-between">
         <div>
           <h1 className="text-xl font-bold tracking-tight">Incident Monitor</h1>
           <p className="mt-1 text-sm" style={{ color: 'var(--color-muted-foreground)' }}>
-            Credential exposure forensics across detected GitHub leaks
+            Credential detections and available forensic evidence
           </p>
         </div>
         <Button
@@ -413,6 +392,8 @@ const Dashboard: React.FC = () => {
         </Button>
       </div>
 
+      {demoCount > 0 && <SyntheticNotice />}
+      <p className="text-xs text-muted-foreground">Showing {filteredIncidents.length} records · {filterLabel(filterPlatform)}. Processing completion does not confirm remediation or revocation.</p>
       {/* Stats row */}
       <div
         className="grid grid-cols-2 sm:grid-cols-5 gap-px border"
@@ -422,7 +403,7 @@ const Dashboard: React.FC = () => {
           label="Total Incidents"
           value={loading ? '—' : filteredIncidents.length}
           icon={<Activity size={14} strokeWidth={2} />}
-          sub={loading ? undefined : `${active} active`}
+          sub={loading ? undefined : `${active} processing`}
         />
         <StatCard
           label="Critical"
@@ -431,7 +412,7 @@ const Dashboard: React.FC = () => {
           accent={critical > 0}
         />
         <StatCard
-          label="Active"
+          label="Processing"
           value={loading ? '—' : active}
           icon={<Clock size={14} strokeWidth={2} />}
         />
@@ -449,7 +430,7 @@ const Dashboard: React.FC = () => {
       </div>
 
       {/* Visualization section — only when data is loaded */}
-      {!loading && incidents.length > 0 && (
+      {!loading && filteredIncidents.length > 0 && (
         <div
           className="grid grid-cols-1 sm:grid-cols-3 gap-px border"
           style={{ backgroundColor: 'var(--color-border)', borderColor: 'var(--color-border)' }}
@@ -462,7 +443,7 @@ const Dashboard: React.FC = () => {
             >
               Severity Distribution
             </p>
-            <SeverityChart incidents={incidents} />
+            <SeverityChart incidents={filteredIncidents} />
           </div>
 
           {/* Credential types */}
@@ -473,7 +454,7 @@ const Dashboard: React.FC = () => {
             >
               Credential Types
             </p>
-            <CredentialChart incidents={incidents} />
+            <CredentialChart incidents={filteredIncidents} />
           </div>
 
           {/* Pipeline status */}
@@ -484,14 +465,14 @@ const Dashboard: React.FC = () => {
             >
               Pipeline Status
             </p>
-            <StatusBreakdown incidents={incidents} />
+            <StatusBreakdown incidents={filteredIncidents} />
           </div>
         </div>
       )}
 
       {/* Incidents table */}
       <div>
-        <div className="flex items-center justify-between mb-4">
+        <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
           <h2 className="text-sm font-semibold">
             Incidents
             {!loading && (
@@ -503,21 +484,13 @@ const Dashboard: React.FC = () => {
               </span>
             )}
           </h2>
-          <div className="flex bg-[var(--color-muted)] p-1 rounded-md">
-            {(['all', ...FORENSIC_PLATFORMS, 'other'] as const).map(platform => {
+          <div className="flex flex-wrap gap-1 bg-[var(--color-muted)] p-1 rounded-md">
+            {filters.map(platform => {
               const isActive = filterPlatform === platform
-              const label =
-                platform === 'all'
-                  ? 'All'
-                  : platform === 'other'
-                    ? 'Other'
-                    : PLATFORM_META[platform].label
-              const count =
-                platform === 'all'
-                  ? incidents.length
-                  : platform === 'other'
-                    ? incidents.filter(i => !FORENSIC_PLATFORMS.includes(platformOf(i))).length
-                    : (platformCounts[platform] ?? 0)
+              const label = filterLabel(platform)
+              const count = platform === 'all' ? incidents.length
+                : platform === 'ai' || platform === 'other' ? incidents.filter(i => filterIncident(i, platform)).length
+                : (platformCounts[platform] ?? 0)
               return (
                 <button
                   key={platform}
@@ -534,7 +507,7 @@ const Dashboard: React.FC = () => {
                       className="w-1.5 h-1.5 rounded-full shrink-0"
                       style={{
                         backgroundColor:
-                          platform === 'other'
+                          (platform === 'other' || platform === 'ai')
                             ? 'var(--color-platform-tier2)'
                             : PLATFORM_META[platform].color,
                         opacity: count === 0 ? 0.3 : 1,
@@ -599,7 +572,7 @@ const Dashboard: React.FC = () => {
             style={{ borderColor: 'var(--color-border)' }}
           >
             <p className="text-sm font-medium">
-              No {filterPlatform === 'all' ? '' : PLATFORM_META[filterPlatform as Platform].label}{' '}
+              No {filterLabel(filterPlatform)}{' '}
               incidents
             </p>
             <p className="mt-1 text-sm" style={{ color: 'var(--color-muted-foreground)' }}>
@@ -615,7 +588,7 @@ const Dashboard: React.FC = () => {
             </Button>
           </div>
         ) : (
-          <div className="border" style={{ borderColor: 'var(--color-border)' }}>
+          <div className="border overflow-x-auto" style={{ borderColor: 'var(--color-border)' }}>
             <Table>
               <TableHeader>
                 <TableRow className="hover:bg-transparent">
@@ -623,8 +596,8 @@ const Dashboard: React.FC = () => {
                   <TableHead>Platform</TableHead>
                   <TableHead>Credential</TableHead>
                   <TableHead>Repository</TableHead>
-                  <TableHead>Exposed</TableHead>
-                  <TableHead>Duration</TableHead>
+                  <TableHead>Exposure start</TableHead>
+                  <TableHead>Confirmed window</TableHead>
                   <TableHead>Status</TableHead>
                   <TableHead>Severity</TableHead>
                 </TableRow>
@@ -657,12 +630,15 @@ const Dashboard: React.FC = () => {
                       <TableCell>
                         <div>
                           <div className="flex items-center gap-2">
-                            <span
+                            <Link
+                              to={`/incident/${inc.incident_id}`}
+                              onClick={event => event.stopPropagation()}
                               className="font-mono text-xs font-semibold"
                               style={{ color: 'var(--color-foreground)' }}
                             >
                               {inc.credential_hint}
-                            </span>
+                            </Link>
+                            {isSyntheticIncident(inc) && <SyntheticNotice compact />}
                             {inc.gdpr_flag && (
                               <span
                                 className="inline-flex items-center gap-1 text-[10px] font-bold px-1.5 py-0.5 rounded uppercase tracking-wider"
@@ -695,7 +671,7 @@ const Dashboard: React.FC = () => {
                                   'color-mix(in srgb, var(--color-platform-tier2) 18%, transparent)',
                                 color: 'var(--color-platform-tier2)',
                               }}
-                              title="This platform exposes no queryable audit log, so activity cannot be reconstructed"
+                              title="BreachTrace does not collect activity for this credential type"
                             >
                               Detection only
                             </span>
@@ -730,13 +706,13 @@ const Dashboard: React.FC = () => {
                       {/* Duration */}
                       <TableCell>
                         <span className="text-xs font-mono">
-                          {duration(inc.exposure_start, inc.exposure_end, now)}
+                          {exposureDuration(inc)}
                         </span>
                       </TableCell>
 
                       {/* Status */}
                       <TableCell>
-                        <StatusPill status={inc.status} />
+                        <StatusPill incident={inc} />
                       </TableCell>
 
                       {/* Severity */}
@@ -744,7 +720,7 @@ const Dashboard: React.FC = () => {
                         {inc.overall_severity ? (
                           <SeverityBadge severity={inc.overall_severity} />
                         ) : (
-                          <span className="text-xs" style={{ color: 'var(--color-muted-foreground)' }}>—</span>
+                          <span className="text-xs" style={{ color: 'var(--color-muted-foreground)' }}>Not assessed</span>
                         )}
                       </TableCell>
                     </TableRow>

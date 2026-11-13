@@ -160,7 +160,7 @@ const Research: React.FC = () => {
         <div>
           <h1 className="text-xl font-bold tracking-tight">Research</h1>
           <p className="mt-1 text-sm" style={{ color: 'var(--color-muted-foreground)' }}>
-            Empirical dataset evaluation — Track A (SecretBench) + Track B (Pipeline Experiments)
+            Recorded experiment metrics and dataset evaluation status
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -173,17 +173,17 @@ const Research: React.FC = () => {
 
       {/* Track A */}
       <section className="space-y-5">
-        <TrackBadge track="A" label="Public Dataset Evaluation — SecretBench (200 AWS Samples)" />
+        <TrackBadge track="A" label="Dataset evaluation — independent labels required" />
 
         <div
           className="border p-6"
           style={{ borderColor: 'var(--color-border)', backgroundColor: 'var(--color-card)' }}
         >
           <p className="text-sm leading-relaxed" style={{ color: 'var(--color-muted-foreground)' }}>
-            Detection accuracy validated across <strong style={{ color: 'var(--color-foreground)' }}>200 real-world AWS key patterns</strong> from
-            the SecretBench public dataset (Basak et al., 2023). Samples filtered for{' '}
-            <span className="font-mono text-xs">secret_type = 'AWS'</span> and{' '}
-            <span className="font-mono text-xs">ground_truth = 'true'</span>.
+            SecretBench’s labelled dataset is not included in this workspace. Synthetic
+            format tests and demo incidents do not measure real-world precision or recall.
+            Accuracy metrics require an independently labelled evaluation set; targets below
+            are study goals, not achieved results.
           </p>
 
           <Separator className="my-5" />
@@ -209,9 +209,9 @@ const Research: React.FC = () => {
                   {label}
                 </span>
                 <span className="text-2xl font-bold font-mono">
-                  {stats && stats[key as keyof ResearchStats] !== undefined
+                  {stats && typeof stats[key as keyof ResearchStats] === 'number'
                     ? `${stats[key as keyof ResearchStats]}${unit}`
-                    : '—'}
+                    : loading ? '—' : 'Not measured'}
                 </span>
                 <span
                   className="text-xs block mt-1"

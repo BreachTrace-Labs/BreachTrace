@@ -1,0 +1,2 @@
+# Optional user-selected GGUF model runtime. Install only for local GGUF reports.
+llama-cpp-python>=0.3.0

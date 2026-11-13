@@ -64,7 +64,7 @@ export interface IncidentRecord {
   commit_hash: string
   exposure_start: string
   exposure_end: string | null
-  status: 'detecting' | 'collecting' | 'classifying' | 'scoring' | 'reporting' | 'complete'
+  status: 'detecting' | 'collecting' | 'classifying' | 'scoring' | 'reporting' | 'complete' | 'error'
   events: ForensicEvent[]
   overall_severity: 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL' | null
   report_text: string | null
@@ -164,7 +164,7 @@ export interface PlatformComparison {
 }
 
 /** deterministic = template from verified facts; local_model = the on-device report model. */
-export type ReportSource = 'deterministic' | 'local_model' | 'gemini'
+export type ReportSource = 'deterministic' | 'local_model' | 'gemini' | 'openai' | 'anthropic' | 'ollama'
 
 /* ─── Natural-language search (POST /assistant/search) ─────────────────── */
 
@@ -192,8 +192,10 @@ export interface SearchPassage {
 }
 
 export interface SearchResult {
+  disclaimer?: string
+  truncated?: boolean
   question: string
-  intent: 'incidents' | 'knowledge'
+  intent: 'incidents' | 'knowledge' | 'timeline'
   filters: Record<string, unknown>
   incidents: SearchIncident[]
   passages: SearchPassage[]

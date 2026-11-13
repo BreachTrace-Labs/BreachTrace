@@ -1,0 +1,28 @@
+{
+  "files_scanned": 3045,
+  "bytes_scanned": 25009485,
+  "files_seen": 3235,
+  "findings": [],
+  "skipped": {
+    "excluded_directory": 1,
+    "binary_file": 190
+  },
+  "excluded_directories": [
+    ".git",
+    ".next",
+    ".venv",
+    "__pycache__",
+    "node_modules",
+    "venv"
+  ],
+  "complete": true,
+  "stopped_reason": null,
+  "duration_s": 9.20438,
+  "finding_count": 0,
+  "coverage": "current UTF-8 text files within listed exclusions and limits; not git history",
+  "revision": "5cb6272ed7e3e07eaf6978e1e65b94aca76fa8e0",
+  "os": "Darwin",
+  "architecture": "arm64",
+  "study_limit": "Unlabelled public code: candidates are not confirmed leaks. Precision/recall cannot be computed without independent labels.",
+  "repository": "fastapi/fastapi"
+}

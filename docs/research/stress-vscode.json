@@ -1,0 +1,320 @@
+{
+  "files_scanned": 20392,
+  "bytes_scanned": 269445059,
+  "files_seen": 20735,
+  "findings": [
+    {
+      "path": "product.json",
+      "line_number": 20,
+      "credential_type": "azure_service_principal",
+      "credential_hint": "d77b7e06...",
+      "fingerprint": "630cbcce566bef5060698064db0d5fe6096a336d3085876fd01ab968faa93c84",
+      "validity": "not-verified"
+    },
+    {
+      "path": "product.json",
+      "line_number": 21,
+      "credential_type": "azure_service_principal",
+      "credential_hint": "d1ace434...",
+      "fingerprint": "f9adc2cb578502de6996e0d89c0c0670a82bb46ded725dff38325f9c71537542",
+      "validity": "not-verified"
+    },
+    {
+      "path": "product.json",
+      "line_number": 22,
+      "credential_type": "azure_service_principal",
+      "credential_hint": "cc6b787d...",
+      "fingerprint": "1cbb66a35a891b561905f56ff7325be8b48be9bbeb6b109a99aa2e3d5ba502f3",
+      "validity": "not-verified"
+    },
+    {
+      "path": "product.json",
+      "line_number": 23,
+      "credential_type": "azure_service_principal",
+      "credential_hint": "3aebf0c8...",
+      "fingerprint": "b4bccd5be773ccdcef15f11f2ad8ad81a62347387dc5d012cc6737f389d7ce20",
+      "validity": "not-verified"
+    },
+    {
+      "path": "build/azure-pipelines/product-build-ado-ci.yml",
+      "line_number": 144,
+      "credential_type": "azure_service_principal",
+      "credential_hint": "fe07e6ce...",
+      "fingerprint": "427e58a0e55ff3bd322c97d53467548f5b809137cbf966a63cef6e83a891896a",
+      "validity": "not-verified"
+    },
+    {
+      "path": "build/azure-pipelines/product-build-ado-ci.yml",
+      "line_number": 146,
+      "credential_type": "azure_service_principal",
+      "credential_hint": "975f013f...",
+      "fingerprint": "24b55d053e027a1734b392db36431d845e226bf8a3cd2fa1b609c4d3ed360c5c",
+      "validity": "not-verified"
+    },
+    {
+      "path": "build/azure-pipelines/product-build-ado-ci.yml",
+      "line_number": 148,
+      "credential_type": "azure_service_principal",
+      "credential_hint": "4ac7ed59...",
+      "fingerprint": "412cf7dc29bfec76de04b091bfc4e3c0e0535717f39df03f194d602eca0ec02c",
+      "validity": "not-verified"
+    },
+    {
+      "path": "build/azure-pipelines/product-build-ado-ci.yml",
+      "line_number": 152,
+      "credential_type": "azure_service_principal",
+      "credential_hint": "c24324f7...",
+      "fingerprint": "0bf335c0abd7e74a1f8946caa0bb0ae971929ffe40d152026fe6c173c5b50d1a",
+      "validity": "not-verified"
+    },
+    {
+      "path": "build/azure-pipelines/product-build-variables.yml",
+      "line_number": 128,
+      "credential_type": "azure_service_principal",
+      "credential_hint": "fe07e6ce...",
+      "fingerprint": "8e953674286693d7924f8e133073779facc479b7f6b4a9be8fbbbf9236c5920f",
+      "validity": "not-verified"
+    },
+    {
+      "path": "build/azure-pipelines/product-build-variables.yml",
+      "line_number": 130,
+      "credential_type": "azure_service_principal",
+      "credential_hint": "975f013f...",
+      "fingerprint": "54d6d75b070b948bc451f0426db4e974e5b4a491aec77a0e531d79677b503b6f",
+      "validity": "not-verified"
+    },
+    {
+      "path": "build/azure-pipelines/product-build-variables.yml",
+      "line_number": 132,
+      "credential_type": "azure_service_principal",
+      "credential_hint": "4ac7ed59...",
+      "fingerprint": "17fdc7a76ef50827ceab9a5a8003b51f6a1dd3d9c3dcb0530f9b653052acd545",
+      "validity": "not-verified"
+    },
+    {
+      "path": "build/azure-pipelines/product-build-variables.yml",
+      "line_number": 136,
+      "credential_type": "azure_service_principal",
+      "credential_hint": "c24324f7...",
+      "fingerprint": "4acf99d7bf4cd1f26bd55f029dacc72c86a17f3e17720d5196c4620cedf2d706",
+      "validity": "not-verified"
+    },
+    {
+      "path": "build/azure-pipelines/product-build.yml",
+      "line_number": 241,
+      "credential_type": "azure_service_principal",
+      "credential_hint": "fe07e6ce...",
+      "fingerprint": "24b94460c376ef354a763ab0b94980896e9685f2dfac7298541cde51af15e253",
+      "validity": "not-verified"
+    },
+    {
+      "path": "build/azure-pipelines/product-build.yml",
+      "line_number": 243,
+      "credential_type": "azure_service_principal",
+      "credential_hint": "975f013f...",
+      "fingerprint": "790f48972aec507ec281e762e6be50213e6440c6399ad45bfac4890a4357bb74",
+      "validity": "not-verified"
+    },
+    {
+      "path": "build/azure-pipelines/product-build.yml",
+      "line_number": 245,
+      "credential_type": "azure_service_principal",
+      "credential_hint": "4ac7ed59...",
+      "fingerprint": "70e3fd7bfab85f03a6efccdb91fa85e7855e26460f48eaf6f1bcaf43a2ed3db2",
+      "validity": "not-verified"
+    },
+    {
+      "path": "build/azure-pipelines/product-build.yml",
+      "line_number": 249,
+      "credential_type": "azure_service_principal",
+      "credential_hint": "c24324f7...",
+      "fingerprint": "bf6389c3f9ba3e2ca46a1fbfc69dba99cac3082d34be398e332006c3fbf6a9ad",
+      "validity": "not-verified"
+    },
+    {
+      "path": "build/azure-pipelines/win32/sdl-scan-win32.yml",
+      "line_number": 226,
+      "credential_type": "azure_service_principal",
+      "credential_hint": "c0940da5...",
+      "fingerprint": "859f58bfce5a9c402d73f76bf45e5548a1ead7555ff32085c977ec78f167fbab",
+      "validity": "not-verified"
+    },
+    {
+      "path": "build/azure-pipelines/win32/sdl-scan-win32.yml",
+      "line_number": 226,
+      "credential_type": "azure_service_principal",
+      "credential_hint": "72f988bf...",
+      "fingerprint": "59b115ffbc52c7e1837f48b16fc8d1576ffaed556654cabaa6db0016e836dfcd",
+      "validity": "not-verified"
+    },
+    {
+      "path": "build/azure-pipelines/win32/sdl-scan-win32.yml",
+      "line_number": 226,
+      "credential_type": "azure_service_principal",
+      "credential_hint": "3e55d992...",
+      "fingerprint": "c22b00ec4b6cc36a12f880b40fe1ebbdf887e35a8d4dd29631287ec379dce4a9",
+      "validity": "not-verified"
+    },
+    {
+      "path": "build/lib/extensions.ts",
+      "line_number": 249,
+      "credential_type": "azure_service_principal",
+      "credential_hint": "291c1cd0...",
+      "fingerprint": "7441da92b46eba61bcddceed3aabd4307c2c669dc7b2024a49ccd089f9db2ffa",
+      "validity": "not-verified"
+    },
+    {
+      "path": "cli/src/auth.rs",
+      "line_number": 68,
+      "credential_type": "azure_service_principal",
+      "credential_hint": "aebc6443...",
+      "fingerprint": "9dba5837af34f67512ed0bd22c480cfd2dc75a7e4faaf5449d665d3942989b53",
+      "validity": "not-verified"
+    },
+    {
+      "path": "extensions/copilot/script/setup/getEnv.mts",
+      "line_number": 29,
+      "credential_type": "azure_service_principal",
+      "credential_hint": "72f988bf...",
+      "fingerprint": "5db2e9a56c006fe7a2801d1b845eff8f53378c564d1814301791630831553d3d",
+      "validity": "not-verified"
+    },
+    {
+      "path": "extensions/copilot/src/extension/chronicle/common/test/secretFilter.spec.ts",
+      "line_number": 48,
+      "credential_type": "aws_access_key",
+      "credential_hint": "AKIA****MPLE",
+      "fingerprint": "452554989082cf3f83bf3cb54194a9b0739e3cb9b4b02ffaed80db4a545434b6",
+      "validity": "not-verified"
+    },
+    {
+      "path": "extensions/copilot/src/extension/chronicle/common/test/secretFilter.spec.ts",
+      "line_number": 11,
+      "credential_type": "github_pat",
+      "credential_hint": "ghp_ABCD****1234",
+      "fingerprint": "08c39ddd406f23c2869594659cbfa4f4cf1b055b743b9775f868298713fec6a4",
+      "validity": "not-verified"
+    },
+    {
+      "path": "extensions/copilot/src/extension/chronicle/common/test/secretFilter.spec.ts",
+      "line_number": 16,
+      "credential_type": "github_pat",
+      "credential_hint": "gho_ABCD****1234",
+      "fingerprint": "bdad698575e93e73577139c9b4c51351a5da8004af2c9c52931a90dfd46782cb",
+      "validity": "not-verified"
+    },
+    {
+      "path": "extensions/copilot/src/extension/chronicle/common/test/secretFilter.spec.ts",
+      "line_number": 43,
+      "credential_type": "npm_token",
+      "credential_hint": "npm_ABCD****ghij",
+      "fingerprint": "cac5853461a5a674baf03f7db206ffb1b20177b007f22c10586aeac25de8094d",
+      "validity": "not-verified"
+    },
+    {
+      "path": "extensions/copilot/src/extension/chronicle/common/test/secretFilter.spec.ts",
+      "line_number": 53,
+      "credential_type": "github_pat",
+      "credential_hint": "github_p****3456",
+      "fingerprint": "31a208083e595f90fd3b8f0b41cd2499d02c7a556c199c852ac862bdfb098261",
+      "validity": "not-verified"
+    },
+    {
+      "path": "extensions/copilot/src/extension/chronicle/common/test/secretFilter.spec.ts",
+      "line_number": 89,
+      "credential_type": "db_connection_string",
+      "credential_hint": "mongodb+****.net",
+      "fingerprint": "2e05ffd9d590e95d6d7f1f5a52bff8664d2890a8a844a4a67ccc462850c608af",
+      "validity": "not-verified"
+    },
+    {
+      "path": "extensions/copilot/src/extension/chronicle/common/test/secretFilter.spec.ts",
+      "line_number": 96,
+      "credential_type": "db_connection_string",
+      "credential_hint": "postgres****5432",
+      "fingerprint": "33194eb3b15f3452b7ebc9a1c21c0b3fc3252f06cf5a77ccd6d9ada0021d8fdb",
+      "validity": "not-verified"
+    },
+    {
+      "path": "extensions/copilot/src/extension/chronicle/common/test/secretFilter.spec.ts",
+      "line_number": 102,
+      "credential_type": "db_connection_string",
+      "credential_hint": "redis://****6379",
+      "fingerprint": "08b42c824e0b971920eacda6729c4676a4abb45e685c352b045c816be87892b0",
+      "validity": "not-verified"
+    },
+    {
+      "path": "extensions/microsoft-authentication/src/common/scopeData.ts",
+      "line_number": 8,
+      "credential_type": "azure_service_principal",
+      "credential_hint": "aebc6443...",
+      "fingerprint": "9a6b5d0e0fe71d5e2e3eb067a6f0bb118a81a9a1120230198123852e1ffaebe8",
+      "validity": "not-verified"
+    },
+    {
+      "path": "extensions/microsoft-authentication/src/common/test/scopeData.test.ts",
+      "line_number": 43,
+      "credential_type": "azure_service_principal",
+      "credential_hint": "aebc6443...",
+      "fingerprint": "4199443d4c0906c40acafda13657007d9393751030f2d467e11899074244281d",
+      "validity": "not-verified"
+    },
+    {
+      "path": "src/vs/workbench/api/test/browser/mainThreadMcp.test.ts",
+      "line_number": 80,
+      "credential_type": "azure_service_principal",
+      "credential_hint": "11111111...",
+      "fingerprint": "758714fef53ef9bd07208c0d58cb8569ea0a4a361b9b4013aa1329a15862a1de",
+      "validity": "not-verified"
+    },
+    {
+      "path": "src/vs/workbench/api/test/browser/mainThreadMcp.test.ts",
+      "line_number": 82,
+      "credential_type": "azure_service_principal",
+      "credential_hint": "33333333...",
+      "fingerprint": "90d85d531218ce2ffa590f95297d523f80849418d42d061254c4cdeeb4926170",
+      "validity": "not-verified"
+    },
+    {
+      "path": "src/vs/workbench/api/test/browser/mainThreadMcp.test.ts",
+      "line_number": 93,
+      "credential_type": "azure_service_principal",
+      "credential_hint": "22222222...",
+      "fingerprint": "d2ba7e761941a3089323972b598a60f8970fc910d35bab84d4ea95320b96b656",
+      "validity": "not-verified"
+    },
+    {
+      "path": "src/vs/workbench/api/test/browser/mainThreadMcp.test.ts",
+      "line_number": 355,
+      "credential_type": "azure_service_principal",
+      "credential_hint": "72f988bf...",
+      "fingerprint": "00f7cc595b6f083146cd7f218a6852f53a24f9e454baa68f47f62f5fb0bad379",
+      "validity": "not-verified"
+    }
+  ],
+  "skipped": {
+    "excluded_directory": 2,
+    "binary_file": 330,
+    "oversized_file": 8,
+    "symlink_or_special_file": 1,
+    "non_utf8_file": 4
+  },
+  "excluded_directories": [
+    ".git",
+    ".next",
+    ".venv",
+    "__pycache__",
+    "node_modules",
+    "venv"
+  ],
+  "complete": true,
+  "stopped_reason": null,
+  "duration_s": 57.417497,
+  "finding_count": 36,
+  "coverage": "current UTF-8 text files within listed exclusions and limits; not git history",
+  "revision": "e2ce8e1b6b05d4522d3a1d4d863665c9cc8e8f02",
+  "os": "Darwin",
+  "architecture": "arm64",
+  "study_limit": "Unlabelled public code: candidates are not confirmed leaks. Precision/recall cannot be computed without independent labels.",
+  "repository": "microsoft/vscode"
+}

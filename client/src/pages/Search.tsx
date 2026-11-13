@@ -6,6 +6,9 @@ import SearchResults from '@/components/SearchResults'
 import { Button } from '@/components/ui/button'
 
 const EXAMPLES = [
+  'Sarvam incidents',
+  'Claude incidents',
+  'what happened at 2026-10-01T14:23:30Z',
   'critical incidents this week',
   'stripe incidents in the last 7 days',
   'how do I rotate a Twilio auth token',
@@ -26,6 +29,7 @@ export default function Search() {
     setQuestion(trimmed)
     setLoading(true)
     setError(null)
+    setResult(null)
     try {
       const { data } = await client.post<SearchResult>('/assistant/search', { question: trimmed })
       setResult(data)
@@ -41,11 +45,15 @@ export default function Search() {
       <div className="space-y-1">
         <h1 className="text-xl font-bold tracking-tight">Search</h1>
         <p className="text-sm" style={{ color: 'var(--color-muted-foreground)' }}>
-          Ask about your incidents or how to respond to a leak. Answers are matching incidents and exact
-          passages from the knowledge base and your reports. Nothing is generated, and nothing leaves
-          this computer.
+          Search forensic timelines, long reports and response guidance. For exact event times,
+          include an ISO timestamp with a zone, such as 2026-10-01T14:23:30Z. Search retrieves evidence locally.
         </p>
       </div>
+
+      <p className="text-sm border rounded p-3" role="note">
+        Report prose quality depends on your selected model. Verify conclusions against cited events.
+        Missing logs do not prove no activity. Cloud report generation sends fact sheets to the provider selected in Settings.
+      </p>
 
       <form
         onSubmit={(e) => {

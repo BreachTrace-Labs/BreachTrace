@@ -1,4 +1,6 @@
 import axios from 'axios'
+import { AI_LABELS, derivePlatform } from '@/lib/platform'
+import { isAIIncident } from '@/lib/incidentPresentation'
 import {
   MOCK_EXPERIMENT_RUNS,
   MOCK_INCIDENTS,
@@ -92,20 +94,23 @@ const mockClient = {
     }
     if (_url === '/assistant/search') {
       await sleep(MOCK_DELAY_MS)
-      return { data: mockSearch(String((_body as { question?: string })?.question ?? '')) }
+      const body = _body as { question?: string; incident_id?: string }
+      return { data: mockSearch(String(body?.question ?? ''), body?.incident_id) }
     }
     throw new Error(`POST ${_url} is not implemented in the mock client`)
   },
 } as Pick<ReturnType<typeof axios.create>, 'get' | 'post'>
 
 /** Mock search: platform-word match over mock incidents. The real one is retrieval over a KB. */
-function mockSearch(question: string) {
+function mockSearch(question: string, incidentId?: string) {
   const q = question.toLowerCase()
-  const incidents = MOCK_INCIDENTS.filter((i) =>
-    ['aws', 'gcp', 'azure', 'stripe', 'twilio'].some(
-      (p) => q.includes(p) && (i.platform ?? '').toLowerCase() === p,
-    ),
-  ).map((i) => ({
+  const aliases: Record<string, string> = { claude: 'anthropic', gpt: 'openai', chatgpt: 'openai', grok: 'xai' }
+  const platforms = [...Object.keys(AI_LABELS), 'aws', 'gcp', 'azure', 'stripe', 'twilio', 'github']
+    .filter(p => q.includes(p))
+  for (const [alias, provider] of Object.entries(aliases)) if (q.includes(alias)) platforms.push(provider)
+  const selected = MOCK_INCIDENTS.filter(i => incidentId ? i.incident_id === incidentId
+    : platforms.length ? platforms.includes(derivePlatform(i)) : /\bai\b/.test(q) ? isAIIncident(i) : /\b(incidents?|detections?|show|list)\b/.test(q))
+  const incidents = selected.map((i) => ({
     incident_id: i.incident_id,
     platform: i.platform ?? 'aws',
     credential_type: i.credential_type,
@@ -118,13 +123,17 @@ function mockSearch(question: string) {
   }))
   return {
     question,
-    intent: incidents.length ? 'incidents' : 'knowledge',
+    intent: incidentId ? 'knowledge' : incidents.length ? 'incidents' : 'knowledge',
+    disclaimer: 'Synthetic preview results. Real search requires the backend; these examples are not evidence of a breach.',
     filters: {},
     incidents,
-    passages: [],
+    passages: incidentId ? selected.filter(i => i.report_text).map(i => ({
+      id: `demo:${i.incident_id}`, source_type: 'incident', source_id: i.incident_id,
+      title: 'Synthetic incident report', text: i.report_text, highlight: '', similarity: null,
+    })) : [],
     confident: incidents.length > 0,
     semantic: false,
-    suggestions: incidents.length ? [] : ['aws incidents', 'stripe incidents'],
+    suggestions: incidents.length ? [] : ['AI incidents', 'Sarvam incidents', 'Claude incidents'],
   }
 }
 
@@ -151,7 +160,7 @@ const realClient = axios.create({
 // The unset case keeps a fresh clone usable with no setup, while a configured
 // API URL means someone intends to talk to a real backend.
 const mockFlag = import.meta.env.VITE_USE_MOCK
-const USE_MOCK =
+export const USE_MOCK =
   mockFlag === 'true' || (mockFlag === undefined && !import.meta.env.VITE_API_URL)
 
 if (import.meta.env.DEV) {

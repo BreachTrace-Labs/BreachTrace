@@ -34,7 +34,7 @@ GDPR is flagged when data was read or exfiltrated from a resource whose name sug
 Every report starts from verified facts computed in code: severity, counts, resources, money and the remediation checklist. A template writes the first version immediately. When the local BreachTrace report model is installed it rewrites the prose on this computer, and its output is only accepted if every name, IP address and amount it mentions is in the facts. The report badge shows which writer produced the text.
 
 ## Does BreachTrace send my data anywhere?
-Reports and search run on this computer; your incident data is not sent to any cloud AI service. Leaked secrets are never stored in full; incidents keep only a masked hint such as sk_live_****abcd. BreachTrace calls the platform APIs (CloudTrail, Stripe and so on) to collect evidence, and GitHub to read commits.
+Search retrieves passages locally. Reports use the model chosen in Settings: a local model keeps report inference on the backend machine, while a cloud model sends incident fact sheets to that provider. Deterministic reports need no AI service. Model response quality depends on the selected model; verify conclusions against cited timeline events. BreachTrace calls platform APIs to collect evidence and GitHub to read repository content. Detected AI keys are not validated against their providers.
 
 ## How do I search?
 Ask in plain English. Questions about your incidents work best with a platform, time or severity, for example "critical AWS incidents this week", "stripe incidents in the last 7 days" or "which incidents had financial abuse". How-to questions search this knowledge base, for example "how do I rotate a Twilio auth token" or "why is there no timeline for a GitHub token".

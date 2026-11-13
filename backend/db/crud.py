@@ -238,13 +238,14 @@ def finalize_non_forensic_incident(
 def _non_forensic_report(incident: IncidentRecord, reason: str | None) -> str:
     """Deterministic report for Tier-2 incidents — no LLM call needed."""
     return (
-        f"## Credential exposed\n\n"
-        f"A **{incident.credential_type.replace('_', ' ')}** "
-        f"(`{incident.credential_hint}`) was committed to {incident.repo_url}.\n\n"
+        f"## Credential candidate detected\n\n"
+        f"A candidate matching **{incident.credential_type.replace('_', ' ')}** "
+        f"(`{incident.credential_hint}`) was detected in source associated with {incident.repo_url}. "
+        f"Syntax matching does not prove the credential is valid or active.\n\n"
         f"## Why there is no activity timeline\n\n"
-        f"{reason or 'This platform exposes no queryable audit log for this credential type.'}\n\n"
+        f"{reason or 'BreachTrace does not collect activity for this credential type.'}\n\n"
         f"**This is not evidence that the credential went unused.** It means the "
-        f"platform provides no way to find out. Treat the credential as compromised "
+        f"activity is not reconstructed by BreachTrace. Treat the credential as compromised "
         f"and rotate it immediately.\n"
     )
 

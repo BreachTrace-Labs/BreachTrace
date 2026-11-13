@@ -1,0 +1,277 @@
+{
+  "hardware": {
+    "os": "Darwin",
+    "architecture": "arm64",
+    "cpu_count": 10,
+    "ram_gb": 16.0,
+    "python": "3.12.7"
+  },
+  "prompt_version": 1,
+  "seed": 20261103,
+  "fixture_kind": "synthetic-first-attempt-report-facts",
+  "fixture_sha256": "85177fa10f06ac779ffbba5e8a63702d656fc4299985ca3bded0606862e488d3",
+  "scope": "Pilot only; validator grounding and fact coverage are proxies, not human accuracy or RAG accuracy. Latency includes model loading; no retries or fallback outputs counted as model success.",
+  "models": {
+    "llama3.2:latest": {
+      "digest": "a80c4f17acd55265feec403c7aef86be0c25983ab279d83f3bcd3abbcb5b8b72",
+      "model_file_bytes": 2019393189,
+      "rows": [
+        {
+          "case": 0,
+          "platform": "aws",
+          "valid_json": true,
+          "grounded": true,
+          "fact_coverage": 0.75,
+          "violations": [],
+          "sections": {
+            "executive_summary": "A high-severity AWS access key was leaked in CloudTrail, exposed for 5 minutes, and used to send an email via SES, resulting in a high-risk communication abuse.",
+            "narrative": [
+              "2026-02-05 05:11:06 UTC",
+              "An email was sent via SES (SendEmail action)"
+            ],
+            "business_impact": "This leak may have compromised AWS billing and compliance, and potentially led to unauthorized communication via SES, resulting in financial and compliance losses."
+          },
+          "latency_s": 10.881,
+          "ollama_allocation": [
+            {
+              "name": "llama3.2:latest",
+              "size": 2548417166,
+              "size_vram": 2548417166
+            }
+          ]
+        },
+        {
+          "case": 1,
+          "platform": "gcp",
+          "valid_json": true,
+          "grounded": true,
+          "fact_coverage": 0.75,
+          "violations": [],
+          "sections": {
+            "executive_summary": "A Google Cloud service account credential with access to list buckets was leaked for 3 days, starting on February 12, 2026, at 13:30:41 UTC.",
+            "narrative": [
+              "At 2026-02-12 13:30:41 UTC, the credential was used to list buckets in the 'projects/customer-769/instances/customer-1' resource.",
+              "No other notable actions were recorded.",
+              "The leaked credential was active for 259200 seconds, or 3 days.",
+              "The credential was not reused.",
+              "No activity was recorded in the audit log",
+              "The blind spot is that Data Access logs, which cover object reads, are off by default and must be explicitly enabled per service."
+            ],
+            "business_impact": "The leaked credential could have been used to access sensitive data in Google Cloud, potentially resulting in financial losses and compliance breaches. This incident highlights the importance of monitoring and managing cloud credentials to prevent unauthorized access."
+          },
+          "latency_s": 14.563,
+          "ollama_allocation": [
+            {
+              "name": "llama3.2:latest",
+              "size": 2548417166,
+              "size_vram": 2548417166
+            }
+          ]
+        },
+        {
+          "case": 2,
+          "platform": "azure",
+          "valid_json": true,
+          "grounded": false,
+          "fact_coverage": 0.75,
+          "violations": [
+            "'22-minute' is not in the facts"
+          ],
+          "sections": {
+            "executive_summary": "A Microsoft Azure credential was compromised, with 15 recorded incidents over a 22-minute period, resulting in Critical exposure. The credential was used to access Storage Account Keys, SQL Server resources, and Key Vault metadata. The incident may breach GDPR Article 33, requiring immediate notification to the Data Protection Authority.",
+            "narrative": [
+              "2026-04-21 22:49:03 UTC",
+              "Microsoft.EventHub/namespaces/write: /subscriptions/0f3c/resourceGroups/backup-rg/providers/Microsoft.EventHub/backup1",
+              "2026-04-21 22:49:37 UTC",
+              "Microsoft.Sql/servers/read: /subscriptions/0f3c/resourceGroups/billing-rg/providers/Microsoft.Sql/billing7",
+              "2026-04-21 22:58:59 UTC",
+              "Microsoft.Sql/servers/databases/read: /subscriptions/0f3c/resourceGroups/prod-rg/providers/Microsoft.Sql/servers/prod6",
+              "2026-04-21 22:50:43 UTC",
+              "Microsoft.KeyVault/vaults/read: /subscriptions/0f3c/resourceGroups/media-rg/providers/Microsoft.KeyVault/media8"
+            ],
+            "business_impact": "The incident may result in a GDPR Article 33 breach, requiring notification to the Data Protection Authority within 72 hours and potential financial losses from compromised data. The Azure credential's exposure may also lead to additional security and compliance costs, including the potential for data breaches and unauthorized access to sensitive resources."
+          },
+          "latency_s": 29.002,
+          "ollama_allocation": [
+            {
+              "name": "llama3.2:latest",
+              "size": 2548417166,
+              "size_vram": 2548417166
+            }
+          ]
+        },
+        {
+          "case": 3,
+          "platform": "stripe",
+          "valid_json": true,
+          "grounded": true,
+          "fact_coverage": 0.25,
+          "violations": [],
+          "sections": {
+            "executive_summary": "Stripe secret key credential leaked for 3 days, potentially exposing customer data and transactions.",
+            "narrative": [
+              "2026-06-25 22:16:11 UTC: Stripe secret key credential recorded in audit log.",
+              "2026-06-26 03:58:18 UTC: Customer product list event recorded in audit log.",
+              "2026-06-26 03:58:18 UTC: Stripe product listing event recorded in audit log.",
+              "2026-06-26 07:16:19 UTC: Charge list event recorded in audit log.",
+              "2026-06-26 20:29:53 UTC: Customer list event recorded in audit log.",
+              "2026-06-26 20:31:10 UTC: Stripe secret key credential recorded in audit log.",
+              "2026-06-26 20:31:10 UTC: Balance available event recorded in audit log.",
+              "2026-06-26 20:31:10 UTC: Stripe secret key credential recorded in audit log."
+            ],
+            "business_impact": "Potential exposure of customer data and transactions, possible compliance issues due to data breaches. The leaked credential was used for 3 days, resulting in 17 recorded events."
+          },
+          "latency_s": 22.704,
+          "ollama_allocation": [
+            {
+              "name": "llama3.2:latest",
+              "size": 2548417166,
+              "size_vram": 2548417166
+            }
+          ]
+        }
+      ],
+      "summary": {
+        "n": 4,
+        "valid_json_rate": 1.0,
+        "grounding_pass_rate": 0.75,
+        "mean_fact_coverage": 0.625,
+        "median_latency_s": 18.6335,
+        "p95_latency_s": 29.002,
+        "failures": 0
+      }
+    },
+    "qwen2.5vl:3b": {
+      "digest": "fb90415cde1ef08aa669ae74b082d49b158729b6db1ab183c941417d507e71a1",
+      "model_file_bytes": 3200627168,
+      "rows": [
+        {
+          "case": 0,
+          "platform": "aws",
+          "valid_json": true,
+          "grounded": true,
+          "fact_coverage": 0.25,
+          "violations": [],
+          "sections": {
+            "executive_summary": "An AWS access key was leaked, used to send an email via SES, and the credential was active for 5 minutes. The leak was not detected by CloudTrail due to a blind spot in S3 and Lambda data logging.",
+            "narrative": [
+              "2026-02-05 05:11:06 UTC: An AWS access key was leaked.",
+              "2026-02-05 05:11:06 UTC: The leaked key was used to send an email via SES.",
+              "2026-02-05 05:11:06 UTC: The credential was active for 5 minutes.",
+              "2026-02-05 05:11:06 UTC: The leak was not detected by CloudTrail due to a blind spot in S3 and Lambda data logging."
+            ],
+            "business_impact": "The leak resulted in potential financial and compliance consequences, as the leaked key could have been used to access sensitive AWS resources. The email sent via SES could have contained sensitive information, potentially leading to data breaches or unauthorized access."
+          },
+          "latency_s": 22.182,
+          "ollama_allocation": [
+            {
+              "name": "qwen2.5vl:3b",
+              "size": 4319136971,
+              "size_vram": 4319136971
+            }
+          ]
+        },
+        {
+          "case": 1,
+          "platform": "gcp",
+          "valid_json": true,
+          "grounded": true,
+          "fact_coverage": 0.5,
+          "violations": [],
+          "sections": {
+            "executive_summary": "A Google Cloud Service Account with the hint 'ci-deploy...' was accessed by an unknown user on February 12, 2026, for 3 days. The account was used to list buckets in a project, but no data was accessed. The activity was logged in the Cloud Audit Logs, but the Data Access logs were not enabled, which is a blind spot in the security monitoring.",
+            "narrative": [
+              "2026-02-12 13:30:41 UTC: An unknown user accessed a Google Cloud Service Account with the hint 'ci-deploy...' to list buckets in a project.",
+              "2026-02-12 13:30:41 UTC: The account was used to list buckets in the project 'customer-769'.",
+              "2026-02-12 13:30:41 UTC: No data was accessed or modified during this activity.",
+              "2026-02-12 13:30:41 UTC: The activity was logged in the Cloud Audit Logs, but the Data Access logs were not enabled, which is a blind spot in the security monitoring."
+            ],
+            "business_impact": "The access to the Service Account did not result in any financial loss or data breaches. However, the lack of Data Access logs being enabled is a significant security risk, as it means that any data access by the account could go unnoticed. This could potentially lead to unauthorized data access in the future, which could have serious compliance implications."
+          },
+          "latency_s": 20.362,
+          "ollama_allocation": [
+            {
+              "name": "qwen2.5vl:3b",
+              "size": 4319136971,
+              "size_vram": 4319136971
+            }
+          ]
+        },
+        {
+          "case": 2,
+          "platform": "azure",
+          "valid_json": true,
+          "grounded": true,
+          "fact_coverage": 0.25,
+          "violations": [],
+          "sections": {
+            "executive_summary": "An Azure Service Principal with the hint '3f2a91c0...' was used to create/update an Event Hub Namespace, list Storage Account Keys, read Key Vault Metadata, and read SQL databases. The credential was used for 22 minutes, causing potential data breaches and compliance issues.",
+            "narrative": [
+              "2026-04-21 22:47:03 UTC: The credential was used to create/update an Event Hub Namespace.",
+              "2026-04-21 22:49:03 UTC: The credential was used to list Storage Account Keys.",
+              "2026-04-21 22:50:43 UTC: The credential was used to read Key Vault Metadata.",
+              "2026-04-21 22:58:59 UTC: The credential was used to read a SQL Database.",
+              "2026-04-21 23:05:23 UTC: The credential was used to list Storage Account Keys again."
+            ],
+            "business_impact": "The breach could have exposed sensitive data, including keys and metadata, to unauthorized parties. This could lead to data breaches and potential financial losses. and non-compliance with GDPR Article 33, which mandates notifying the Data Protection Authority within 72 hours if a breach is confirmed."
+          },
+          "latency_s": 21.896,
+          "ollama_allocation": [
+            {
+              "name": "qwen2.5vl:3b",
+              "size": 4319136971,
+              "size_vram": 4319136971
+            }
+          ]
+        },
+        {
+          "case": 3,
+          "platform": "stripe",
+          "valid_json": true,
+          "grounded": false,
+          "fact_coverage": 0.25,
+          "violations": [
+            "'3-day' is not in the facts"
+          ],
+          "sections": {
+            "executive_summary": "A Stripe secret key was leaked, used for reconnaissance activities over a 3-day period, and accessed by a developer who listed customers and products without encountering any failures. The severity is low as the key was not used for unauthorized transactions.",
+            "narrative": [
+              "2026-06-25 22:16:11 UTC: The Stripe secret key was accessed for the first time.",
+              "2026-06-26 03:58:18 UTC: The developer listed products using the key.",
+              "2026-06-26 07:16:19 UTC: The developer listed charges using the key.",
+              "2026-06-26 20:29:53 UTC: The developer listed customers using the key.",
+              "2026-06-26 20:31:10 UTC: The key was no longer used, as no further activity was recorded."
+            ],
+            "business_impact": "The developer accessed sensitive customer and product data without encountering any failures, which could have led to data breaches or unauthorized access. This could have resulted in financial losses and potential compliance issues if the data was used for unauthorized purposes."
+          },
+          "latency_s": 17.797,
+          "ollama_allocation": [
+            {
+              "name": "qwen2.5vl:3b",
+              "size": 4319136971,
+              "size_vram": 4319136971
+            }
+          ]
+        }
+      ],
+      "summary": {
+        "n": 4,
+        "valid_json_rate": 1.0,
+        "grounding_pass_rate": 0.75,
+        "mean_fact_coverage": 0.3125,
+        "median_latency_s": 21.128999999999998,
+        "p95_latency_s": 22.182,
+        "failures": 0
+      }
+    }
+  },
+  "deterministic_baseline": {
+    "n": 4,
+    "valid_json_rate": 1.0,
+    "grounding_pass_rate": 1.0,
+    "mean_fact_coverage": 1.0,
+    "median_latency_s": 1.3645498256664723e-05,
+    "p95_latency_s": 8.079200051724911e-05,
+    "failures": 0
+  }
+}

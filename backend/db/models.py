@@ -18,6 +18,7 @@ from sqlalchemy import String
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import declarative_base, relationship
 from sqlalchemy.sql import func
+from detector.ai_keys import PROVIDERS as AI_PROVIDERS
 
 Base = declarative_base()
 
@@ -38,11 +39,11 @@ TIER_DETECTION_ONLY = 2
 
 # Every platform string that may appear on forensic_events / collection_status.
 # Must stay in sync with the CHECK constraints below.
-VALID_PLATFORMS = (
+VALID_PLATFORMS = tuple(dict.fromkeys((
     "aws", "gcp", "azure", "firebase",          # cloud (Tier 1)
     "stripe", "twilio",                         # SaaS (Tier 1)
     "github", "slack", "npm", "sendgrid", "huggingface", "db",  # Tier 2
-)
+) + AI_PROVIDERS))
 
 _PLATFORM_SQL_LIST = ", ".join(f"'{p}'" for p in VALID_PLATFORMS)
 
@@ -68,6 +69,7 @@ CREDENTIAL_TYPE_TO_PLATFORM: dict[str, str] = {
     "huggingface_token": "huggingface",
     "db_connection_string": "db",
 }
+CREDENTIAL_TYPE_TO_PLATFORM.update({f"{p}_api_key": p for p in AI_PROVIDERS})
 
 # ---------------------------------------------------------------------------
 # 1. incident_records

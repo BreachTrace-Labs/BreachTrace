@@ -263,3 +263,10 @@ class TestConstants:
 
     def test_ratio(self):
         assert EXPOSURE_WINDOW_TIMEOUT_SECONDS % REVOCATION_CHECK_INTERVAL_SECONDS == 0
+
+def test_record_exposure_start_normalises_offset_to_utc():
+    from datetime import timezone
+    from window.calculator import record_exposure_start
+    ts = record_exposure_start("2026-11-04T14:24:18+05:30")
+    assert ts.utcoffset().total_seconds() == 0
+    assert ts.isoformat() == "2026-11-04T08:54:18+00:00"

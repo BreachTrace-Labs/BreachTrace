@@ -11,7 +11,7 @@ source, so the assistant cannot state anything that is not already true.
 from __future__ import annotations
 
 import re
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import exists
 from sqlalchemy.orm import Session
@@ -20,6 +20,7 @@ from db.models import CREDENTIAL_TYPE_TO_PLATFORM, ForensicEvent, IncidentRecord
 from rag import embedder
 from rag.bm25 import BM25
 from rag.index import ensure_kb, search
+from rag.index import event_chunk
 from rag.query_parser import ParsedQuery, parse
 
 _MAX_INCIDENTS = 25
@@ -34,6 +35,8 @@ _STRONG_KEYWORD = 4.0
 _SEVERITY_LABELS = {1: "LOW", 2: "MEDIUM", 3: "HIGH", 4: "CRITICAL"}
 
 EXAMPLE_QUESTIONS = [
+    "what happened at 2026-10-01T14:23:30Z",
+    "which actions failed on the affected resource",
     "critical incidents this week",
     "stripe incidents in the last 7 days",
     "which incidents had financial abuse",
@@ -106,13 +109,44 @@ def _incident_row(incident: IncidentRecord) -> dict:
     }
 
 
-def answer(db: Session, question: str, *, incident_id: str | None = None, k: int = 5) -> dict:
+def answer(db: Session, question: str, *, incident_id: str | None = None, k: int = 5,
+           timeline_start: datetime | None = None, timeline_end: datetime | None = None) -> dict:
     ensure_kb(db)
     parsed = parse(question, now=datetime.now(timezone.utc))
     if incident_id:
         parsed.incident_ids = [incident_id]
 
     incidents = find_incidents(db, parsed) if (parsed.wants_incidents or incident_id) else []
+
+    # Exact timestamp questions query evidence directly; do not rely on semantic
+    # similarity to distinguish adjacent times. Timestamp literals require a zone.
+    stamps = re.findall(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})", question)
+    if timeline_start is None and stamps:
+        try:
+            timeline_start = datetime.fromisoformat(stamps[0].replace("Z", "+00:00"))
+            timeline_end = datetime.fromisoformat(stamps[1].replace("Z", "+00:00")) if len(stamps) > 1 else None
+        except ValueError:
+            timeline_start = None
+    if timeline_start is not None:
+        single_second = timeline_end is None
+        end = timeline_end or timeline_start + timedelta(seconds=1)
+        events = db.query(ForensicEvent).filter(ForensicEvent.timestamp >= timeline_start)
+        events = events.filter(ForensicEvent.timestamp < end) if single_second else events.filter(ForensicEvent.timestamp <= end)
+        if incident_id:
+            events = events.filter(ForensicEvent.incident_id == incident_id)
+        elif parsed.wants_incidents:
+            events = events.filter(ForensicEvent.incident_id.in_([i.incident_id for i in incidents]))
+        if parsed.platforms:
+            events = events.filter(ForensicEvent.platform.in_(parsed.platforms))
+        if parsed.categories:
+            events = events.filter(ForensicEvent.impact_category.in_(parsed.categories))
+        records = events.order_by(ForensicEvent.timestamp, ForensicEvent.event_id).limit(k + 1).all()
+        passages = [{**event_chunk(e), "highlight": event_chunk(e)["text"], "similarity": None} for e in records[:k]]
+        return {"question": question, "intent": "timeline", "filters": parsed.describe(),
+                "incidents": [_incident_row(i) for i in incidents], "passages": passages,
+                "confident": bool(records), "semantic": False, "suggestions": [],
+                "truncated": len(records) > k, "timeline_start": timeline_start.isoformat(),
+                "timeline_end": end.isoformat(), "disclaimer": MODEL_DISCLAIMER}
 
     # Scope incident passages to the matched incidents when the question was
     # about incidents; how-to questions search the knowledge base and every
@@ -122,6 +156,10 @@ def answer(db: Session, question: str, *, incident_id: str | None = None, k: int
         # the playbooks — a generic FAQ must not outrank the user's own report.
         hits = search(db, question, k=3, source_type="incident", source_ids=[incident_id], include_kb=False)
         hits += search(db, question, k=max(1, k - len(hits)), source_type="kb")
+        if re.search(r"\b(charged|amount|cost|money|financial|paid|refund)\b", question, re.I):
+            # Report sections carry deduplicated financial amounts; timeline
+            # entries intentionally exclude raw billing payloads.
+            hits.sort(key=lambda h: (h.chunk.source_type != "incident", ":event:" in h.chunk.id))
     else:
         scope = [i.incident_id for i in incidents] if parsed.wants_incidents else None
         hits = search(db, question, k=k, source_ids=scope)
@@ -154,4 +192,12 @@ def answer(db: Session, question: str, *, incident_id: str | None = None, k: int
         "confident": confident,
         "semantic": embedder.get_embedder() is not None,
         "suggestions": [] if (confident or incidents) else EXAMPLE_QUESTIONS,
+        "disclaimer": MODEL_DISCLAIMER,
     }
+
+
+MODEL_DISCLAIMER = (
+    "Timeline passages quote recorded evidence. Retrieved report prose may be "
+    "written by your selected model; its quality depends on that model. Verify "
+    "conclusions against the cited events. Missing logs do not prove no activity."
+)

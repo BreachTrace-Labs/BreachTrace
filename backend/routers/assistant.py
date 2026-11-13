@@ -9,10 +9,11 @@ from __future__ import annotations
 
 import logging
 import threading
+from datetime import datetime
 from typing import Optional
 
-from fastapi import APIRouter, Depends
-from pydantic import BaseModel, Field
+from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel, Field, model_validator
 from sqlalchemy.orm import Session
 
 import config
@@ -31,11 +32,29 @@ class SearchRequest(BaseModel):
     question: str = Field(..., min_length=2, max_length=500)
     incident_id: Optional[str] = None
     limit: int = Field(5, ge=1, le=20)
+    timeline_start: datetime | None = None
+    timeline_end: datetime | None = None
+
+    @model_validator(mode="after")
+    def time_range(self):
+        if self.timeline_end and not self.timeline_start:
+            raise ValueError("timeline_end requires timeline_start")
+        for value in (self.timeline_start, self.timeline_end):
+            if value and value.utcoffset() is None:
+                raise ValueError("Timeline timestamps require a time zone")
+        if self.timeline_start and self.timeline_end and self.timeline_end < self.timeline_start:
+            raise ValueError("Timeline end must not precede start")
+        return self
 
 
 @router.post("/search")
 def assistant_search(body: SearchRequest, db: Session = Depends(get_db)):
-    return answer(db, body.question, incident_id=body.incident_id, k=body.limit)
+    if body.incident_id:
+        from db.models import IncidentRecord
+        if db.get(IncidentRecord, body.incident_id) is None:
+            raise HTTPException(404, "Incident not found")
+    return answer(db, body.question, incident_id=body.incident_id, k=body.limit,
+                  timeline_start=body.timeline_start, timeline_end=body.timeline_end)
 
 
 @router.get("/status")

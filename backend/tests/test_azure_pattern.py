@@ -251,3 +251,25 @@ def test_uuid_not_double_detected_as_client_secret():
     matches = find_azure_credentials(text)
     secrets = [m for m in matches if m.credential_type == "azure_client_secret"]
     assert len(secrets) == 0
+
+
+def test_tenant_and_subscription_ids_are_not_service_principals():
+    from detector.patterns import find_azure_credentials
+    text = (
+        "AZURE_TENANT_ID=8f3c1d2e-1111-4222-8333-944455556666\n"
+        "AZURE_CLIENT_ID=4535aaaa-bbbb-4ccc-8ddd-eeeeffffb25c\n"
+        "AZURE_SUBSCRIPTION_ID=11112222-3333-4444-8555-666677778888\n"
+    )
+    ids = [m.client_id for m in find_azure_credentials(text) if m.credential_type == "azure_service_principal"]
+    assert ids == ["4535aaaa-bbbb-4ccc-8ddd-eeeeffffb25c"]
+
+
+def test_client_secret_with_client_id_is_not_a_separate_incident():
+    from detector.patterns import find_azure_credentials
+    text = (
+        "AZURE_CLIENT_ID=4535aaaa-bbbb-4ccc-8ddd-eeeeffffb25c\n"
+        "AZURE_CLIENT_SECRET=abc8Q~abcdefghijklmnopqrstuvwxyz0123456\n"
+    )
+    assert [m.credential_type for m in find_azure_credentials(text)] == ["azure_service_principal"]
+    # A secret on its own is still reported as detection-only.
+    assert [m.credential_type for m in find_azure_credentials(text.splitlines()[1])] == ["azure_client_secret"]
