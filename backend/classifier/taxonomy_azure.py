@@ -406,6 +406,17 @@ AZURE_API_TAXONOMY: dict[str, dict] = {
         "severity": 3,
         "label": "Delete Budget",
     },
+    # Budgets are logged by ARM under the Consumption provider.
+    "Microsoft.Consumption/budgets/write": {
+        "category": "financial_abuse",
+        "severity": 3,
+        "label": "Create/Update Budget",
+    },
+    "Microsoft.Consumption/budgets/delete": {
+        "category": "financial_abuse",
+        "severity": 3,
+        "label": "Delete Budget",
+    },
     "Microsoft.Billing/billingAccounts/write": {
         "category": "financial_abuse",
         "severity": 4,

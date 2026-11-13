@@ -223,6 +223,22 @@ def get_incident_detail(
     return out
 
 
+@router.get("/{incident_id}/report.pdf")
+def download_incident_pdf(incident_id: str, db: Session = Depends(get_db)):
+    """Per-incident PDF: key details, forensic analysis, remediation, timeline."""
+    from fastapi.responses import Response
+
+    from reporter.pdf import build_incident_pdf
+
+    detail = get_incident_detail(incident_id, db)
+    pdf = build_incident_pdf(detail)
+    return Response(
+        content=pdf,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="breachtrace-{incident_id[:8]}.pdf"'},
+    )
+
+
 # ---------------------------------------------------------------------------
 # Timeline endpoint
 # ---------------------------------------------------------------------------

@@ -25,6 +25,11 @@ from azure.mgmt.storage import StorageManagementClient
 
 import requests
 
+from dotenv import load_dotenv
+
+# Experiments read credentials straight from the environment; load the project .env
+load_dotenv()
+
 LOG = logging.getLogger(__name__)
 
 
@@ -304,14 +309,21 @@ def _simulate_gcp_attacker_activity(client_email: str, private_key: str) -> list
             "client_email": client_email,
             "private_key": private_key,
             "private_key_id": os.getenv("GCP_EXPERIMENT_PRIVATE_KEY_ID", ""),
+            "project_id": os.getenv("GCP_PROJECT_ID", ""),
             "token_uri": "https://oauth2.googleapis.com/token",
         },
         scopes=["https://www.googleapis.com/auth/cloud-platform.read-only"],
     )
-    client = gcp_storage.Client(credentials=creds)
+    client = gcp_storage.Client(credentials=creds, project=os.getenv("GCP_PROJECT_ID") or None)
 
     calls_made: list[str] = []
-    buckets = list(client.list_buckets())
+    try:
+        buckets = list(client.list_buckets())
+    except Exception as exc:  # 403 for a least-privilege key is expected
+        # A denied call is still written to Cloud Audit Logs, so it is
+        # legitimate attacker-activity evidence rather than a failed run.
+        LOG.info("GCP storage.buckets.list denied (still audit-logged): %s", exc)
+        buckets = []
     calls_made.append("storage.buckets.list")
 
     if buckets:
@@ -416,7 +428,7 @@ def run_gcp_experiment(
     """
     api_base = os.getenv("API_BASE_URL", "http://localhost:8000")
     client_email = os.getenv("GCP_EXPERIMENT_CLIENT_EMAIL", "")
-    private_key = os.getenv("GCP_EXPERIMENT_PRIVATE_KEY", "")
+    private_key = os.getenv("GCP_EXPERIMENT_PRIVATE_KEY", "").replace("\\n", "\n")
 
     result: dict = {
         "run_number": experiment_number,

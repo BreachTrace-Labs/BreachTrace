@@ -340,6 +340,12 @@ AZURE_CONN_STRING_PATTERN = re.compile(
     r'DefaultEndpointsProtocol=https;AccountName=[^;]+;AccountKey=[A-Za-z0-9+/=]{64,};'
 )
 AZURE_CONTEXT_RADIUS = 3
+# Same-line label before a UUID that marks it as a non-sign-in identifier.
+_AZURE_NON_PRINCIPAL_LABEL = re.compile(
+    r'(tenant|subscription|directory|object)[_\- ]?(id)?\W*$|'
+    r'(tenant|subscription|directory|object)[_\- ]?id["\']?\s*[:=]',
+    re.IGNORECASE,
+)
 
 
 @dataclass
@@ -394,6 +400,12 @@ def find_azure_credentials(
             if not any(kw in context for kw in AZURE_CLIENT_ID_CONTEXT_KEYWORDS):
                 continue  # UUID without Azure context — skip to avoid false positives
 
+            # Tenant/subscription/object IDs sit beside the client ID in every
+            # leaked SP config but are not a sign-in identity; treating them as
+            # one creates a second incident whose forensics are always empty.
+            if _AZURE_NON_PRINCIPAL_LABEL.search(line[:m.start()]):
+                continue
+
             seen.add(uuid)
             hint = uuid[:8] + "..."
             matches.append(AzureCredentialMatch(
@@ -428,6 +440,12 @@ def find_azure_credentials(
                 raw_match=f"Azure client secret @ line {i + 1}",
                 line_number=i + 1,
             ))
+
+    # A secret found alongside its client ID is the same credential: the client
+    # ID incident already covers it (and is the only one forensics can trace),
+    # so a second secret-only incident would just be an orphan detection.
+    if any(m.credential_type == "azure_service_principal" for m in matches):
+        matches = [m for m in matches if m.credential_type != "azure_client_secret"]
 
     return matches
 

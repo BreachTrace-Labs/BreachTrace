@@ -44,5 +44,7 @@ azure-mgmt-monitor>=6.0.0
 stripe>=7.0.0
 twilio>=8.0.0
 
+reportlab  # per-incident PDF reports
+
 # Testing
 pytest  # dev-only

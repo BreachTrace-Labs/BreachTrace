@@ -80,7 +80,8 @@ GCP_PROJECT_ID: str = os.getenv("GCP_PROJECT_ID", "")
 GCP_SERVICE_ACCOUNT_JSON: str = os.getenv("GCP_SERVICE_ACCOUNT_JSON", "")
 GCP_EXPERIMENT_CLIENT_EMAIL: str = os.getenv("GCP_EXPERIMENT_CLIENT_EMAIL", "")
 GCP_EXPERIMENT_PRIVATE_KEY_ID: str = os.getenv("GCP_EXPERIMENT_PRIVATE_KEY_ID", "")
-GCP_EXPERIMENT_PRIVATE_KEY: str = os.getenv("GCP_EXPERIMENT_PRIVATE_KEY", "")
+# .env files commonly store PEM newlines as the two characters "\n"
+GCP_EXPERIMENT_PRIVATE_KEY: str = os.getenv("GCP_EXPERIMENT_PRIVATE_KEY", "").replace("\\n", "\n")
 
 # ---------------------------------------------------------------------------
 # Azure (optional — system operates AWS-only when absent)

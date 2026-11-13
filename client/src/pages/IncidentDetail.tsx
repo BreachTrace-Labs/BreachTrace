@@ -347,6 +347,13 @@ const IncidentDetail: React.FC = () => {
             <RefreshCw size={16} className={`mr-2 ${refreshing ? 'animate-spin' : ''}`} />
             {refreshing ? 'Refreshing…' : 'Refresh logs'}
           </Button>}
+          {!USE_MOCK && (
+            <Button asChild variant="outline" className="shadow-sm bg-background hidden sm:flex rounded-sm">
+              <a href={`${import.meta.env.VITE_API_URL ?? 'http://localhost:8000'}/incidents/${incident.incident_id}/report.pdf`} download>
+                <Printer size={16} className="mr-2" /> Download PDF report
+              </a>
+            </Button>
+          )}
           <Button variant="outline" className="shadow-sm bg-background hidden sm:flex rounded-sm" onClick={() => window.print()}>
             <Printer size={16} className="mr-2" /> Print / save PDF
           </Button>
