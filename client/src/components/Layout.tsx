@@ -4,6 +4,8 @@ import { useTheme } from '@/lib/theme'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 import { USE_MOCK } from '@/api/client'
+import { useAuth } from '@/context/AuthContext'
+import { useProjects } from '@/context/ProjectContext'
 
 const NAV = [
   { to: '/', label: 'Monitor', icon: Activity, exact: true },
@@ -11,11 +13,14 @@ const NAV = [
   { to: '/research', label: 'Research', icon: FlaskConical, exact: false },
   { to: '/connect', label: 'Connect', icon: Link2, exact: false },
   { to: '/settings', label: 'Settings', icon: Link2, exact: false },
+  { to: '/admin', label: 'Projects & team', icon: Link2, exact: false },
 ]
 
 export function Layout({ children }: { children: React.ReactNode }) {
   const { toggle, theme } = useTheme()
   const location = useLocation()
+  const { user, logout } = useAuth()
+  const { projects, selected, select } = useProjects()
 
   return (
     <div
@@ -48,7 +53,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
 
           {/* Nav */}
           <nav aria-label="Main navigation" className="order-3 w-full flex flex-wrap items-center gap-1 sm:order-none sm:w-auto">
-            {NAV.map(({ to, label, exact }) => {
+            {NAV.filter(item => user?.role !== 'developer' || item.to === '/admin').map(({ to, label, exact }) => {
               const active = exact ? location.pathname === to : location.pathname.startsWith(to)
               return (
                 <NavLink
@@ -70,6 +75,9 @@ export function Layout({ children }: { children: React.ReactNode }) {
           {/* Spacer */}
           <div className="flex-1" />
 
+          {projects.length > 0 && <label className="text-xs">Project <select aria-label="Current project" className="border rounded p-1 bg-transparent" value={selected?.id ?? ''} onChange={event => select(event.target.value)}>{projects.map(project => <option key={project.id} value={project.id}>{project.name}</option>)}</select></label>}
+          {!USE_MOCK && <><span className="text-sm">{user?.full_name}</span><NavLink to="/change-password" className="text-xs underline">Change password</NavLink><Button variant="outline" size="sm" onClick={() => void logout()}>Sign out</Button></>}
+
           {/* Theme toggle */}
           <Button
             variant="ghost"
@@ -90,6 +98,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
       {/* Main */}
       <main className="flex-1 mx-auto w-full min-w-0 max-w-7xl px-4 sm:px-6 py-8">
         {USE_MOCK && <p role="note" className="mb-6 rounded border p-3 text-sm">Preview mode · All incidents and research metrics shown here are synthetic. Repository scans and model settings require a running backend.</p>}
+        {!USE_MOCK && selected && <p role="note" className="mb-4 text-xs text-muted-foreground">Selected project: {selected.name}. Incident and scan filtering by project is not available yet.</p>}
         {children}
       </main>
 

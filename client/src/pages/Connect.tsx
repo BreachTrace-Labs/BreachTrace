@@ -12,6 +12,7 @@ import {
 import client from '@/api/client'
 import { Button } from '@/components/ui/button'
 import RepositoryScan from '@/components/RepositoryScan'
+import { useProjects } from '@/context/ProjectContext'
 
 /* ─── types ────────────────────────────────────────────────────────── */
 
@@ -103,6 +104,7 @@ function Section({
 /* ─── main component ─────────────────────────────────────────────────── */
 
 const Connect: React.FC = () => {
+  const { selected } = useProjects()
   const [infoError, setInfoError] = useState(false)
 
   const [repoUrl, setRepoUrl] = useState('')
@@ -112,6 +114,8 @@ const Connect: React.FC = () => {
   const [registerError, setRegisterError] = useState<string | null>(null)
   const [scanOnConnect, setScanOnConnect] = useState(true)
   const [scanTrigger, setScanTrigger] = useState(0)
+
+  useEffect(() => { if (selected) setRepoUrl(selected.github_repo_url) }, [selected])
 
   // Fetch the webhook URL from the backend on mount to auto-fill the field
   useEffect(() => {

@@ -6,7 +6,7 @@ from pydantic import BaseModel, EmailStr, Field
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from auth import get_current_user, hash_password, require_admin
+from auth import get_active_user, hash_password, require_admin
 from db.database import get_db
 from db.models import AuditLog, Organisation, User
 
@@ -40,7 +40,7 @@ def user_data(user: User):
 
 
 @router.get("")
-def get_org(user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+def get_org(user: User = Depends(get_active_user), db: Session = Depends(get_db)):
     org = db.get(Organisation, user.organisation_id)
     if org is None:
         raise HTTPException(404, "Organisation not found")

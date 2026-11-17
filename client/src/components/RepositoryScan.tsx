@@ -1,8 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
-import axios from 'axios'
+import { realClient as api } from '@/api/client'
 import { Button } from '@/components/ui/button'
 
-const api = axios.create({ baseURL: import.meta.env.VITE_API_URL ?? 'http://localhost:8000', timeout: 30_000 })
 type Scan = { scan_id: string; status: string; error?: string; result?: {
   repo_url: string; branch: string;
   revision: string; files_scanned: number; duration_s: number; finding_count: number;

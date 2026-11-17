@@ -1,8 +1,7 @@
 import { useEffect, useState } from 'react'
-import axios from 'axios'
+import { realClient as api } from '@/api/client'
 import { Button } from '@/components/ui/button'
 
-const api = axios.create({ baseURL: import.meta.env.VITE_API_URL ?? 'http://localhost:8000', timeout: 310_000 })
 type SettingsData = { provider: string; model: string; ollama_url: string; model_path: string; timeout_s: number; api_key_configured: boolean }
 const initial: SettingsData = { provider: 'none', model: '', ollama_url: 'http://127.0.0.1:11434', model_path: '', timeout_s: 60, api_key_configured: false }
 
@@ -40,7 +39,7 @@ export default function Settings() {
   }
   async function test() {
     setBusy(true)
-    try { const { data } = await api.post('/settings/model/test'); setMessage(data.message) }
+    try { const { data } = await api.post('/settings/model/test', undefined, { timeout: 310_000 }); setMessage(data.message) }
     catch { setMessage('Model check failed. Check credentials, model access, or the local runtime.') }
     finally { setBusy(false) }
   }

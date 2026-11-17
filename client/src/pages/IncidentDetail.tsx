@@ -284,6 +284,18 @@ const IncidentDetail: React.FC = () => {
     }
   }
 
+  const downloadReport = async () => {
+    if (!id) return
+    try {
+      const { data } = await client.get<Blob>(`/incidents/${id}/report.pdf`, { responseType: 'blob' })
+      const url = URL.createObjectURL(data)
+      const link = document.createElement('a')
+      link.href = url; link.download = `breachtrace-${id}.pdf`; link.click()
+      URL.revokeObjectURL(url)
+    } catch { setRefreshNotice('Could not download the report. Please try again.') }
+  }
+
+
   if (loading) {
     return (
       <div className="flex items-center justify-center min-h-[60vh]">
@@ -354,10 +366,8 @@ const IncidentDetail: React.FC = () => {
             {refreshing ? 'Refreshing…' : 'Refresh logs'}
           </Button>}
           {!USE_MOCK && (
-            <Button asChild variant="outline" className="shadow-sm bg-background hidden sm:flex rounded-sm">
-              <a href={`${import.meta.env.VITE_API_URL ?? 'http://localhost:8000'}/incidents/${incident.incident_id}/report.pdf`} download>
-                <Printer size={16} className="mr-2" /> Download PDF report
-              </a>
+            <Button variant="outline" className="shadow-sm bg-background hidden sm:flex rounded-sm" onClick={() => void downloadReport()}>
+              <Printer size={16} className="mr-2" /> Download PDF report
             </Button>
           )}
           <Button variant="outline" className="shadow-sm bg-background hidden sm:flex rounded-sm" onClick={() => window.print()}>

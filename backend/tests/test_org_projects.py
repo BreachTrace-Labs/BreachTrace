@@ -48,6 +48,8 @@ def test_membership_org_boundary_and_role_changes(app_client):
     assert invite.status_code == 201
     dev_id = invite.json()['user_id']
     dev = login(client, 'dev@example.com', 'developer password')
+    assert client.get('/projects', headers=dev).status_code == 403
+    assert client.post('/auth/change-password', headers=dev, json={'current_password':'developer password', 'new_password':'new developer password'}).status_code == 200
     assert client.get('/projects', headers=dev).json() == []
     assert client.get(f'/projects/{project_id}', headers=dev).status_code == 403
     assert client.get('/incidents', headers=dev).status_code == 403

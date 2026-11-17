@@ -57,8 +57,14 @@ def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(
     return user
 
 
+def get_active_user(user: User = Depends(get_current_user)) -> User:
+    if user.must_change_password:
+        raise HTTPException(status_code=403, detail="Change your temporary password before continuing")
+    return user
+
+
 def require_role(*roles: str):
-    def check(user: User = Depends(get_current_user)) -> User:
+    def check(user: User = Depends(get_active_user)) -> User:
         if user.role not in roles:
             raise HTTPException(status_code=403, detail="Insufficient role")
         return user

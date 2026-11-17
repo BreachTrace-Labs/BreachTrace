@@ -5,7 +5,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from access import assert_project_access
-from auth import get_current_user, require_admin, require_admin_or_lead
+from auth import get_active_user, require_admin, require_admin_or_lead
 from db.database import get_db
 from db.models import IncidentRecord, Project, ProjectMember, User
 from repository_snapshot import repository_name
@@ -42,7 +42,7 @@ def project_data(db: Session, project: Project):
 
 
 @router.get("")
-def list_projects(user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+def list_projects(user: User = Depends(get_active_user), db: Session = Depends(get_db)):
     query = db.query(Project).filter_by(organisation_id=user.organisation_id, is_deleted=False)
     if user.role == "developer":
         query = query.join(ProjectMember, ProjectMember.project_id == Project.id).filter(ProjectMember.user_id == user.id)
@@ -72,7 +72,7 @@ def create_project(body: ProjectCreate, request: Request, user: User = Depends(r
 
 
 @router.get("/{project_id}")
-def get_project(project_id: str, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+def get_project(project_id: str, user: User = Depends(get_active_user), db: Session = Depends(get_db)):
     return project_data(db, assert_project_access(project_id, user, db))
 
 
@@ -101,6 +101,13 @@ def list_members(project_id: str, user: User = Depends(require_admin_or_lead), d
     project = assert_project_access(project_id, user, db)
     rows = db.query(User).join(ProjectMember, ProjectMember.user_id == User.id).filter(ProjectMember.project_id == project.id).order_by(User.email).all()
     return [user_data(row) for row in rows]
+
+
+@router.get("/{project_id}/eligible-members")
+def eligible_members(project_id: str, user: User = Depends(require_admin_or_lead), db: Session = Depends(get_db)):
+    assert_project_access(project_id, user, db)
+    rows = db.query(User).filter_by(organisation_id=user.organisation_id, is_active=True).order_by(User.email).all()
+    return [{"id": row.id, "email": row.email, "full_name": row.full_name, "role": row.role} for row in rows]
 
 
 @router.post("/{project_id}/members", status_code=201)
