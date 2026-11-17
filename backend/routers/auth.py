@@ -12,6 +12,7 @@ from auth import create_access_token, get_current_user, hash_password, verify_pa
 from db.database import get_db
 from db.models import Organisation, User
 from audit import record
+from rate_limit import limiter
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -66,6 +67,7 @@ def register(body: Registration, db: Session = Depends(get_db)):
 
 
 @router.post("/token")
+@limiter.limit("5/minute")
 def token(request: Request, form: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
     user = db.query(User).filter(User.email == form.username.strip().lower()).first()
     if not user or not user.is_active or not verify_password(form.password, user.hashed_password):

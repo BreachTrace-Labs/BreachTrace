@@ -95,7 +95,7 @@ def _fetch_diff(repo_full_name: str, sha: str) -> str:
                 parts.append(f.patch)
         return "\n".join(parts)
     except GithubException as exc:
-        logger.warning("GitHub API error fetching diff %s@%s: %s", repo_full_name, sha, exc)
+        logger.warning("GitHub API error fetching diff (%s)", type(exc).__name__)
         return ""
 
 
@@ -121,7 +121,7 @@ async def _monitor_revocation(
         try:
             revoked = is_key_revoked(credential, secret, platform=platform)
         except Exception as exc:
-            logger.error("Revocation check failed for %s: %s", credential[:20], exc)
+            logger.error("Revocation check failed for incident %s (%s)", incident_id, type(exc).__name__)
             continue
 
         if revoked:
@@ -366,8 +366,11 @@ async def register_webhook(body: RegisterRequest, request: Request,
         else:
             hook = repo.create_hook(name="web", config=hook_config, events=["push"], active=True)
     except GithubException as exc:
-        detail = exc.data.get("message", "GitHub rejected the request") if isinstance(exc.data, dict) else "GitHub rejected the request"
-        raise HTTPException(400, f"Failed to register webhook: {detail}") from None
+        if exc.status == 403:
+            detail = "GitHub denied access. Check the token's repository administration permissions."
+        else:
+            detail = "GitHub rejected the request. Check repository access and webhook settings."
+        raise HTTPException(400, detail) from None
     project.webhook_registered_at = datetime.now(timezone.utc)
     record(db, user, "project.webhook_registered", request, project_id=project.id)
     db.commit()

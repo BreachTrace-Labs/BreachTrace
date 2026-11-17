@@ -60,10 +60,10 @@ class AzureActivityLogCollector(BaseCollector):
             f"and caller eq '{credential}'"
         )
 
-        logger.info("[Azure] Querying activity logs for %s (%s → %s)", credential, start_iso, end_iso)
+        logger.info("[Azure] Querying activity logs (%s → %s)", start_iso, end_iso)
         raw_events = self._client.activity_logs.list(filter=filter_str)
         events = [self._map_event(e) for e in raw_events]
-        logger.info("[Azure] Collected %d forensic events for %s", len(events), credential)
+        logger.info("[Azure] Collected %d forensic events", len(events))
         return events
 
     def _map_event(self, e: Any) -> ForensicEvent:

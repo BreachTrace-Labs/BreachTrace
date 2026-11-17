@@ -1,8 +1,12 @@
 import logging
+import os
+from urllib.parse import urlsplit
 from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
+from slowapi import _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s:\t  %(name)s - %(message)s")
 
@@ -12,6 +16,7 @@ config.validate_config()
 
 from auth import get_active_user, require_admin_or_lead, require_single_organisation  # noqa: E402
 from routers import assistant, auth, incidents, org, projects, repositories, research, settings, simulate, wallet, webhook  # noqa: E402 — must come after validate_config
+from rate_limit import limiter
 
 app = FastAPI(
     title="BreachTrace",
@@ -19,9 +24,32 @@ app = FastAPI(
     version="0.1.0",
 )
 
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
+
+def frontend_origins() -> list[str]:
+    value = os.environ.get("FRONTEND_ORIGIN", "http://localhost:5173,http://127.0.0.1:5173")
+    origins = [part.strip().rstrip("/") for part in value.split(",") if part.strip()]
+    if not origins:
+        raise RuntimeError("FRONTEND_ORIGIN must contain at least one HTTP(S) origin")
+    for origin in origins:
+        try:
+            parsed = urlsplit(origin)
+            valid = (parsed.scheme in ("http", "https") and parsed.hostname and
+                     not parsed.username and not parsed.password and not parsed.path and
+                     not parsed.query and not parsed.fragment and
+                     (parsed.port is None or 1 <= parsed.port <= 65535))
+        except ValueError:
+            valid = False
+        if not valid:
+            raise RuntimeError("FRONTEND_ORIGIN must contain only HTTP(S) origins")
+    return origins
+
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=frontend_origins(),
     allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],

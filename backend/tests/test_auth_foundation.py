@@ -7,12 +7,17 @@ from fastapi.testclient import TestClient
 from db.database import get_db
 from db.models import AuditLog
 from routers.auth import router
+from rate_limit import limiter
+from slowapi import _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
 
 
 @pytest.fixture
 def client(sqlite_factory, monkeypatch):
     monkeypatch.setenv("JWT_SECRET_KEY", "x" * 64)
     app = FastAPI()
+    app.state.limiter = limiter
+    app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
     app.include_router(router)
     def database():
         with sqlite_factory() as db:

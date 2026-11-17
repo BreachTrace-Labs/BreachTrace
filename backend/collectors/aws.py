@@ -288,8 +288,7 @@ class AWSCloudTrailCollector(BaseCollector):
         """
         adjusted_end = end_time + timedelta(minutes=_CLOUDTRAIL_END_BUFFER_MINUTES)
         logger.info(
-            "CloudTrail lookup: key=%s window=%s → %s (buffered to %s)",
-            credential,
+            "CloudTrail lookup: window=%s → %s (buffered to %s)",
             start_time.isoformat(),
             end_time.isoformat(),
             adjusted_end.isoformat(),
@@ -312,5 +311,5 @@ class AWSCloudTrailCollector(BaseCollector):
             if not next_token:
                 break
 
-        logger.info("CloudTrail returned %d events for key %s", len(events), credential)
+        logger.info("CloudTrail returned %d events", len(events))
         return events

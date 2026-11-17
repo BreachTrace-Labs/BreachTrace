@@ -16,6 +16,7 @@ from sqlalchemy.orm import Session
 from db.crud import get_incident
 from db.database import get_db
 from db.models import VALID_PLATFORMS, ExperimentRun
+from redaction import mask_identifier
 from research.analysis import compare_platforms, latency_by_platform
 
 router = APIRouter(prefix="/research", tags=["research"])
@@ -62,7 +63,7 @@ def export_experiment_runs(db: Session = Depends(get_db)):
             result.append(
                 ExperimentRunOut(
                     id=run.id,
-                    access_key_id=incident.access_key_id if incident else None,
+                    access_key_id=mask_identifier(incident.access_key_id) if incident else None,
                     detection_time_s=run.detection_time_s,
                     report_time_s=run.report_time_s,
                     api_calls=run.api_calls_made or [],

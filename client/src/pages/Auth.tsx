@@ -8,6 +8,7 @@ const input = 'block w-full border rounded p-2 bg-transparent mt-1'
 function message(error: unknown) {
   const response = (error as { response?: { status?: number; data?: { detail?: unknown } } }).response
   if (response?.status === 401) return 'Invalid email or password.'
+  if (response?.status === 429) return 'Too many sign-in attempts. Wait a minute and try again.'
   return typeof response?.data?.detail === 'string' ? response.data.detail : 'Could not complete the request. Check your details and backend connection.'
 }
 function Card({ title, children }: { title: string; children: React.ReactNode }) {

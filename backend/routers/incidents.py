@@ -26,6 +26,7 @@ from db.crud import get_incident, list_incidents, reset_incident_for_refresh
 from db.database import get_db
 from db.models import AuditLog, CREDENTIAL_TYPE_TO_PLATFORM, ExperimentRun, IncidentRecord, ProjectMember, User
 from pipeline import run_collection_pipeline
+from redaction import mask_identifier, redact
 from scorer.severity import (
     build_compliance_reasons,
     check_gdpr_flag,
@@ -71,6 +72,16 @@ class ForensicEventOut(BaseModel):
     location: Optional[str] = None
     raw_data: dict = Field(default_factory=dict)
 
+    @field_validator("api_action", "event_source", "source_ip", "user_agent", "affected_resource", "resource_type", "error_code", "principal_id", "location", mode="before")
+    @classmethod
+    def redact_text(cls, value):
+        return redact(value)
+
+    @field_validator("raw_data", mode="before")
+    @classmethod
+    def redact_raw_data(cls, value):
+        return redact(value or {})
+
     class Config:
         from_attributes = True
 
@@ -109,6 +120,16 @@ class IncidentSummaryOut(BaseModel):
     # too — not just the detail one — or the dashboard cannot label rows.
     forensic_tier: int = 1
     unavailable_reason: Optional[str] = None
+
+    @field_validator("access_key_id", mode="before")
+    @classmethod
+    def mask_access_key_id(cls, value):
+        return mask_identifier(value)
+
+    @field_validator("principal_id", mode="before")
+    @classmethod
+    def redact_principal(cls, value):
+        return redact(value)
 
     @field_validator("overall_severity", mode="before")
     @classmethod
@@ -152,6 +173,12 @@ class IncidentDetailOut(IncidentSummaryOut):
     # the same events, following the precedent of the compliance flags above —
     # so no migration is needed and existing incidents get it immediately.
     financial_impact_lines: list[FinancialImpactLineOut] = []
+
+    @field_validator("report_text", "remediation_steps", mode="before")
+    @classmethod
+    def redact_report(cls, value):
+        return redact(value)
+
 
     class Config:
         from_attributes = True

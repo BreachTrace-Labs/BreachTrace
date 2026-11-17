@@ -66,10 +66,10 @@ class GCPAuditLogCollector(BaseCollector):
             'AND logName:"cloudaudit.googleapis.com"'
         )
 
-        logger.info("[GCP] Querying audit logs for %s (%s → %s)", credential, start_iso, end_iso)
+        logger.info("[GCP] Querying audit logs (%s → %s)", start_iso, end_iso)
         entries = self._client.list_entries(filter_=filter_str)
         events = [self._map_entry(e) for e in entries]
-        logger.info("[GCP] Collected %d forensic events for %s", len(events), credential)
+        logger.info("[GCP] Collected %d forensic events", len(events))
         return events
 
     def _map_entry(self, entry) -> ForensicEvent:

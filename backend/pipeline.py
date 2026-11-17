@@ -36,7 +36,6 @@ from db.crud import (
     update_status,
 )
 from db.database import SessionLocal
-from detector.patterns import mask_secret
 from db.models import IncidentRecord
 from rag.index import index_incident
 from reporter.compose import deterministic_sections, render_report
@@ -186,12 +185,10 @@ def run_collection_pipeline(
         exposure_end = datetime.now(tz=timezone.utc)
 
         logger.info(
-            "%s pipeline started for incident %s (platform=%s credential=%s)",
+            "%s pipeline started for incident %s (platform=%s)",
             "Refresh" if refresh_existing else "Collection",
             incident_id,
             platform,
-            # A Stripe credential is the secret key itself; never log it whole.
-            mask_secret(credential) if platform == "stripe" else credential[:30],
         )
 
         # ── STAGE 1: Collect events ────────────────────────────────────────
@@ -228,10 +225,8 @@ def run_collection_pipeline(
                 start_time=collection_start,
                 end_time=exposure_end,
             )
-        except Exception:
-            logger.exception(
-                "%s event collection failed for incident %s", platform.upper(), incident_id
-            )
+        except Exception as exc:
+            logger.warning("%s event collection failed for incident %s (%s)", platform.upper(), incident_id, type(exc).__name__)
             save_collection_status(
                 db,
                 incident_id=incident_id,

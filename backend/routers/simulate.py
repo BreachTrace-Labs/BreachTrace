@@ -76,7 +76,7 @@ async def _monitor_revocation(
             revoked = is_key_revoked(credential, secret, platform=platform)
         except Exception as exc:
             logger.error(
-                "Revocation poll %d failed for %s: %s", poll + 1, credential[:20], exc
+                "Revocation poll %d failed for incident %s (%s)", poll + 1, incident_id, type(exc).__name__
             )
             continue
 
