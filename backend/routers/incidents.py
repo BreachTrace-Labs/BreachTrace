@@ -19,9 +19,11 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy.orm import Session
 
+from access import accessible_project_ids, assert_project_access, incident_access
+from auth import get_active_user, require_admin_or_lead, require_single_organisation
 from db.crud import get_incident, list_incidents, reset_incident_for_refresh
 from db.database import get_db
-from db.models import CREDENTIAL_TYPE_TO_PLATFORM, ExperimentRun
+from db.models import CREDENTIAL_TYPE_TO_PLATFORM, ExperimentRun, IncidentRecord, User
 from pipeline import run_collection_pipeline
 from scorer.severity import (
     build_compliance_reasons,
@@ -74,6 +76,7 @@ class ForensicEventOut(BaseModel):
 
 class IncidentSummaryOut(BaseModel):
     incident_id: str
+    project_id: Optional[str] = None
     credential_type: str
     credential_hint: str
     access_key_id: Optional[str]
@@ -160,13 +163,20 @@ class RefreshResponse(BaseModel):
 def list_all_incidents(
     limit: int = 50,
     offset: int = 0,
+    project_id: Optional[str] = None,
     db: Session = Depends(get_db),
+    user: User = Depends(get_active_user),
 ):
     """Return the most recent incidents, newest first."""
-    return list_incidents(db, limit=limit, offset=offset)
+    if project_id:
+        assert_project_access(project_id, user, db)
+    query = db.query(IncidentRecord).filter(IncidentRecord.project_id.in_(accessible_project_ids(user, db)))
+    if project_id:
+        query = query.filter(IncidentRecord.project_id == project_id)
+    return query.order_by(IncidentRecord.exposure_start.desc()).offset(max(0, offset)).limit(min(max(1, limit), 500)).all()
 
 
-@router.get("/stats")
+@router.get("/stats", dependencies=[Depends(require_admin_or_lead), Depends(require_single_organisation)])
 def get_incident_stats(db: Session = Depends(get_db)):
     """Aggregate statistics over all experiment runs for the Research page."""
     try:
@@ -190,7 +200,7 @@ def get_incident_stats(db: Session = Depends(get_db)):
     }
 
 
-@router.get("/{incident_id}", response_model=IncidentDetailOut)
+@router.get("/{incident_id}", response_model=IncidentDetailOut, dependencies=[Depends(incident_access)])
 def get_incident_detail(
     incident_id: str,
     db: Session = Depends(get_db),
@@ -223,7 +233,7 @@ def get_incident_detail(
     return out
 
 
-@router.get("/{incident_id}/report.pdf")
+@router.get("/{incident_id}/report.pdf", dependencies=[Depends(incident_access)])
 def download_incident_pdf(incident_id: str, db: Session = Depends(get_db)):
     """Per-incident PDF: key details, forensic analysis, remediation, timeline."""
     from fastapi.responses import Response
@@ -243,7 +253,7 @@ def download_incident_pdf(incident_id: str, db: Session = Depends(get_db)):
 # Timeline endpoint
 # ---------------------------------------------------------------------------
 
-@router.get("/{incident_id}/timeline", response_model=list[ForensicEventOut])
+@router.get("/{incident_id}/timeline", response_model=list[ForensicEventOut], dependencies=[Depends(incident_access)])
 def get_incident_timeline(
     incident_id: str,
     db: Session = Depends(get_db),
@@ -335,7 +345,7 @@ def _queue_incident_refresh(
     )
 
 
-@router.post("/{incident_id}/refresh", response_model=RefreshResponse, status_code=202)
+@router.post("/{incident_id}/refresh", response_model=RefreshResponse, status_code=202, dependencies=[Depends(require_admin_or_lead), Depends(incident_access)])
 def refresh_incident_forensics(
     incident_id: str,
     background_tasks: BackgroundTasks,
@@ -351,7 +361,7 @@ def refresh_incident_forensics(
     return _queue_incident_refresh(incident_id, background_tasks, db)
 
 
-@legacy_router.post("/{incident_id}/refresh", response_model=RefreshResponse, status_code=202)
+@legacy_router.post("/{incident_id}/refresh", response_model=RefreshResponse, status_code=202, dependencies=[Depends(require_admin_or_lead), Depends(incident_access)])
 def refresh_incident_forensics_legacy_path(
     incident_id: str,
     background_tasks: BackgroundTasks,
@@ -376,7 +386,7 @@ class IncidentPatch(BaseModel):
     overall_severity: Optional[str] = None
 
 
-@router.patch("/{incident_id}", response_model=IncidentDetailOut)
+@router.patch("/{incident_id}", response_model=IncidentDetailOut, dependencies=[Depends(require_admin_or_lead), Depends(incident_access)])
 def patch_incident(
     incident_id: str,
     body: IncidentPatch,

@@ -18,8 +18,11 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
+from access import assert_project_access
+from auth import require_admin_or_lead
 from db.crud import create_incident, finalize_non_forensic_incident, set_exposure_end
 from db.database import SessionLocal, get_db
+from db.models import User
 from detector.match_resolver import match_credential_value, resolve_match
 from detector.scanner import scan
 from pipeline import run_collection_pipeline
@@ -36,6 +39,7 @@ router = APIRouter(prefix="/test", tags=["test"])
 # ---------------------------------------------------------------------------
 
 class SimulateRequest(BaseModel):
+    project_id: Optional[str] = None
     repo_url: str = "simulated"
     diff_text: str = Field(max_length=2 * 1024 * 1024)
     # Platform selector: 'aws' | 'gcp' | 'azure'
@@ -97,6 +101,7 @@ async def simulate(
     body: SimulateRequest,
     background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
+    user: User = Depends(require_admin_or_lead),
 ):
     """
     Feed a raw diff directly into the scanner and persist incidents to DB.
@@ -121,6 +126,9 @@ async def simulate(
                 detail="Requested credential was not found in the provided diff_text",
             )
 
+    if not body.project_id:
+        raise HTTPException(422, "Select a project for the simulation")
+    project = assert_project_access(body.project_id, user, db)
     exposure_start = body.exposure_start or datetime.now(tz=timezone.utc)
     created: list[dict] = []
 
@@ -132,12 +140,13 @@ async def simulate(
             credential_type=resolved.credential_type,
             credential_hint=resolved.credential_hint,
             access_key_id=resolved.access_key_id,
-            repo_url=body.repo_url,
+            repo_url=project.github_repo_url,
             commit_hash="simulated",
             exposure_start=exposure_start,
             principal_id=resolved.principal_id,
             forensic_tier=resolved.forensic_tier,
             unavailable_reason=resolved.unavailable_reason,
+            project_id=project.id,
         )
         logger.info(
             "Simulated incident created: %s (platform=%s tier=%s)",

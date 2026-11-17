@@ -10,7 +10,7 @@ import config
 
 config.validate_config()
 
-from auth import require_admin_or_lead  # noqa: E402
+from auth import get_active_user, require_admin_or_lead, require_single_organisation  # noqa: E402
 from routers import assistant, auth, incidents, org, projects, repositories, research, settings, simulate, wallet, webhook  # noqa: E402 — must come after validate_config
 
 app = FastAPI(
@@ -39,13 +39,13 @@ app.include_router(wallet.router)
 # admin/lead-only until their data is scoped to project memberships.
 if hasattr(incidents, "stream_router"):
     app.include_router(incidents.stream_router)
-app.include_router(incidents.router, dependencies=[Depends(require_admin_or_lead)])
+app.include_router(incidents.router, dependencies=[Depends(get_active_user)])
 app.include_router(incidents.legacy_router, dependencies=[Depends(require_admin_or_lead)])
-app.include_router(research.router, dependencies=[Depends(require_admin_or_lead)])
-app.include_router(simulate.router, dependencies=[Depends(require_admin_or_lead)])
-app.include_router(assistant.router, dependencies=[Depends(require_admin_or_lead)])
-app.include_router(settings.router, dependencies=[Depends(require_admin_or_lead)])
-app.include_router(repositories.router, dependencies=[Depends(require_admin_or_lead)])
+app.include_router(research.router, dependencies=[Depends(require_admin_or_lead), Depends(require_single_organisation)])
+app.include_router(simulate.router, dependencies=[Depends(require_admin_or_lead), Depends(require_single_organisation)])
+app.include_router(assistant.router, dependencies=[Depends(require_admin_or_lead), Depends(require_single_organisation)])
+app.include_router(settings.router, dependencies=[Depends(require_admin_or_lead), Depends(require_single_organisation)])
+app.include_router(repositories.router, dependencies=[Depends(require_admin_or_lead), Depends(require_single_organisation)])
 
 
 @app.exception_handler(RequestValidationError)

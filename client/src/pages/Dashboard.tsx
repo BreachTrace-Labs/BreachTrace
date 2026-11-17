@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import {
   AlertTriangle,
@@ -9,6 +9,8 @@ import {
   Scale,
 } from 'lucide-react'
 import client from '@/api/client'
+import { USE_MOCK } from '@/api/client'
+import { useProjects } from '@/context/ProjectContext'
 import type { IncidentSummary } from '@/types'
 import {
   derivePlatform,
@@ -320,6 +322,8 @@ function StatusBreakdown({ incidents }: { incidents: IncidentSummary[] }) {
 /* ─── component ────────────────────────────────────────────────── */
 
 const Dashboard: React.FC = () => {
+  const { selected } = useProjects()
+  const projectId = selected?.id
   const [incidents, setIncidents] = useState<IncidentSummary[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -331,30 +335,32 @@ const Dashboard: React.FC = () => {
   const setFilterPlatform = (filter: IncidentFilter) => setSearchParams(filter === 'all' ? {} : { platform: filter })
   const filterLabel = (filter: IncidentFilter) => filter === 'all' ? 'All' : filter === 'ai' ? 'AI keys' : filter === 'other' ? 'Other' : PLATFORM_META[filter].label
 
-  const fetchIncidents = async () => {
+  const fetchIncidents = useCallback(async () => {
     setLoading(true)
     setError(null)
     try {
-      const { data } = await client.get<IncidentSummary[]>('/incidents')
+      if (!projectId && !USE_MOCK) { setIncidents([]); return }
+      const { data } = await client.get<IncidentSummary[]>('/incidents', { params: projectId ? { project_id: projectId } : {} })
       setIncidents(data)
     } catch {
       setError('Could not reach the backend. Make sure the API is running.')
     } finally {
       setLoading(false)
     }
-  }
+  }, [projectId])
 
-  useEffect(() => { fetchIncidents() }, [])
+  useEffect(() => { void Promise.resolve().then(fetchIncidents) }, [fetchIncidents])
 
   useEffect(() => {
+    if (!projectId && !USE_MOCK) return
     const poll = setInterval(() => {
       client
-        .get<IncidentSummary[]>('/incidents')
+        .get<IncidentSummary[]>('/incidents', { params: projectId ? { project_id: projectId } : {} })
         .then(({ data }) => { setIncidents(data); setError(null); setLoading(false) })
         .catch(() => {})
     }, 3000)
     return () => clearInterval(poll)
-  }, [])
+  }, [projectId])
 
   const platformOf = (i: IncidentSummary) => derivePlatform(i)
   const filteredIncidents = incidents.filter(i => filterIncident(i, filterPlatform))

@@ -31,6 +31,7 @@ def test_excessive_diff_is_rejected_before_scanning_without_echo(monkeypatch):
     app.include_router(simulate.router)
     app.add_exception_handler(RequestValidationError, validation_error)
     app.dependency_overrides[get_db] = lambda: Mock()
+    app.dependency_overrides[simulate.require_admin_or_lead] = lambda: Mock()
     scan = Mock(side_effect=AssertionError("Oversized source must not be scanned"))
     monkeypatch.setattr(simulate, "scan", scan)
     with TestClient(app) as client:

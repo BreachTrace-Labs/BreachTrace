@@ -31,10 +31,12 @@ def create_incident(
     azure_subscription_id: str | None = None,
     forensic_tier: int = 1,
     unavailable_reason: str | None = None,
+    project_id: str | None = None,
 ) -> IncidentRecord:
     """Insert a new incident row and return the persisted object."""
     incident = IncidentRecord(
         incident_id=str(uuid.uuid4()),
+        project_id=project_id,
         credential_type=credential_type,
         credential_hint=credential_hint,
         access_key_id=access_key_id,

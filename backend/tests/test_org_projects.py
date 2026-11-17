@@ -14,6 +14,7 @@ from auth import hash_password
 @pytest.fixture
 def app_client(sqlite_factory, monkeypatch):
     monkeypatch.setenv('JWT_SECRET_KEY', 'x' * 64)
+    monkeypatch.setenv('WALLET_ENCRYPTION_KEY', '12' * 32)
     monkeypatch.setenv('BREACHTRACE_LOCAL_TEST_MODE', 'true')
     monkeypatch.setenv('STRIPE_LOG_INGEST_TOKEN', 'stream-token')
     import config
@@ -52,7 +53,7 @@ def test_membership_org_boundary_and_role_changes(app_client):
     assert client.post('/auth/change-password', headers=dev, json={'current_password':'developer password', 'new_password':'new developer password'}).status_code == 200
     assert client.get('/projects', headers=dev).json() == []
     assert client.get(f'/projects/{project_id}', headers=dev).status_code == 403
-    assert client.get('/incidents', headers=dev).status_code == 403
+    assert client.get('/incidents', headers=dev).json() == []
     assert client.post(f'/projects/{project_id}/members', headers=admin, json={'user_id':dev_id}).status_code == 201
     assert client.get(f'/projects/{project_id}', headers=dev).status_code == 200
     assert len(client.get('/projects', headers=dev).json()) == 1
@@ -74,8 +75,13 @@ def test_membership_org_boundary_and_role_changes(app_client):
 
 def test_webhook_is_hmac_protected_and_stream_keeps_its_own_auth(app_client):
     client, _ = app_client
-    body = json.dumps({'zen':'hello'}).encode()
-    signature = 'sha256=' + hmac.new(b'webhook-test-secret', body, hashlib.sha256).hexdigest()
+    client.post('/auth/register', json={'org_name':'Acme','slug':'acme','admin_email':'admin@example.com','admin_password':'admin password','admin_full_name':'Admin'})
+    admin = login(client, 'admin@example.com', 'admin password')
+    project_id = client.post('/projects', headers=admin, json={'name':'App','github_repo_url':'https://github.com/acme/app'}).json()['id']
+    secret = 'webhook-test-secret-123'
+    assert client.put(f'/webhook/projects/{project_id}/secret', headers=admin, json={'secret':secret}).status_code == 200
+    body = json.dumps({'repository':{'full_name':'acme/app'},'zen':'hello'}).encode()
+    signature = 'sha256=' + hmac.new(secret.encode(), body, hashlib.sha256).hexdigest()
     assert client.post('/webhook/github', content=body, headers={'X-GitHub-Event':'ping'}).status_code == 401
     response = client.post('/webhook/github', content=body, headers={'X-GitHub-Event':'ping', 'X-Hub-Signature-256':signature})
     assert response.status_code == 202

@@ -63,6 +63,14 @@ def get_active_user(user: User = Depends(get_current_user)) -> User:
     return user
 
 
+def require_single_organisation(user: User = Depends(get_active_user), db: Session = Depends(get_db)) -> User:
+    # Legacy research, search and scan data have no organisation ownership yet.
+    from db.models import Organisation
+    if db.query(Organisation.id).count() != 1:
+        raise HTTPException(status_code=403, detail="This feature requires a single-organisation deployment")
+    return user
+
+
 def require_role(*roles: str):
     def check(user: User = Depends(get_active_user)) -> User:
         if user.role not in roles:

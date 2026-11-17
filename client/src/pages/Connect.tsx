@@ -9,7 +9,7 @@ import {
   Loader2,
   Webhook,
 } from 'lucide-react'
-import client from '@/api/client'
+import client, { realClient } from '@/api/client'
 import { Button } from '@/components/ui/button'
 import RepositoryScan from '@/components/RepositoryScan'
 import { useProjects } from '@/context/ProjectContext'
@@ -104,7 +104,9 @@ function Section({
 /* ─── main component ─────────────────────────────────────────────────── */
 
 const Connect: React.FC = () => {
-  const { selected } = useProjects()
+  const { selected, refresh } = useProjects()
+  const [manualSecret, setManualSecret] = useState('')
+  const [secretMessage, setSecretMessage] = useState('')
   const [infoError, setInfoError] = useState(false)
 
   const [repoUrl, setRepoUrl] = useState('')
@@ -128,16 +130,17 @@ const Connect: React.FC = () => {
   }, [])
 
   const handleRegister = async () => {
-    if (!repoUrl.trim()) return
+    if (!selected) return
     setRegistering(true)
     setResult(null)
     setRegisterError(null)
     try {
       const { data } = await client.post<RegisterResult>('/webhook/register', {
-        repo_url: repoUrl.trim(),
+        project_id: selected.id,
         webhook_url: webhookUrl,
       })
       setResult(data)
+      await refresh()
       if (data.success && scanOnConnect) setScanTrigger(value => value + 1)
     } catch (err: unknown) {
       const msg =
@@ -162,6 +165,7 @@ const Connect: React.FC = () => {
       <RepositoryScan repoUrl={repoUrl} onRepoUrlChange={url => {
         setRepoUrl(url); setResult(null); setRegisterError(null)
       }} trigger={scanTrigger} />
+      <p className="text-sm">{selected ? `Selected project: ${selected.name} (${selected.github_repo_full_name}) · Webhook ${selected.webhook_registered_at ? 'registered' : 'not registered'}` : 'Select or create a project before registering a webhook.'}</p>
 
       <details className="space-y-6">
         <summary className="cursor-pointer font-semibold">Monitor future commits (optional)</summary>
@@ -195,7 +199,7 @@ const Connect: React.FC = () => {
       {/* Step 2 — Register webhook */}
       <Section step={2} title="Register webhook on your GitHub repository">
         <p className="text-sm" style={{ color: 'var(--color-muted-foreground)' }}>
-          Use the repository URL entered above. BreachTrace will register the webhook
+          BreachTrace will register the webhook for the selected project's repository
           automatically using your configured GitHub token.
         </p>
 
@@ -204,10 +208,10 @@ const Connect: React.FC = () => {
             Repository URL
           </label>
           <div className="flex gap-2 items-center">
-            <p className="text-sm break-all flex-1">{repoUrl.trim() || 'Enter a repository URL above to enable webhook registration.'}</p>
+            <p className="text-sm break-all flex-1">{selected?.github_repo_url || 'Select a project to enable webhook registration.'}</p>
             <Button
               onClick={handleRegister}
-              disabled={registering || !repoUrl.trim()}
+              disabled={registering || !selected}
               size="sm"
               className="gap-2 shrink-0"
             >
@@ -317,10 +321,15 @@ const Connect: React.FC = () => {
         <CodeBlock>{webhookUrl}</CodeBlock>
         <ol className="space-y-2 text-sm" style={{ color: 'var(--color-muted-foreground)' }} start={3}>
           <li>3. Content type: <strong>application/json</strong></li>
-          <li>4. Secret: use the value from your <strong>.env</strong> → <code className="font-mono text-xs">GITHUB_WEBHOOK_SECRET</code></li>
+          <li>4. Choose a secret of at least 16 characters. Save the same secret for this project below and enter it in GitHub.</li>
           <li>5. Events: select <strong>Just the push event</strong></li>
           <li>6. Click <strong>Add webhook</strong></li>
         </ol>
+        <form className="space-y-2" onSubmit={async e => { e.preventDefault(); if (!selected) return; setSecretMessage(''); try { await realClient.put(`/webhook/projects/${selected.id}/secret`, { secret: manualSecret }); setManualSecret(''); await refresh(); setSecretMessage('Secret saved. Enter the same value in GitHub to complete setup.') } catch { setSecretMessage('Could not save the secret. Check the selected project and backend.') } }}>
+          <label className="block text-sm">Project webhook secret<input type="password" required minLength={16} maxLength={128} autoComplete="off" value={manualSecret} onChange={e => setManualSecret(e.target.value)} className="block w-full border rounded p-2 mt-1 bg-transparent" /></label>
+          <Button type="submit" disabled={!selected}>Save project secret</Button>
+          {secretMessage && <p role="status" className="text-sm">{secretMessage}</p>}
+        </form>
         <a
           href="https://docs.github.com/en/developers/webhooks-and-events/webhooks/creating-webhooks"
           target="_blank"

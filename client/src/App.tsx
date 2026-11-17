@@ -18,7 +18,7 @@ function ProtectedApp() {
   if (loading) return <main className="p-8">Loading session…</main>
   if (!user) return <Navigate to="/login" replace />
   if (user.must_change_password) return <Navigate to="/change-password" replace />
-  if (user.role === 'developer') return <ProjectProvider><Layout><Routes><Route path="/admin" element={<Admin />} /><Route path="*" element={<Navigate to="/admin" replace />} /></Routes></Layout></ProjectProvider>
+  if (user.role === 'developer') return <ProjectProvider><Layout><Routes><Route path="/" element={<Dashboard />} /><Route path="/incident/:id" element={<IncidentDetail />} /><Route path="/incidents/:id" element={<IncidentDetail />} /><Route path="/admin" element={<Admin />} /><Route path="*" element={<Navigate to="/" replace />} /></Routes></Layout></ProjectProvider>
   return <ProjectProvider><Layout><Routes>
     <Route path="/" element={<Dashboard />} /><Route path="/dashboard" element={<Dashboard />} />
     <Route path="/incident/:id" element={<IncidentDetail />} /><Route path="/incidents/:id" element={<IncidentDetail />} />

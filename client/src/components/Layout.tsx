@@ -53,7 +53,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
 
           {/* Nav */}
           <nav aria-label="Main navigation" className="order-3 w-full flex flex-wrap items-center gap-1 sm:order-none sm:w-auto">
-            {NAV.filter(item => user?.role !== 'developer' || item.to === '/admin').map(({ to, label, exact }) => {
+            {NAV.filter(item => user?.role !== 'developer' || item.to === '/admin' || item.to === '/').map(({ to, label, exact }) => {
               const active = exact ? location.pathname === to : location.pathname.startsWith(to)
               return (
                 <NavLink
@@ -98,7 +98,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
       {/* Main */}
       <main className="flex-1 mx-auto w-full min-w-0 max-w-7xl px-4 sm:px-6 py-8">
         {USE_MOCK && <p role="note" className="mb-6 rounded border p-3 text-sm">Preview mode · All incidents and research metrics shown here are synthetic. Repository scans and model settings require a running backend.</p>}
-        {!USE_MOCK && selected && <p role="note" className="mb-4 text-xs text-muted-foreground">Selected project: {selected.name}. Incident and scan filtering by project is not available yet.</p>}
+        {!USE_MOCK && selected && <p role="note" className="mb-4 text-xs text-muted-foreground">Selected project: {selected.name}. Search, research and snapshot scans are not yet filtered by project.</p>}
         {children}
       </main>
 

@@ -5,7 +5,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from access import assert_project_access
-from auth import get_active_user, require_admin, require_admin_or_lead
+from auth import get_active_user, require_admin, require_admin_or_lead, require_single_organisation
 from db.database import get_db
 from db.models import IncidentRecord, Project, ProjectMember, User
 from repository_snapshot import repository_name
@@ -85,6 +85,24 @@ def update_project(project_id: str, body: ProjectUpdate, request: Request, user:
     record(db, user, "project.updated", request, project_id=project.id)
     db.commit()
     return project_data(db, project)
+
+
+@router.post("/{project_id}/adopt-legacy", dependencies=[Depends(require_single_organisation)])
+def adopt_legacy_incidents(project_id: str, request: Request, user: User = Depends(require_admin), db: Session = Depends(get_db)):
+    """Explicitly associate old, unassigned incidents matching this repository."""
+    project = assert_project_access(project_id, user, db)
+    count = 0
+    for incident in db.query(IncidentRecord).filter(IncidentRecord.project_id.is_(None)).yield_per(200):
+        try:
+            matches = repository_name(incident.repo_url).lower() == project.github_repo_full_name.lower()
+        except (ValueError, TypeError, AttributeError):
+            matches = False
+        if matches:
+            incident.project_id = project.id
+            count += 1
+    record(db, user, "project.legacy_incidents_adopted", request, project_id=project.id, detail={"count": count})
+    db.commit()
+    return {"adopted": count}
 
 
 @router.delete("/{project_id}")

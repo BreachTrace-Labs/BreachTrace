@@ -10,22 +10,31 @@ import hashlib
 import hmac
 import json
 import logging
+import re
+import secrets
 from datetime import datetime, timezone
+from urllib.parse import urlsplit
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
+from fastapi.responses import JSONResponse
 from github import Github, GithubException
 from pydantic import BaseModel
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 import config
+from access import assert_project_access
 from auth import require_admin_or_lead
+from crypto import decrypt_blob, encrypt_blob
 from db.crud import create_incident, finalize_non_forensic_incident, set_exposure_end
 from db.database import SessionLocal, get_db
+from db.models import Project, User
 from detector.match_resolver import resolve_match
 from detector.scanner import scan
 from pipeline import run_collection_pipeline
 from rag.index import index_incident_in_background
 from window.calculator import is_key_revoked, record_exposure_start
+from routers.org import record
 
 logger = logging.getLogger(__name__)
 
@@ -36,16 +45,26 @@ router = APIRouter(prefix="/webhook", tags=["webhook"])
 # Signature validation
 # ---------------------------------------------------------------------------
 
-def _verify_signature(body: bytes, sig_header: str) -> bool:
+def _verify_signature(body: bytes, sig_header: str, secret: str) -> bool:
     """Return True if the X-Hub-Signature-256 header matches the HMAC of the body."""
     if not sig_header.startswith("sha256="):
         return False
     expected = "sha256=" + hmac.new(
-        config.GITHUB_WEBHOOK_SECRET.encode(),
+        secret.encode(),
         body,
         hashlib.sha256,
     ).hexdigest()
     return hmac.compare_digest(sig_header, expected)
+
+
+def _encrypt_secret(secret: str) -> str:
+    ciphertext, iv = encrypt_blob({"secret": secret})
+    return f"{iv}.{ciphertext}"
+
+
+def _decrypt_secret(value: str) -> str:
+    iv, ciphertext = value.split('.', 1)
+    return decrypt_blob(ciphertext, iv)["secret"]
 
 
 # ---------------------------------------------------------------------------
@@ -128,10 +147,31 @@ async def github_webhook(
     event_type = request.headers.get("X-GitHub-Event", "unknown")
     logger.info(f"======> [WEBHOOK HIT] Received '{event_type}' event <======")
 
-    # 1. Validate HMAC-SHA256 signature
+    # Only the repository name is used before signature verification.
+    try:
+        payload = json.loads(body)
+        repo_full_name = payload.get("repository", {}).get("full_name", "")
+        if not isinstance(repo_full_name, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9-]{0,38}/[A-Za-z0-9_.-]{1,100}", repo_full_name):
+            raise ValueError()
+    except (ValueError, TypeError, AttributeError):
+        raise HTTPException(400, "Invalid GitHub webhook payload")
+    matches = db.query(Project).filter(func.lower(Project.github_repo_full_name) == repo_full_name.lower(), Project.is_deleted.is_(False)).all()
+    if not matches:
+        logger.warning("Ignored webhook for an unregistered repository")
+        return JSONResponse(status_code=200, content={"status": "ignored", "reason": "project not found"})
+    # A single-org deployment should have at most one matching project.
+    if len(matches) != 1 or not matches[0].webhook_secret:
+        raise HTTPException(401, "Webhook secret not configured")
+    project = matches[0]
+    try:
+        project_secret = _decrypt_secret(project.webhook_secret)
+    except Exception:
+        raise HTTPException(503, "Project webhook secret is unavailable") from None
+
+    # Verify the signature with the matched project's secret.
     sig_header = request.headers.get("X-Hub-Signature-256", "")
-    if not _verify_signature(body, sig_header):
-        logger.error(f"[WEBHOOK FAIL] Signature mismatch. Received: {sig_header[:25]}...")
+    if not _verify_signature(body, sig_header, project_secret):
+        logger.error("[WEBHOOK FAIL] Signature mismatch")
         raise HTTPException(status_code=401, detail="Invalid webhook signature")
 
     # 2. Only process push events
@@ -139,10 +179,7 @@ async def github_webhook(
         logger.info(f"[WEBHOOK] Ignored non-push event: {event_type}")
         return {"status": "ignored", "event": event_type}
 
-    payload: dict = json.loads(body)
-
-    repo_full_name: str = payload.get("repository", {}).get("full_name", "")
-    repo_url: str = payload.get("repository", {}).get("html_url", "")
+    repo_url: str = project.github_repo_url
     commits: list[dict] = payload.get("commits", [])
 
     if not commits:
@@ -195,6 +232,7 @@ async def github_webhook(
                 principal_id=resolved.principal_id,
                 forensic_tier=resolved.forensic_tier,
                 unavailable_reason=resolved.unavailable_reason,
+                project_id=project.id,
             )
             created_incidents.append(incident.incident_id)
             logger.info(
@@ -266,74 +304,65 @@ async def github_webhook(
 # ---------------------------------------------------------------------------
 
 class RegisterRequest(BaseModel):
-    repo_url: str      # e.g. "https://github.com/user/repo"
-    webhook_url: str   # e.g. "http://localhost:8000/webhook/github" or ngrok URL
+    project_id: str
+    webhook_url: str
 
 
-@router.post("/register", status_code=200, dependencies=[Depends(require_admin_or_lead)])
-async def register_webhook(body: RegisterRequest):
-    """
-    Use the configured GITHUB_TOKEN to register (or confirm) a push webhook on
-    the target repo.  The frontend calls this when the user clicks
-    'Connect Repository'.
-    """
-    # Parse "user/repo" from any GitHub URL form
-    url = body.repo_url.rstrip("/")
-    if "github.com/" not in url:
-        raise HTTPException(status_code=400, detail="repo_url must be a GitHub repository URL")
+class ManualSecretRequest(BaseModel):
+    secret: str
 
-    repo_full_name = url.split("github.com/", 1)[1]
 
+@router.put("/projects/{project_id}/secret")
+def set_manual_secret(project_id: str, body: ManualSecretRequest, request: Request,
+                      user: User = Depends(require_admin_or_lead), db: Session = Depends(get_db)):
+    project = assert_project_access(project_id, user, db)
+    if not 16 <= len(body.secret) <= 128:
+        raise HTTPException(422, "Webhook secret must contain 16 to 128 characters")
     try:
-        gh = Github(config.GITHUB_TOKEN)
-        repo = gh.get_repo(repo_full_name)
+        project.webhook_secret = _encrypt_secret(body.secret)
+    except Exception:
+        raise HTTPException(503, "Webhook encryption is not configured") from None
+    project.webhook_registered_at = None
+    record(db, user, "project.webhook_secret_updated", request, project_id=project.id)
+    db.commit()
+    return {"message": "Webhook secret saved. Configure the same secret in GitHub."}
+
+
+@router.post("/register", status_code=200)
+async def register_webhook(body: RegisterRequest, request: Request,
+                           user: User = Depends(require_admin_or_lead), db: Session = Depends(get_db)):
+    """Register a push hook for a project using its own encrypted secret."""
+    project = assert_project_access(body.project_id, user, db)
+    parsed = urlsplit(body.webhook_url)
+    if (parsed.scheme != "https" or not parsed.hostname or parsed.username or parsed.password
+            or parsed.path != "/webhook/github" or parsed.query or parsed.fragment):
+        raise HTTPException(422, "Use an HTTPS webhook URL ending in /webhook/github")
+    try:
+        if not project.webhook_secret:
+            project.webhook_secret = _encrypt_secret(secrets.token_urlsafe(32))
+            db.commit()
+        webhook_secret = _decrypt_secret(project.webhook_secret)
+    except Exception:
+        db.rollback()
+        raise HTTPException(503, "Project webhook encryption is not configured") from None
+    try:
+        repo = Github(config.GITHUB_TOKEN).get_repo(project.github_repo_full_name)
+        hooks = list(repo.get_hooks())
+        hook = next((item for item in hooks if item.config.get("url", "") == body.webhook_url), None)
+        hook_config = {"url": body.webhook_url, "content_type": "json", "secret": webhook_secret, "insecure_ssl": "0"}
+        already_existed = hook is not None
+        if hook:
+            hook.edit(name="web", config=hook_config, events=["push"], active=True)
+        else:
+            hook = repo.create_hook(name="web", config=hook_config, events=["push"], active=True)
     except GithubException as exc:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Cannot access repository '{repo_full_name}': {exc.data.get('message', str(exc))}",
-        )
-
-    # Check if our webhook URL is already registered
-    try:
-        existing_hooks = list(repo.get_hooks())
-    except GithubException:
-        existing_hooks = []
-
-    for hook in existing_hooks:
-        if hook.config.get("url", "") == body.webhook_url:
-            return {
-                "success": True,
-                "already_existed": True,
-                "webhook_id": hook.id,
-                "message": f"Webhook already registered on {repo_full_name}",
-            }
-
-    # Register a new webhook
-    try:
-        hook = repo.create_hook(
-            name="web",
-            config={
-                "url": body.webhook_url,
-                "content_type": "json",
-                "secret": config.GITHUB_WEBHOOK_SECRET,
-                "insecure_ssl": "0",
-            },
-            events=["push"],
-            active=True,
-        )
-    except GithubException as exc:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Failed to create webhook: {exc.data.get('message', str(exc))}",
-        )
-
-    logger.info("Webhook registered on %s — hook id %s", repo_full_name, hook.id)
-    return {
-        "success": True,
-        "already_existed": False,
-        "webhook_id": hook.id,
-        "message": f"Webhook registered on {repo_full_name}",
-    }
+        detail = exc.data.get("message", "GitHub rejected the request") if isinstance(exc.data, dict) else "GitHub rejected the request"
+        raise HTTPException(400, f"Failed to register webhook: {detail}") from None
+    project.webhook_registered_at = datetime.now(timezone.utc)
+    record(db, user, "project.webhook_registered", request, project_id=project.id)
+    db.commit()
+    return {"success": True, "already_existed": already_existed, "webhook_id": hook.id,
+            "message": "Project webhook registered on GitHub"}
 
 
 @router.get("/info", dependencies=[Depends(require_admin_or_lead)])
@@ -346,6 +375,5 @@ async def webhook_info(request: Request):
     base = str(request.base_url).rstrip("/")
     return {
         "webhook_url": f"{base}/webhook/github",
-        "secret_hint": config.GITHUB_WEBHOOK_SECRET[:4] + "****" if config.GITHUB_WEBHOOK_SECRET else "",
         "environment": config.ENVIRONMENT,
     }

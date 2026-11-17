@@ -20,6 +20,7 @@ import {
   Search as SearchIcon,
 } from 'lucide-react'
 import client, { USE_MOCK } from '@/api/client'
+import { useAuth } from '@/context/AuthContext'
 import type { IncidentRecord, ReportSource, SearchResult } from '@/types'
 import SearchResults from '@/components/SearchResults'
 import { derivePlatform, isForensicTier, PLATFORM_META, platformIdentity } from '@/lib/platform'
@@ -233,6 +234,8 @@ function SummaryTile({
 /* ─── component ────────────────────────────────────────────────── */
 
 const IncidentDetail: React.FC = () => {
+  const { user } = useAuth()
+  const canManage = user?.role !== 'developer'
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
   const [incident, setIncident] = useState<IncidentRecord | null>(null)
@@ -355,7 +358,7 @@ const IncidentDetail: React.FC = () => {
 
         <div className="flex flex-wrap items-center gap-3">
           <StatusPill incident={incident} />
-          {forensic && !synthetic && !USE_MOCK && <Button
+          {canManage && forensic && !synthetic && !USE_MOCK && <Button
             variant="outline"
             className="shadow-sm bg-background rounded-sm"
             onClick={handleRefreshForensics}
@@ -559,7 +562,7 @@ const IncidentDetail: React.FC = () => {
             </div>
           )}
 
-          {incident.status === 'complete' && <AskAboutIncident incidentId={incident.incident_id} />}
+          {canManage && incident.status === 'complete' && <AskAboutIncident incidentId={incident.incident_id} />}
 
           {/* Timeline, or an explanation of why there cannot be one.
               Tier-2 platforms expose no queryable audit log, so rendering an
