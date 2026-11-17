@@ -120,3 +120,40 @@ def test_admin_can_associate_only_matching_unassigned_incidents(client_factory):
     assert len(client.get('/incidents',headers=admin).json()) == 1
     with factory() as db:
         assert db.query(IncidentRecord).filter(IncidentRecord.project_id.is_(None)).count() == 1
+
+
+def test_azure_secret_requires_authorized_explicit_application_association(client_factory, monkeypatch):
+    from datetime import datetime, timezone
+    import config
+    from db.crud import create_incident
+    from routers import incidents
+    from routers.settings import local_operator
+    from main import app
+
+    client, factory = client_factory
+    app.dependency_overrides[local_operator] = lambda: None
+    for name in ('AZURE_TENANT_ID', 'AZURE_CLIENT_ID', 'AZURE_CLIENT_SECRET', 'AZURE_SUBSCRIPTION_ID'):
+        monkeypatch.setattr(config, name, 'configured')
+    runs = []
+    monkeypatch.setattr(incidents, 'run_collection_pipeline', lambda *args, **kwargs: runs.append((args, kwargs)))
+    client.post('/auth/register', json={'org_name':'Acme','slug':'acme','admin_email':'admin@example.com',
+                                       'admin_password':'admin password','admin_full_name':'Admin'})
+    token = client.post('/auth/token', data={'username':'admin@example.com','password':'admin password'}).json()['access_token']
+    headers = {'Authorization':'Bearer ' + token}
+    project = client.post('/projects', headers=headers, json={'name':'App','github_repo_url':'https://github.com/acme/app'}).json()['id']
+    with factory() as db:
+        incident = create_incident(db, credential_type='azure_client_secret', credential_hint='masked',
+                                   repo_url='https://github.com/acme/app', commit_hash='a' * 40, exposure_start=datetime.now(timezone.utc),
+                                   forensic_tier=2, project_id=project)
+        incident_id = incident.incident_id
+    path = f'/incidents/{incident_id}/azure-application'
+    client_id = '11111111-2222-3333-4444-555555555555'
+    assert client.post(path, json={'client_id':client_id}).status_code == 401
+    assert client.post(path, headers=headers, json={'client_id':'invalid'}).status_code == 422
+    assert client.post(path, headers=headers, json={'client_id':client_id}).status_code == 202
+    with factory() as db:
+        updated = db.get(IncidentRecord, incident_id)
+        assert updated.principal_id == client_id and updated.forensic_tier == 1
+        assert updated.status == 'collecting'
+    assert len(runs) == 1 and runs[0][0][1] == client_id and runs[0][1]['platform'] == 'azure'
+    assert client.post(path, headers=headers, json={'client_id':client_id}).status_code == 400

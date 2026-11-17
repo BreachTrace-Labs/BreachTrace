@@ -37,14 +37,19 @@ def validate_credentials(provider: str, values: dict[str, str]) -> dict[str, str
         'stripe': {'api_key'},
         'twilio': {'account_sid', 'auth_token'},
     }[provider]
+    if provider == 'twilio' and set(values) == {'account_sid', 'api_key_sid', 'api_key_secret'}:
+        required = {'account_sid', 'api_key_sid', 'api_key_secret'}
     if set(values) != required or any(not v.strip() or len(v) > 50000 for v in values.values()):
         raise HTTPException(422, 'Provide the required credential fields for the selected provider')
-    if provider == 'stripe' and not re.fullmatch(r'rk_(test|live)_[A-Za-z0-9]+', values['api_key']):
-        raise HTTPException(422, 'Use a Stripe restricted test or live key')
+    values = {key: value.strip() for key, value in values.items()}
+    if provider == 'stripe' and not re.fullmatch(r'(?:sk|rk)_(test|live)_[A-Za-z0-9]+', values['api_key']):
+        raise HTTPException(422, 'Use a Stripe secret or restricted test or live key')
     if provider == 'twilio' and not re.fullmatch(r'AC[0-9a-fA-F]{32}', values['account_sid']):
         raise HTTPException(422, 'Twilio Account SID must start with AC and contain 32 hexadecimal characters')
+    if provider == 'twilio' and 'api_key_sid' in values and not re.fullmatch(r'SK[0-9a-fA-F]{32}', values['api_key_sid']):
+        raise HTTPException(422, 'Twilio API Key SID must start with SK and contain 32 hexadecimal characters')
     if provider == 'aws' and (not re.fullmatch(r'AKIA[A-Z0-9]{16}', values['access_key_id']) or
-                              not re.fullmatch(r'[a-z]{2}(?:-gov)?-[a-z]+-\d+', values['region'])):
+                              not re.fullmatch(r'[a-z]{2}(?:-[a-z0-9]+)+-\d+', values['region'])):
         raise HTTPException(422, 'Invalid AWS access key ID or region')
     if provider == 'azure':
         try:

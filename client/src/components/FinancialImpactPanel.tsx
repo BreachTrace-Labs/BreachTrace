@@ -131,7 +131,9 @@ const FinancialImpactPanel: React.FC<Props> = ({ incident }) => {
   const charged = totalsByCurrency(lines, 'charge')
   const refunded = totalsByCurrency(lines, 'refund')
   const paidOut = totalsByCurrency(lines, 'payout')
-  const estimates = lines.filter(l => !l.actual)
+  const twilioCharges = lines.filter(l => l.actual && l.platform === 'twilio' && l.kind === 'messaging')
+  const estimates = lines.filter(l => !l.actual && l.amount !== null)
+  const pending = lines.filter(l => !l.actual && l.amount === null)
   const hasActual = charged.length > 0 || refunded.length > 0 || paidOut.length > 0
 
   // Group estimates by platform so a multi-vendor leak reads as separate bills.
@@ -186,6 +188,16 @@ const FinancialImpactPanel: React.FC<Props> = ({ incident }) => {
             />
           </div>
         )}
+
+        {twilioCharges.length > 0 && <div className="space-y-2">
+          <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Twilio recorded charges</p>
+          {twilioCharges.map((line, i) => <p className="text-sm" key={`${line.currency}-${i}`}>{line.text}</p>)}
+          <p className="text-xs text-muted-foreground">These are account charges reported by Twilio, not proof of use by the exposed key.</p>
+        </div>}
+
+        {pending.length > 0 && <div className="space-y-1">
+          {pending.map((line, i) => <p className="text-sm text-muted-foreground" key={`${line.platform}-${line.kind}-${i}`}>{line.text}</p>)}
+        </div>}
 
         {estimates.length > 0 && (
           <div className={hasActual ? 'pt-3 border-t' : ''} style={hasActual ? { borderColor: 'var(--color-border)' } : undefined}>

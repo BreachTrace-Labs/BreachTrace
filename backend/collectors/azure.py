@@ -19,6 +19,23 @@ from collectors.base import BaseCollector
 from normalizer.schema import ForensicEvent
 
 logger = logging.getLogger(__name__)
+_MAX_ACTIVITY_EVENTS = 100_000
+_APP_ID_CLAIMS = ('appid', 'azp', 'http://schemas.microsoft.com/identity/claims/appid')
+
+
+def _matches_principal(event: Any, principal: str) -> bool:
+    """Match the application ID or an exact caller ID; never infer from a secret."""
+    expected = principal.strip().lower()
+    if not expected:
+        return False
+    caller = getattr(event, 'caller', None)
+    if isinstance(caller, str) and caller.strip().lower() == expected:
+        return True
+    claims = getattr(event, 'claims', None)
+    if not isinstance(claims, dict):
+        return False
+    return any(isinstance(claims.get(key), str) and claims[key].strip().lower() == expected
+               for key in _APP_ID_CLAIMS)
 
 
 class AzureActivityLogCollector(BaseCollector):
@@ -54,15 +71,19 @@ class AzureActivityLogCollector(BaseCollector):
         start_iso = _to_utc_iso(start_time)
         end_iso = _to_utc_iso(end_time)
 
-        filter_str = (
-            f"eventTimestamp ge '{start_iso}' "
-            f"and eventTimestamp le '{end_iso}' "
-            f"and caller eq '{credential}'"
-        )
+        # Azure's Activity Log API only documents time/resource filters.
+        # Service-principal caller is commonly its object ID, while the app ID
+        # appears in claims. Apply exact identity matching locally instead.
+        filter_str = f"eventTimestamp ge '{start_iso}' and eventTimestamp le '{end_iso}'"
 
         logger.info("[Azure] Querying activity logs (%s → %s)", start_iso, end_iso)
         raw_events = self._client.activity_logs.list(filter=filter_str)
-        events = [self._map_event(e) for e in raw_events]
+        events = []
+        for index, event in enumerate(raw_events):
+            if index >= _MAX_ACTIVITY_EVENTS:
+                raise ValueError('Azure Activity Log collection limit exceeded; narrow the time window')
+            if _matches_principal(event, credential):
+                events.append(self._map_event(event))
         logger.info("[Azure] Collected %d forensic events", len(events))
         return events
 

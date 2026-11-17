@@ -1,0 +1,16 @@
+FROM python:3.12-slim
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates curl gnupg \
+    && curl -fsSL https://packages.stripe.dev/api/security/keypair/stripe-cli-gpg/public \
+       | gpg --dearmor -o /usr/share/keyrings/stripe-cli.gpg \
+    && echo "deb [signed-by=/usr/share/keyrings/stripe-cli.gpg] https://packages.stripe.dev/stripe-cli-debian-local stable main" \
+       > /etc/apt/sources.list.d/stripe-cli.list \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends stripe \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+COPY scripts/stripe_request_logs.py /app/stripe_request_logs.py
+ENV PYTHONUNBUFFERED=1
+ENTRYPOINT ["python", "/app/stripe_request_logs.py"]

@@ -210,6 +210,11 @@ _STRIPE_MONEY_PREFIXES = (
 
 
 def _stripe_classify(event: ForensicEvent) -> tuple[str, int]:
+    if event.event_source == "stripe-cli-request-log":
+        if (event.api_action or "").startswith("GET "):
+            return DATA_ACCESS, 2
+        return RESOURCE_ABUSE, 2
+
     taxonomy_entry = STRIPE_API_TAXONOMY.get(event.api_action)
     if taxonomy_entry:
         return taxonomy_entry["category"], taxonomy_entry["severity"]
@@ -272,6 +277,21 @@ def classify_events(events: list[ForensicEvent]) -> list[ForensicEvent]:
     for event in events:
         classify_event(event)
 
+    # Outbound records have no source IP and are account activity, not proof of
+    # a campaign or attribution to a particular credential. Flag their volume
+    # without inventing an actor or changing their communication category.
+    messages: dict[str, set[str]] = {}
+    for event in events:
+        raw = getattr(event, "raw_data", None)
+        if (event.platform == "twilio" and event.api_action.startswith("message.")
+                and isinstance(raw, dict) and raw.get("sid") and raw.get("direction", "").startswith("outbound")):
+            messages.setdefault(str(getattr(event, "principal_id", "") or ""), set()).add(str(raw["sid"]))
+    for event in events:
+        if (event.platform == "twilio" and event.impact_category == COMMUNICATION_ABUSE
+                and event.api_action.startswith("message.")
+                and len(messages.get(str(getattr(event, "principal_id", "") or ""), set())) >= TWILIO_BULK_THRESHOLD):
+            event.severity_weight = 4
+
     counts = Counter(
         (event.api_action, event.source_ip)
         for event in events
@@ -304,7 +324,13 @@ def classify_all_events(incident_id: str, db: Session) -> list[ORMForensicEvent]
     if not events:
         return events
 
-    classify_events(events)
+    # Classify the two periods separately so older activity cannot inflate
+    # bulk-access escalation during the exposure window.
+    from normalizer.time_window import after_exposure
+    current = after_exposure(events, incident.exposure_start)
+    current_ids = {event.event_id for event in current}
+    classify_events([event for event in events if event.event_id not in current_ids])
+    classify_events(current)
     db.commit()
     # Refresh events so that returned ORM instances are not expired after commit.
     for event in events:

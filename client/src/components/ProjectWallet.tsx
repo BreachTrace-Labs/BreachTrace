@@ -7,15 +7,27 @@ type Entry = { id: string; provider: Provider; label: string | null; verificatio
 const fields: Record<Provider, { key: string; label: string; secret?: boolean }[]> = {
   aws: [{key:'access_key_id',label:'Access Key ID'},{key:'secret_access_key',label:'Secret Access Key',secret:true},{key:'region',label:'Region'}],
   gcp: [{key:'service_account_json',label:'Service account JSON',secret:true}],
-  azure: [{key:'tenant_id',label:'Tenant ID'},{key:'client_id',label:'Client ID'},{key:'client_secret',label:'Client Secret',secret:true},{key:'subscription_id',label:'Subscription ID'}],
-  stripe: [{key:'api_key',label:'Restricted API key',secret:true}],
-  twilio: [{key:'account_sid',label:'Account SID'},{key:'auth_token',label:'Auth Token',secret:true}],
+  azure: [{key:'tenant_id',label:'Directory (tenant) ID'},{key:'client_id',label:'Application (client) ID'},{key:'client_secret',label:'Client secret value',secret:true},{key:'subscription_id',label:'Subscription ID'}],
+  stripe: [{key:'api_key',label:'Secret or restricted API key',secret:true}],
+  twilio: [{key:'account_sid',label:'Account SID (AC…)'}],
 }
-const input = 'border rounded p-2 bg-transparent w-full'
+const twilioFields: Record<'api_key' | 'auth_token', { key: string; label: string; secret?: boolean }[]> = {
+  api_key: [{key:'api_key_sid',label:'API Key SID (SK…)'},{key:'api_key_secret',label:'API Key Secret',secret:true}],
+  auth_token: [{key:'auth_token',label:'Account Auth Token',secret:true}],
+}
+const verificationDescriptions: Record<Provider, string> = {
+  aws: 'Verifies identity with STS. CloudTrail read permission is checked during collection.',
+  gcp: 'Checks access to Cloud Audit Logs for the project in the service account JSON.',
+  azure: 'Checks Activity Log read access for the subscription. Use the application’s appId and matching secret value, not the service principal object ID or secret key ID.',
+  stripe: 'Checks Events read access. Use a restricted key where possible and match the account and test or live mode.',
+  twilio: 'Checks access to Messages in this account. Calls and Monitor Events permissions are checked during collection.',
+}
+const input = 'min-w-0 w-full rounded-md border bg-transparent p-2 text-sm'
 const detail = (err: unknown) => { const value = (err as { response?: { data?: { detail?: unknown } } }).response?.data?.detail; return typeof value === 'string' ? value : 'Unable to complete the request. Check your settings and try again.' }
 
 export default function ProjectWallet({ projectId, projectName }: { projectId: string; projectName: string }) {
   const [entries, setEntries] = useState<Entry[]>([]); const [provider, setProvider] = useState<Provider>('stripe')
+  const [twilioAuth, setTwilioAuth] = useState<'api_key' | 'auth_token'>('api_key')
   const [credentials, setCredentials] = useState<Record<string, string>>({}); const [label, setLabel] = useState(''); const [error, setError] = useState(''); const [notice, setNotice] = useState(''); const [busy, setBusy] = useState(false)
   const load = useCallback(async () => { const {data} = await realClient.get<Entry[]>(`/projects/${projectId}/wallet`); setEntries(data) }, [projectId])
   useEffect(() => { let active = true; realClient.get<Entry[]>(`/projects/${projectId}/wallet`).then(({data}) => { if (active) { setEntries(data); setError('') } }).catch(() => { if (active) setError('Could not load wallet connections.') }); return () => { active = false } }, [projectId])
@@ -31,7 +43,7 @@ export default function ProjectWallet({ projectId, projectName }: { projectId: s
     try { if (action === 'delete') await realClient.delete(`/projects/${projectId}/wallet/${entry.id}`); else await realClient.post(`/projects/${projectId}/wallet/${entry.id}/verify`); await load(); setNotice(action === 'delete' ? 'Connection removed.' : 'Verification has started.') }
     catch (err) { setError(detail(err)) } finally { setBusy(false) }
   }
-  return <section className="border rounded p-5 space-y-4"><h2 className="font-semibold">Credential wallet · {projectName}</h2>
+  return <section className="rounded-lg border bg-card p-5 space-y-4"><h2 className="font-semibold">Credential wallet · {projectName}</h2>
     <p className="text-sm text-muted-foreground">Credentials are encrypted at rest and cannot be displayed after saving. Use restricted, read-only credentials where supported. Verification checks a specific read operation.</p>
     <p className="text-sm text-muted-foreground">Connections are not yet used by incident collection; this will be connected in a later phase.</p>
     {error && <p role="alert" className="text-red-500 text-sm">{error}</p>}{notice && <p role="status" className="text-sm">{notice}</p>}
@@ -41,9 +53,10 @@ export default function ProjectWallet({ projectId, projectName }: { projectId: s
       <label className="block text-sm">Provider<select className={`${input} mt-1`} value={provider} onChange={event => { setProvider(event.target.value as Provider); setCredentials({}); setError('') }}><option value="stripe">Stripe</option><option value="aws">AWS</option><option value="gcp">Google Cloud</option><option value="azure">Azure</option><option value="twilio">Twilio</option></select></label>
       <label className="block text-sm">Label (optional)<input className={`${input} mt-1`} maxLength={80} value={label} onChange={event => setLabel(event.target.value)} /></label>
       {provider === 'gcp' && <label className="block text-sm">Upload service account JSON<input className="block mt-1" type="file" accept="application/json,.json" onChange={event => { const file = event.target.files?.[0]; if (file) void file.text().then(text => setCredentials({service_account_json:text})).catch(() => setError('Could not read file.')) }} /></label>}
-      {fields[provider].map(field => <label className="block text-sm" key={field.key}>{field.label}{field.key === 'service_account_json' ? <textarea className={`${input} mt-1 font-mono`} rows={4} required value={credentials[field.key] ?? ''} onChange={event => setCredentials({...credentials,[field.key]:event.target.value})} /> : <input className={`${input} mt-1`} required type={field.secret ? 'password' : 'text'} autoComplete="off" value={credentials[field.key] ?? ''} onChange={event => setCredentials({...credentials,[field.key]:event.target.value})} />}</label>)}
-      {provider === 'twilio' && <p className="text-sm">An Account SID and Auth Token can have full account access. Use a dedicated subaccount and restrict access where possible.</p>}
-      {provider === 'stripe' && <p className="text-sm">Use a restricted key with Events read permission. The verification checks Events access.</p>}
+      {provider === 'twilio' && <label className="block text-sm">Authentication method<select className={`${input} mt-1`} value={twilioAuth} onChange={event => { setTwilioAuth(event.target.value as 'api_key' | 'auth_token'); setCredentials(current => ({account_sid: current.account_sid ?? ''})) }}><option value="api_key">API key SID and secret</option><option value="auth_token">Account Auth Token</option></select></label>}
+      {[...fields[provider], ...(provider === 'twilio' ? twilioFields[twilioAuth] : [])].map(field => <label className="block text-sm" key={field.key}>{field.label}{field.key === 'service_account_json' ? <textarea className={`${input} mt-1 font-mono`} rows={4} required value={credentials[field.key] ?? ''} onChange={event => setCredentials({...credentials,[field.key]:event.target.value})} /> : <input className={`${input} mt-1`} required type={field.secret ? 'password' : 'text'} autoComplete="off" value={credentials[field.key] ?? ''} onChange={event => setCredentials({...credentials,[field.key]:event.target.value})} />}</label>)}
+      <p className="text-sm text-muted-foreground">{verificationDescriptions[provider]}</p>
+      {provider === 'twilio' && <p className="text-sm text-muted-foreground">Use the owning Account SID with an API key from the same account. Service and Environment SIDs identify Serverless resources and are not login credentials.</p>}
       <Button disabled={busy}>{busy ? 'Saving…' : 'Save and verify'}</Button>
     </form>
   </section>

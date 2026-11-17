@@ -109,5 +109,7 @@ STRIPE_EXPERIMENT_API_KEY: str = os.getenv("STRIPE_EXPERIMENT_API_KEY", "")
 # ---------------------------------------------------------------------------
 TWILIO_ACCOUNT_SID: str = os.getenv("TWILIO_ACCOUNT_SID", "")
 TWILIO_AUTH_TOKEN: str = os.getenv("TWILIO_AUTH_TOKEN", "")
+TWILIO_API_KEY_SID: str = os.getenv("TWILIO_API_KEY_SID", "")
+TWILIO_API_KEY_SECRET: str = os.getenv("TWILIO_API_KEY_SECRET", "")
 TWILIO_EXPERIMENT_ACCOUNT_SID: str = os.getenv("TWILIO_EXPERIMENT_ACCOUNT_SID", "")
 TWILIO_EXPERIMENT_AUTH_TOKEN: str = os.getenv("TWILIO_EXPERIMENT_AUTH_TOKEN", "")

@@ -193,7 +193,7 @@ def test_twilio_message_sends_have_cost():
     events = [_event("message.sent", platform="twilio")] * 100
     result = compute_financial_impact(events)
     assert "100 message(s)" in result
-    assert "$0.79" in result
+    assert "price unavailable or pending" in result
 
 
 def test_twilio_calls_have_cost():

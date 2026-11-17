@@ -1,3 +1,4 @@
+import { lazy, Suspense } from 'react'
 import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom'
 import { ThemeProvider } from './lib/theme'
 import { TooltipProvider } from './components/ui/tooltip'
@@ -12,6 +13,7 @@ import Research from './pages/Research'
 import Connect from './pages/Connect'
 import Search from './pages/Search'
 import Settings from './pages/Settings'
+const Landing = lazy(() => import('./pages/Landing'))
 
 function ProtectedApp() {
   const { user, loading } = useAuth()
@@ -29,7 +31,7 @@ function ProtectedApp() {
 }
 function App() {
   return <ThemeProvider><TooltipProvider><BrowserRouter><AuthProvider><Routes>
-    <Route path="/setup" element={<Setup />} /><Route path="/login" element={<Login />} />
+    <Route path="/landing" element={<Suspense fallback={<main className="p-8">Loading…</main>}><Landing /></Suspense>} /><Route path="/setup" element={<Setup />} /><Route path="/login" element={<Login />} />
     <Route path="/change-password" element={<ChangePassword />} /><Route path="/*" element={<ProtectedApp />} />
   </Routes></AuthProvider></BrowserRouter></TooltipProvider></ThemeProvider>
 }

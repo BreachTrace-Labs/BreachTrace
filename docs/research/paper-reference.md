@@ -102,7 +102,7 @@ The recovery layer enumerates bounded static representations, including Base64/B
 
 ### 4.4 Evidence Collection
 
-For authorized Tier-1 workflows, the system collects events from the relevant provider API. Collection begins 120 minutes before the exposure start and continues through collection time. This lookback is a collection interval, not a claim that the credential was exposed during the entire interval. Provider limitations remain material: CloudTrail and Cloud Audit Logs depend on enabled log types and retention, Azure Activity Log primarily represents control-plane activity, and SaaS APIs may expose state changes without complete per-token attribution.
+For authorized Tier-1 workflows, the system requests up to 30 days of recent provider history through collection time. Activity before detected exposure is contextual; severity, impact and report calculations use activity at or after detected exposure. Provider limitations remain material: CloudTrail and Cloud Audit Logs depend on enabled log types and retention, Azure Activity Log primarily represents control-plane activity, and SaaS APIs may expose state changes without complete per-token attribution.
 
 The supported collector families include AWS CloudTrail, Google Cloud Audit Logs, Azure Activity Log, Stripe account events, and Twilio message/call resources. Firebase service-account activity can use the Google Cloud path. AI credentials, GitHub, Slack, npm, SendGrid, Hugging Face, and database candidates are detection-only in the current research scope unless a separate provider-specific evidence path is added.
 

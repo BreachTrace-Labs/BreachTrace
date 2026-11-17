@@ -12,7 +12,12 @@ from __future__ import annotations
 
 from collections import Counter
 from dataclasses import asdict
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
+import hmac
+import os
+import re
+import uuid
+from urllib.parse import urlsplit
 from typing import Literal, Optional
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
@@ -24,7 +29,9 @@ from auth import get_active_user, require_admin_or_lead, require_single_organisa
 from audit import public as audit_public, record
 from db.crud import get_incident, list_incidents, reset_incident_for_refresh
 from db.database import get_db
-from db.models import AuditLog, CREDENTIAL_TYPE_TO_PLATFORM, ExperimentRun, IncidentRecord, ProjectMember, User
+from db.models import AuditLog, CREDENTIAL_TYPE_TO_PLATFORM, ExperimentRun, IncidentRecord, ProjectMember, User, ForensicEvent as StoredEvent
+from normalizer.time_window import after_exposure
+from routers.settings import local_operator
 from pipeline import run_collection_pipeline
 from redaction import mask_identifier, redact
 from scorer.severity import (
@@ -37,6 +44,7 @@ from scorer.severity import (
 
 router = APIRouter(prefix="/incidents", tags=["incidents"])
 legacy_router = APIRouter(prefix="/incident", tags=["incidents"])
+stream_router = APIRouter(prefix="/incidents", tags=["stripe request stream"])
 
 _SEVERITY_LABELS: dict[int, str] = {1: "LOW", 2: "MEDIUM", 3: "HIGH", 4: "CRITICAL"}
 
@@ -153,8 +161,8 @@ class FinancialImpactLineOut(BaseModel):
     currency: Optional[str] = None
     unit: Optional[str] = None
     quantity: Optional[int] = None
-    # True only where money demonstrably moved (Stripe). Everything else is a
-    # list-price estimate, and the UI must be able to tell them apart.
+    # Twilio provider-reported charges are account activity, not proof that a
+    # particular exposed key was responsible.
     actual: bool = False
 
 
@@ -173,12 +181,13 @@ class IncidentDetailOut(IncidentSummaryOut):
     # the same events, following the precedent of the compliance flags above —
     # so no migration is needed and existing incidents get it immediately.
     financial_impact_lines: list[FinancialImpactLineOut] = []
+    collection_status: Optional[str] = None
+    collection_error: Optional[str] = None
 
     @field_validator("report_text", "remediation_steps", mode="before")
     @classmethod
     def redact_report(cls, value):
         return redact(value)
-
 
     class Config:
         from_attributes = True
@@ -221,6 +230,96 @@ def audit_incident_view(request: Request, incident: IncidentRecord = Depends(inc
     record(db, user, 'incident.viewed', request, project_id=incident.project_id, incident_id=incident.incident_id)
     db.commit()
 
+
+class TwilioAccountRequest(BaseModel):
+    account_sid: str = Field(pattern=r"^AC[0-9a-fA-F]{32}$")
+
+
+class AzureApplicationRequest(BaseModel):
+    client_id: uuid.UUID
+
+
+class StripeRequestLogIn(BaseModel):
+    created_at: int = Field(gt=0)
+    livemode: bool
+    method: str = Field(pattern=r"^(GET|POST|DELETE|PUT|PATCH)$")
+    request_id: str = Field(pattern=r"^req_[A-Za-z0-9]+$", max_length=100)
+    status: int = Field(ge=100, le=599)
+    url: str = Field(min_length=1, max_length=2048)
+    account_confirmed: bool
+
+
+def _safe_stripe_path(value) -> str | None:
+    if not isinstance(value, str) or len(value) > 4096:
+        return None
+    path = urlsplit(value).path
+    if not re.fullmatch(r"/v[0-9]+(?:/[A-Za-z0-9_.-]+)*", path) or len(path) > 512:
+        return None
+    id_segment = re.compile(r"^(?:acct|cus|pi|ch|in|evt|req|pm|price|prod|sub|seti|cs|tok|src|ba|card|file|payout|re|txn|fee|refund|tr|po)_[A-Za-z0-9]+$")
+    return "/" + "/".join("…" if id_segment.fullmatch(s) else s for s in path.strip("/").split("/"))
+
+
+def stripe_request_log_auth(request: Request) -> None:
+    """Allow loopback local development or a shared secret from the stream sidecar."""
+    local_hosts = {"localhost", "127.0.0.1", "::1"}
+    if request.client and request.client.host in local_hosts and request.url.hostname in local_hosts:
+        return
+    expected = os.getenv("STRIPE_LOG_INGEST_TOKEN", "")
+    supplied = request.headers.get("authorization", "")
+    if not expected or not supplied.startswith("Bearer ") or not hmac.compare_digest(supplied[7:], expected):
+        raise HTTPException(403, "Stripe request-log stream is not authorized")
+
+
+def _store_stripe_request_log(db: Session, incident, item: dict) -> str:
+    source = "stripe-cli-request-log"
+    event_id = str(uuid.uuid5(uuid.NAMESPACE_URL, f"breachtrace:{source}:{incident.incident_id}:{item['request_id']}"))
+    if db.get(StoredEvent, event_id):
+        return "duplicate"
+    method, path, status = item["method"], item["path"], item["status"]
+    is_read = method == "GET"
+    db.add(StoredEvent(
+        event_id=event_id, incident_id=incident.incident_id, platform="stripe", timestamp=item["timestamp"],
+        api_action=f"{method} {path}"[:100], event_source="stripe-cli-request-log",
+        affected_resource=path, resource_type="stripe_request", principal_id=item["request_id"],
+        success=200 <= status < 300, error_code=str(status) if status >= 400 else None,
+        impact_category="data_access" if is_read else "resource_abuse", severity_weight=2,
+        raw_data={"source": source, "request_id": item["request_id"], "http_status": status,
+                  "method": method, "path": path, "livemode": item["livemode"],
+                  "attribution": "sandbox account activity; key identity not provided"},
+    ))
+    return "added"
+
+
+@stream_router.post("/{incident_id}/stripe-request-logs", dependencies=[Depends(stripe_request_log_auth)])
+def add_stripe_request_log(incident_id: str, body: StripeRequestLogIn, db: Session = Depends(get_db)):
+    """Accept an explicitly associated sandbox CLI record, retaining metadata only."""
+    incident = get_incident(db, incident_id)
+    if incident is None:
+        raise HTTPException(404, "Incident not found")
+    if incident.credential_type != "stripe_secret_key" or not (incident.credential_hint or "").startswith(("sk_test_", "rk_test_")):
+        raise HTTPException(400, "Request-log streaming is available for Stripe test-mode incidents only")
+    if body.livemode or not body.account_confirmed:
+        raise HTTPException(400, "Confirm the CLI is connected to this incident's sandbox")
+    try:
+        timestamp = datetime.fromtimestamp(body.created_at, timezone.utc)
+    except (ValueError, OverflowError, OSError):
+        raise HTTPException(400, "Invalid request timestamp")
+    exposure = incident.exposure_start
+    if exposure.tzinfo is None:
+        exposure = exposure.replace(tzinfo=timezone.utc)
+    if timestamp < exposure - timedelta(minutes=120) or timestamp > datetime.now(timezone.utc) + timedelta(minutes=5):
+        raise HTTPException(400, "Request is outside this incident's collection window")
+    if incident.exposure_end and timestamp > incident.exposure_end.replace(tzinfo=incident.exposure_end.tzinfo or timezone.utc):
+        raise HTTPException(400, "Request is after the incident's exposure ended")
+    # Do not store query strings, bodies, error messages, or credential material.
+    path = _safe_stripe_path(body.url)
+    if not path:
+        raise HTTPException(400, "Invalid Stripe request path")
+    item = {"request_id": body.request_id, "timestamp": timestamp, "method": body.method,
+            "status": body.status, "path": path, "livemode": False}
+    result = _store_stripe_request_log(db, incident, item)
+    db.commit()
+    return {"status": result}
 
 
 # ---------------------------------------------------------------------------
@@ -288,11 +387,16 @@ def get_incident_detail(
         raise HTTPException(status_code=404, detail="Incident not found")
 
     out = IncidentDetailOut.model_validate(incident)
+    if incident.collection_statuses and incident.status not in ("collecting", "classifying", "scoring", "reporting"):
+        latest = max(incident.collection_statuses, key=lambda status: status.queried_at)
+        out.collection_status = latest.status
+        out.collection_error = redact(latest.error_message)
 
     # Compute per-regulation compliance flags from live event data.
-    gdpr = check_gdpr_flag(incident.events)
-    pcidss = check_pcidss_flag(incident.events)
-    soc2 = check_soc2_flag(incident.events)
+    exposure_events = after_exposure(incident.events, incident.exposure_start)
+    gdpr = check_gdpr_flag(exposure_events)
+    pcidss = check_pcidss_flag(exposure_events)
+    soc2 = check_soc2_flag(exposure_events)
     out.pcidss_flag = pcidss
     out.soc2_flag = soc2
     # Refresh gdpr_flag in case the DB value pre-dates the improved detector.
@@ -301,11 +405,11 @@ def get_incident_detail(
         gdpr=out.gdpr_flag,
         pcidss=pcidss,
         soc2=soc2,
-        events=incident.events,
+        events=exposure_events,
     )
     out.financial_impact_lines = [
         FinancialImpactLineOut(**asdict(line))
-        for line in compute_financial_impact_lines(incident.events)
+        for line in compute_financial_impact_lines(exposure_events)
     ]
     return add_user_names(out, incident, db)
 
@@ -391,7 +495,6 @@ def incident_audit(incident_id: str, incident: IncidentRecord = Depends(incident
     return [audit_public(entry, name) for entry, name in rows]
 
 
-
 # ---------------------------------------------------------------------------
 # Manual CloudTrail refresh endpoint
 # ---------------------------------------------------------------------------
@@ -423,6 +526,16 @@ def _queue_incident_refresh(
 
     platform = _derive_platform(incident)
 
+    if platform == "stripe":
+        import config
+        from collectors.stripe import _is_usable_key
+        reader = config.STRIPE_API_KEY
+        if not _is_usable_key(reader):
+            raise HTTPException(status_code=422, detail="Configure STRIPE_API_KEY with a reader key for this Stripe account before refreshing.")
+        mode = re.match(r"^(?:sk|rk)_(live|test)_", incident.credential_hint or "")
+        if mode and f"_{mode.group(1)}_" not in reader:
+            raise HTTPException(status_code=422, detail="The configured Stripe reader key uses a different live/test mode from the detected key.")
+
     # Pick the right credential for collection:
     # AWS uses access_key_id; GCP/Azure use principal_id (email / client ID)
     if platform == "aws":
@@ -447,7 +560,7 @@ def _queue_incident_refresh(
         # The leaked Stripe key is never stored, so a refresh reads the account
         # through the configured key.
         "stripe": "Stripe Events query started using STRIPE_API_KEY.",
-        "twilio": "Twilio Messages and Calls query started.",
+        "twilio": "Twilio Messages, Calls and Monitor Events query started.",
     }.get(platform, "Log query started.")
 
     if user is not None and request is not None:
@@ -484,6 +597,50 @@ def refresh_incident_forensics(
     still delayed. Existing derived events/report output are cleared and the
     normal collector → classifier → scorer → reporter pipeline is queued again.
     """
+    return _queue_incident_refresh(incident_id, background_tasks, db, user, request)
+
+
+@router.post("/{incident_id}/twilio-account", response_model=RefreshResponse, status_code=202,
+             dependencies=[Depends(require_admin_or_lead), Depends(incident_access), Depends(local_operator)])
+def associate_twilio_account(incident_id: str, body: TwilioAccountRequest,
+                             background_tasks: BackgroundTasks, request: Request, db: Session = Depends(get_db),
+                             user: User = Depends(require_admin_or_lead)):
+    """Associate an operator-confirmed account with a detected key and collect its evidence."""
+    import config
+    incident = get_incident(db, incident_id)
+    if incident is None:
+        raise HTTPException(404, "Incident not found")
+    if incident.credential_type != "twilio_api_key" or incident.forensic_tier != 2:
+        raise HTTPException(400, "Only Twilio API key detections without an account can be associated")
+    if not re.fullmatch(r"AC[0-9a-fA-F]{32}", config.TWILIO_ACCOUNT_SID or "") or body.account_sid.lower() != config.TWILIO_ACCOUNT_SID.lower():
+        raise HTTPException(400, "Account SID must match the configured Twilio reader account")
+    incident.principal_id = body.account_sid
+    incident.forensic_tier = 1
+    incident.unavailable_reason = None
+    db.commit()
+    return _queue_incident_refresh(incident_id, background_tasks, db, user, request)
+
+
+@router.post("/{incident_id}/azure-application", response_model=RefreshResponse, status_code=202,
+             dependencies=[Depends(require_admin_or_lead), Depends(incident_access), Depends(local_operator)])
+def associate_azure_application(incident_id: str, body: AzureApplicationRequest,
+                                background_tasks: BackgroundTasks, request: Request,
+                                db: Session = Depends(get_db), user: User = Depends(require_admin_or_lead)):
+    """Collect application activity after an operator identifies the owning app."""
+    incident = get_incident(db, incident_id)
+    if incident is None:
+        raise HTTPException(404, "Incident not found")
+    if incident.credential_type != "azure_client_secret" or incident.forensic_tier != 2:
+        raise HTTPException(400, "Only Azure client secret detections without an application can be associated")
+    import config
+    if not all((config.AZURE_TENANT_ID, config.AZURE_CLIENT_ID, config.AZURE_CLIENT_SECRET, config.AZURE_SUBSCRIPTION_ID)):
+        raise HTTPException(422, "Configure the Azure Activity Log reader on the backend before collecting activity")
+    incident.principal_id = str(body.client_id)
+    incident.forensic_tier = 1
+    incident.unavailable_reason = None
+    record(db, user, 'incident.azure_application_associated', request, project_id=incident.project_id,
+           incident_id=incident.incident_id, detail={'client_id': str(body.client_id)})
+    db.commit()
     return _queue_incident_refresh(incident_id, background_tasks, db, user, request)
 
 

@@ -93,7 +93,7 @@ PLATFORM_PROFILES: dict[str, _PlatformProfile] = {
         name="Stripe",
         audit_log="Stripe Events",
         blind_spot=(
-            "Stripe Events record state changes only — charges, refunds, payouts, account changes. Reading customer or payment records creates no event, so data that was only viewed or exported does not appear. Events also cover the whole account, so some may be the owner's own legitimate activity."
+            "Stripe Events cover account activity, not activity attributed to this key. They record state changes, not read-only access, and the API only returns events from the last 30 days. An empty timeline does not prove the key was unused."
         ),
         identity_term="secret API key",
         vocabulary=(
@@ -108,9 +108,9 @@ PLATFORM_PROFILES: dict[str, _PlatformProfile] = {
     ),
     "twilio": _PlatformProfile(
         name="Twilio",
-        audit_log="Twilio Messages and Calls logs",
+        audit_log="Twilio Messages, Calls and Monitor Events",
         blind_spot=(
-            "Twilio lists messages sent and calls placed, but reading message history leaves no record, so one-time passcodes or personal data in past messages may have been viewed without trace. Account configuration changes are not covered either."
+            "Twilio Messages and Calls show account activity, not proof of use by a particular key. Monitor Events cover supported administrative changes. Reads of message history may leave no record; log permissions and retention limit coverage."
         ),
         identity_term="Account SID",
         vocabulary=(

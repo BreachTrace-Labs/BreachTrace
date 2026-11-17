@@ -130,7 +130,7 @@ export const PLATFORM_META: Record<Platform, PlatformMeta> = {
   },
   twilio: {
     label: 'Twilio',
-    auditLog: 'Messages & Calls',
+    auditLog: 'Messages, Calls & Monitor Events',
     color: 'var(--color-platform-twilio)',
     identityLabel: 'Account SID',
   },
@@ -215,6 +215,7 @@ const CREDENTIAL_TYPE_TO_PLATFORM: Record<string, Platform> = {
   azure_storage_connection: 'azure',
   stripe_secret_key: 'stripe',
   twilio_account_sid: 'twilio',
+  twilio_api_key: 'twilio',
   github_pat: 'github',
   slack_webhook: 'slack',
   slack_token: 'slack',

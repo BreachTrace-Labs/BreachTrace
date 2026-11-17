@@ -24,10 +24,9 @@ export interface ForensicEvent {
  * One costed finding on an incident. Mirrors `FinancialImpactLine` in
  * backend/scorer/severity.py.
  *
- * `actual` is the field that carries the weight: it is true only where money
- * demonstrably moved (Stripe transactions). Every other platform is an
- * order-of-magnitude estimate from public list prices, and the panel must not
- * present the two with the same confidence.
+ * `actual` marks a provider-reported amount, including Stripe transactions and
+ * Twilio resource charges. Account charges do not attribute an action to a
+ * particular credential. Other amounts may be estimates from list prices.
  */
 export interface FinancialImpactLine {
   platform: string
@@ -79,6 +78,8 @@ export interface IncidentRecord {
   report_text: string | null
   /** Who wrote the report prose. The facts and checklist are the same either way. */
   report_source?: ReportSource | null
+  collection_status?: string | null
+  collection_error?: string | null
   remediation_steps: string[]
   gdpr_flag: boolean
   estimated_financial_impact: string | null

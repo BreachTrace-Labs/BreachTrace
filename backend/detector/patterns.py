@@ -336,6 +336,11 @@ AZURE_CLIENT_SECRET_PATTERN = re.compile(r'[A-Za-z0-9._~-]{2,8}~[A-Za-z0-9._~-]{
 AZURE_CLIENT_SECRET_CONTEXT_KEYWORDS = (
     'client_secret', 'clientsecret', 'azure_client_secret', 'password',
 )
+# Scenario fixtures label generated Azure credentials as AZ-RECON-01,
+# AZ-DATA-01, etc. Recognize that explicit Azure-prefixed label when it is near
+# an Azure-shaped client secret, while keeping the tilde secret signature as
+# the required value pattern.
+AZURE_SCENARIO_SECRET_LABEL = re.compile(r'\bAZ-[A-Z0-9]+(?:-[A-Z0-9]+)*-\d{2}\b', re.IGNORECASE)
 AZURE_CONN_STRING_PATTERN = re.compile(
     r'DefaultEndpointsProtocol=https;AccountName=[^;]+;AccountKey=[A-Za-z0-9+/=]{64,};'
 )
@@ -429,7 +434,8 @@ def find_azure_credentials(
 
             context = _context_window(lines, i, AZURE_CONTEXT_RADIUS).lower()
 
-            if not any(kw in context for kw in AZURE_CLIENT_SECRET_CONTEXT_KEYWORDS):
+            if (not any(kw in context for kw in AZURE_CLIENT_SECRET_CONTEXT_KEYWORDS)
+                    and not AZURE_SCENARIO_SECRET_LABEL.search(context)):
                 continue
 
             seen.add(secret.lower())
@@ -474,7 +480,8 @@ TIER_DETECTION_ONLY = 2
 # ── Tier 1 ────────────────────────────────────────────────────────────────────
 # Published bound is 20-30; we required 24+, missing shorter live keys.
 STRIPE_SECRET_KEY_PATTERN = re.compile(r"\b((?:sk|rk)_(?:live|test)_[0-9a-zA-Z]{20,})\b")
-TWILIO_ACCOUNT_SID_PATTERN = re.compile(r"\b(AC[0-9a-f]{32})\b")
+TWILIO_ACCOUNT_SID_PATTERN = re.compile(r"\b(AC[0-9a-fA-F]{32})\b")
+TWILIO_API_KEY_SID_PATTERN = re.compile(r"\b(SK[0-9a-fA-F]{32})\b")
 TWILIO_AUTH_TOKEN_PATTERN = re.compile(r"(?<![0-9a-zA-Z])([0-9a-f]{32})(?![0-9a-zA-Z])")
 TWILIO_CONTEXT_KEYWORDS = ("twilio", "auth_token", "authtoken", "account_sid", "accountsid")
 
@@ -686,6 +693,34 @@ def _find_twilio_credentials(
                 )
             )
 
+    # API-key SIDs identify a key, not its owning account. Only associate an
+    # account when exactly one Account SID appears in the same file/hunk context.
+    # Never use the leaked secret for collection or persist it in the match.
+    for index, line in enumerate(lines):
+        if not _is_eligible(index, candidate_lines) or "SK" not in line:
+            continue
+        context = _context_window(lines, index, SECRET_CONTEXT_RADIUS)
+        lower = context.lower()
+        if not (any(word in lower for word in ("twilio", "api_key", "apikey", "api key"))
+                or ("sid" in lower and "secret" in lower)):
+            continue
+        for found in TWILIO_API_KEY_SID_PATTERN.finditer(line):
+            key_sid = found.group(1)
+            if key_sid in seen or _is_placeholder(key_sid):
+                continue
+            seen.add(key_sid)
+            accounts = set(TWILIO_ACCOUNT_SID_PATTERN.findall(context))
+            account = next(iter(accounts)) if len(accounts) == 1 else None
+            matches.append(SaaSCredentialMatch(
+                credential_type="twilio_api_key", platform="twilio", principal=account,
+                credential_hint=mask_secret(key_sid),
+                forensic_tier=TIER_FORENSIC if account else TIER_DETECTION_ONLY,
+                unavailable_reason=None if account else (
+                    "Twilio API key SID detected without an unambiguous associated Account SID. "
+                    "Identify the owning account and review its activity; a key SID alone does not identify it."
+                ),
+                raw_match=f"{mask_secret(key_sid)} @ line {index + 1}", line_number=index + 1,
+            ))
     return matches
 
 

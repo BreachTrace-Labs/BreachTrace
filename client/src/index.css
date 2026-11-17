@@ -126,6 +126,16 @@
     -moz-osx-font-smoothing: grayscale;
   }
 
+  input:focus-visible, select:focus-visible, textarea:focus-visible {
+    outline: 2px solid var(--color-ring);
+    outline-offset: 2px;
+  }
+
+  select option {
+    background-color: var(--color-card);
+    color: var(--color-card-foreground);
+  }
+
   .font-mono {
     font-family: var(--font-mono) !important;
   }

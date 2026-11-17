@@ -12,7 +12,7 @@ type Config = {
 }
 
 const levels = ['low', 'medium', 'high', 'critical']
-const input = 'border rounded p-2 bg-transparent w-full'
+const input = 'min-w-0 w-full rounded-md border bg-transparent p-2 text-sm'
 const errorMessage = (error: unknown) => {
   const detail = (error as { response?: { data?: { detail?: unknown } } }).response?.data?.detail
   return typeof detail === 'string' ? detail : 'Could not update notification settings.'
@@ -23,6 +23,7 @@ export default function ProjectNotifications({ projectId, projectName }: { proje
   const [smtpReady, setSmtpReady] = useState(false)
   const [channel, setChannel] = useState<'email' | 'slack'>('email')
   const [target, setTarget] = useState('')
+  const [replacementTargets, setReplacementTargets] = useState<Record<string, string>>({})
   const [severity, setSeverity] = useState('low')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
@@ -54,7 +55,7 @@ export default function ProjectNotifications({ projectId, projectName }: { proje
     }, 'Notification destination added.')
   }
 
-  return <section className="border rounded p-5 space-y-4" aria-label={`Notifications for ${projectName}`}>
+  return <section className="rounded-lg border bg-card p-5 space-y-4" aria-label={`Notifications for ${projectName}`}>
     <div><h2 className="font-semibold">Notifications · {projectName}</h2>
       <p className="text-sm text-muted-foreground">Send alerts when a new incident is processed. Severity filters use the forensic score.</p></div>
     {!smtpReady && <p className="text-sm border rounded p-3">SMTP is not configured on the backend. Email notifications and welcome emails will not be delivered until SMTP_HOST and SMTP_FROM are set.</p>}
@@ -70,9 +71,9 @@ export default function ProjectNotifications({ projectId, projectName }: { proje
         </label>
         <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={item.enabled} disabled={busy}
           onChange={e => void save(() => realClient.put(`/projects/${projectId}/notifications/${item.id}`, { enabled: e.target.checked }), e.target.checked ? 'Notification enabled.' : 'Notification disabled.')} />Enabled</label>
-        {item.channel === 'slack' && <form className="flex gap-2 w-full" onSubmit={e => { e.preventDefault(); void save(async () => { await realClient.put(`/projects/${projectId}/notifications/${item.id}`, { target }); setTarget('') }, 'Slack webhook replaced.') }}>
-          <input className={input} type="url" aria-label="Replace Slack webhook URL" placeholder="Replace Slack webhook URL" value={target} onChange={e => setTarget(e.target.value)} />
-          <Button type="submit" variant="outline" disabled={busy || !target}>Replace</Button>
+        {item.channel === 'slack' && <form className="flex flex-wrap gap-2 w-full sm:flex-nowrap" onSubmit={e => { e.preventDefault(); void save(async () => { await realClient.put(`/projects/${projectId}/notifications/${item.id}`, { target: replacementTargets[item.id] }); setReplacementTargets(previous => ({ ...previous, [item.id]: '' })) }, 'Slack webhook replaced.') }}>
+          <input className={`${input} min-w-0 flex-1`} type="url" aria-label="Replace Slack webhook URL" placeholder="Replace Slack webhook URL" value={replacementTargets[item.id] ?? ''} onChange={e => setReplacementTargets(previous => ({ ...previous, [item.id]: e.target.value }))} />
+          <Button type="submit" variant="outline" disabled={busy || !replacementTargets[item.id]}>Replace</Button>
         </form>}
         <Button size="sm" variant="outline" disabled={busy} onClick={() => { if (window.confirm(`Remove this ${item.channel} notification destination?`)) void save(() => realClient.delete(`/projects/${projectId}/notifications/${item.id}`), 'Notification destination removed.') }}>Remove</Button>
       </div>)}

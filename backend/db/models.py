@@ -62,6 +62,7 @@ CREDENTIAL_TYPE_TO_PLATFORM: dict[str, str] = {
     "azure_storage_connection": "azure",
     "stripe_secret_key": "stripe",
     "twilio_account_sid": "twilio",
+    "twilio_api_key": "twilio",
     "github_pat": "github",
     "slack_webhook": "slack",
     "slack_token": "slack",

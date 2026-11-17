@@ -244,6 +244,9 @@ const IncidentDetail: React.FC = () => {
   const [error, setError] = useState<string | null>(null)
   const [refreshing, setRefreshing] = useState(false)
   const [refreshNotice, setRefreshNotice] = useState<string | null>(null)
+  const [twilioAccount, setTwilioAccount] = useState('')
+  const [azureClientId, setAzureClientId] = useState('')
+  const [azureOwnershipConfirmed, setAzureOwnershipConfirmed] = useState(false)
   const incidentStatus = incident?.status
 
   useEffect(() => {
@@ -261,6 +264,7 @@ const IncidentDetail: React.FC = () => {
       }
     }
     load()
+
   }, [id])
 
   useEffect(() => {
@@ -276,6 +280,7 @@ const IncidentDetail: React.FC = () => {
 
   const handleRefreshForensics = async () => {
     if (!id || refreshing) return
+    if (incident?.credential_type === 'stripe_secret_key' && !window.confirm('Confirm that the Stripe reader key configured on the backend belongs to the same account as this exposed key. Continue?')) return
     setRefreshing(true)
     setRefreshNotice(null)
     try {
@@ -285,8 +290,42 @@ const IncidentDetail: React.FC = () => {
 
       const detail = await client.get<IncidentRecord>(`/incidents/${id}`)
       setIncident(detail.data)
+    } catch (error) {
+      const detail = (error as { response?: { data?: { detail?: unknown } } }).response?.data?.detail
+      setRefreshNotice(typeof detail === 'string' ? detail : 'Unable to start forensic refresh. Check the backend logs and try again.')
+    } finally {
+      setRefreshing(false)
+    }
+  }
+
+  const handleTwilioAccount = async () => {
+    if (!id || refreshing) return
+    setRefreshing(true)
+    setRefreshNotice(null)
+    try {
+      await client.post(`/incidents/${id}/twilio-account`, { account_sid: twilioAccount.trim() })
+      setRefreshNotice('Twilio account associated. Collection started.')
+      const detail = await client.get<IncidentRecord>(`/incidents/${id}`)
+      setIncident(detail.data)
     } catch {
-      setRefreshNotice('Unable to start forensic refresh. Check the backend logs and try again.')
+      setRefreshNotice('Could not start collection. Check that the Account SID matches the configured Twilio reader account.')
+    } finally {
+      setRefreshing(false)
+    }
+  }
+
+  const handleAzureApplication = async () => {
+    if (!id || refreshing || !azureOwnershipConfirmed) return
+    setRefreshing(true)
+    setRefreshNotice(null)
+    try {
+      await client.post(`/incidents/${id}/azure-application`, { client_id: azureClientId.trim() })
+      setRefreshNotice('Azure application associated. Activity Log collection started.')
+      const detail = await client.get<IncidentRecord>(`/incidents/${id}`)
+      setIncident(detail.data)
+    } catch (error) {
+      const detail = (error as { response?: { data?: { detail?: unknown } } }).response?.data?.detail
+      setRefreshNotice(typeof detail === 'string' ? detail : 'Could not start collection. Check the application ID and Azure reader configuration.')
     } finally {
       setRefreshing(false)
     }
@@ -302,7 +341,6 @@ const IncidentDetail: React.FC = () => {
       URL.revokeObjectURL(url)
     } catch { setRefreshNotice('Could not download the report. Please try again.') }
   }
-
 
   if (loading) {
     return (
@@ -339,6 +377,8 @@ const IncidentDetail: React.FC = () => {
   const platform = derivePlatform(incident)
   const platformMeta = PLATFORM_META[platform]
   const identity = platformIdentity(incident, incident.events ?? [])
+  const exposureTimestamp = new Date(incident.exposure_start).getTime()
+  const exposureEvents = incident.events.filter(event => new Date(event.timestamp).getTime() >= exposureTimestamp)
 
   return (
     <div className="max-w-7xl mx-auto space-y-8 pb-12 animate-in fade-in duration-500">
@@ -582,10 +622,40 @@ const IncidentDetail: React.FC = () => {
                 </div>
                 Forensic Timeline
               </h2>
-              <ForensicTimeline events={incident.events} />
+              <p className="mb-4 text-sm text-muted-foreground">Shows up to 30 days of available provider history. Events before detected exposure are context and are excluded from incident severity, impact and report calculations. Refresh logs to retrieve recent history.</p>
+              {incident.credential_type === 'stripe_secret_key' && <div className="mb-4 space-y-2 text-sm text-muted-foreground">
+                <p>BreachTrace queries Stripe Events directly through the backend, using up to the Events API’s 30-day retention window. These records show account-level state changes, not every API request, and do not identify which key caused them. Read-only requests are not included.</p>
+              </div>}
+              {(incident.credential_type === 'azure_service_principal' || incident.credential_type === 'azure_client_secret') && <p className="mb-4 text-sm text-muted-foreground">Azure Activity Log events are matched to the application identity. They do not identify which client secret was used, and Activity Log does not include every data-plane action.</p>}
+              {incident.status === 'error' && <p role="alert" className="mb-4 text-sm text-destructive">{incident.collection_error || 'Forensic collection failed. Check your provider access and refresh the logs.'}</p>}
+              <ForensicTimeline events={incident.events} exposureStart={incident.exposure_start} />
             </div>
           ) : (
-            <ForensicsUnavailable incident={incident} />
+            <>
+              <ForensicsUnavailable incident={incident} />
+              {canManage && !USE_MOCK && !synthetic && incident.credential_type === 'azure_client_secret' && <form
+                className="border rounded-sm p-5 space-y-3"
+                onSubmit={e => { e.preventDefault(); void handleAzureApplication() }}>
+                <h3 className="font-semibold">Associate Azure application</h3>
+                <p className="text-sm text-muted-foreground">Enter the application (client) ID that owns this secret. The backend reader needs Activity Log access to the correct subscription. Activity is associated with the application, not a specific secret.</p>
+                <label className="block text-sm">Application (client) ID
+                  <input className="block mt-1 w-full border rounded p-2 bg-transparent font-mono" value={azureClientId}
+                    onChange={e => setAzureClientId(e.target.value)} pattern="[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}" required placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" />
+                </label>
+                <label className="flex items-start gap-2 text-sm"><input type="checkbox" checked={azureOwnershipConfirmed} onChange={e => setAzureOwnershipConfirmed(e.target.checked)} required /> I confirmed this secret belongs to this application.</label>
+                <Button disabled={refreshing || !azureOwnershipConfirmed} type="submit">{refreshing ? 'Starting…' : 'Collect Azure activity'}</Button>
+              </form>}
+              {canManage && !USE_MOCK && incident.credential_type === 'twilio_api_key' && <form
+                className="border rounded-sm p-5 space-y-3"
+                onSubmit={e => { e.preventDefault(); void handleTwilioAccount() }}>
+                <p className="text-sm">Confirm the owning Twilio Account SID to collect account activity. It must match the reader account configured on the backend.</p>
+                <label className="block text-sm">Twilio Account SID
+                  <input className="block mt-1 w-full border rounded p-2 bg-transparent font-mono" value={twilioAccount}
+                    onChange={e => setTwilioAccount(e.target.value)} pattern="AC[0-9a-fA-F]{32}" required placeholder="AC…" />
+                </label>
+                <Button disabled={refreshing} type="submit">{refreshing ? 'Starting…' : 'Collect Twilio activity'}</Button>
+              </form>}
+            </>
           )}
 
         </div>
@@ -598,9 +668,9 @@ const IncidentDetail: React.FC = () => {
                 when there is nothing to report. */}
             {forensic ? <>
               <FinancialImpactPanel incident={incident} />
-              <BlastRadiusSummary incident={incident} />
-              <SourceIPs events={incident.events} />
-              <AffectedResources events={incident.events} />
+              <BlastRadiusSummary incident={{...incident, events: exposureEvents}} />
+              <SourceIPs events={exposureEvents} />
+              <AffectedResources events={exposureEvents} />
             </> : <div className="rounded-sm border bg-card p-5 space-y-3 text-sm">
               <h2 className="font-semibold">Detection evidence</h2>
               <p>Credential candidate found · validity not verified</p>
@@ -614,9 +684,9 @@ const IncidentDetail: React.FC = () => {
       </div>
 
       {/* Event Analytics */}
-      {incident.events.length > 0 && (
+      {exposureEvents.length > 0 && (
         <div className="mt-8">
-          <EventAnalytics events={incident.events} />
+          <EventAnalytics events={exposureEvents} />
         </div>
       )}
 

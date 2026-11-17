@@ -7,6 +7,7 @@ import { Clock } from 'lucide-react'
 
 interface Props {
   events: ForensicEvent[]
+  exposureStart?: string
 }
 
 const SEV_COLOR: Record<number, string> = {
@@ -91,7 +92,8 @@ type EnrichedEvent = ForensicEvent & {
   row: string
 }
 
-const ForensicTimeline: React.FC<Props> = ({ events }) => {
+const ForensicTimeline: React.FC<Props> = ({ events, exposureStart }) => {
+  const exposureMs = exposureStart ? new Date(exposureStart).getTime() : Number.NaN
   const svgRef      = useRef<SVGSVGElement | null>(null)
   const wrapperRef  = useRef<HTMLDivElement | null>(null)
   const tooltipRef  = useRef<HTMLDivElement | null>(null)
@@ -110,7 +112,7 @@ const ForensicTimeline: React.FC<Props> = ({ events }) => {
   /* Platforms present, in a stable order, for the legend and axis grouping */
   const platformsPresent = useMemo<Platform[]>(() => {
     const seen = new Set(data.map(d => d.plat))
-    return (['aws', 'gcp', 'azure'] as Platform[]).filter(p => seen.has(p))
+    return (['aws', 'gcp', 'azure', 'stripe', 'twilio'] as Platform[]).filter(p => seen.has(p))
   }, [data])
 
   const isMultiPlatform = platformsPresent.length > 1
@@ -562,6 +564,12 @@ const ForensicTimeline: React.FC<Props> = ({ events }) => {
                             >
                               {e.api_action}
                             </span>
+                            {e.event_source?.includes('request-log') && (
+                              <span className="shrink-0 text-[10px] font-semibold px-1.5 py-0.5 rounded border text-muted-foreground">Request log</span>
+                            )}
+                            {Number.isFinite(exposureMs) && e.ts.getTime() < exposureMs && (
+                              <span className="shrink-0 text-[10px] font-semibold px-1.5 py-0.5 rounded border text-muted-foreground">Before detected exposure</span>
+                            )}
                             {catLabel && (
                               <span
                                 className="shrink-0 text-[10px] font-bold px-1.5 py-0.5 rounded uppercase tracking-wider"

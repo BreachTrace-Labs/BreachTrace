@@ -29,6 +29,7 @@ _CREDENTIAL_NAMES = {
     "azure_storage_connection": "storage connection string",
     "stripe_secret_key": "secret API key",
     "twilio_account_sid": "account credential",
+    "twilio_api_key": "API key",
 }
 
 
@@ -51,11 +52,11 @@ def deterministic_sections(facts: dict) -> dict:
     if facts["event_count"] == 0:
         summary = (
             f"{_what(facts)} was exposed in a public repository for {duration}. "
-            f"No activity was recorded in {audit_log} during the investigation window. "
+            f"No activity was recorded in {audit_log} after the detected exposure in the collected window. "
             "This does not prove the credential went unused, so treat it as compromised."
         )
         narrative = [
-            f"No events were recorded in {audit_log}. {facts.get('blind_spot', '')}".strip()
+            f"No events were recorded in {audit_log} after the detected exposure in the collected window. {facts.get('blind_spot', '')}".strip()
         ]
         impact = (
             "No financial or data impact could be measured from the audit log. "
@@ -96,6 +97,8 @@ def deterministic_sections(facts: dict) -> dict:
     impact_parts.extend(facts["compliance"])
     if facts["event_count"] and not facts["source_ips"]:
         impact_parts.append(f"{audit_log} does not record source IP addresses for this activity.")
+    if facts.get("blind_spot"):
+        impact_parts.append(facts["blind_spot"])
 
     return {
         "executive_summary": summary,

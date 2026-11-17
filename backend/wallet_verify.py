@@ -3,7 +3,7 @@
 A successful check confirms only the specific operation tested, not every
 permission needed by a future forensic collection.
 """
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import json
 
 from crypto import decrypt_blob
@@ -30,11 +30,14 @@ def _check(provider: str, credentials: dict) -> None:
             client.close()
     elif provider == 'azure':
         from azure.identity import ClientSecretCredential
-        from azure.mgmt.resource.resources import ResourceManagementClient
+        from azure.mgmt.monitor import MonitorManagementClient
         auth = ClientSecretCredential(credentials['tenant_id'], credentials['client_id'], credentials['client_secret'])
-        client = ResourceManagementClient(auth, credentials['subscription_id'])
+        client = MonitorManagementClient(auth, credentials['subscription_id'])
         try:
-            next(iter(client.resource_groups.list()), None)
+            end = datetime.now(timezone.utc)
+            start = end - timedelta(hours=1)
+            query = f"eventTimestamp ge '{start.isoformat()}' and eventTimestamp le '{end.isoformat()}'"
+            next(iter(client.activity_logs.list(filter=query)), None)
         finally:
             client.close()
             auth.close()
@@ -48,8 +51,11 @@ def _check(provider: str, credentials: dict) -> None:
                                        auth=(credentials['api_key'], ''), timeout=(5, 15), allow_redirects=False)
             else:
                 sid = credentials['account_sid']
-                response = session.get(f'https://api.twilio.com/2010-04-01/Accounts/{sid}.json',
-                                       auth=(sid, credentials['auth_token']), timeout=(5, 15), allow_redirects=False)
+                username = credentials.get('api_key_sid', sid)
+                secret = credentials.get('api_key_secret') or credentials.get('auth_token', '')
+                response = session.get(f'https://api.twilio.com/2010-04-01/Accounts/{sid}/Messages.json',
+                                       params={'PageSize': 1}, auth=(username, secret),
+                                       timeout=(5, 15), allow_redirects=False)
             if response.status_code in (401, 403):
                 raise PermissionError('Provider rejected the credential or permission')
             if response.status_code < 200 or response.status_code >= 300:
@@ -73,9 +79,15 @@ def verify_entry(entry_id: str, expected_iv: str, actor_id: str | None = None) -
             status, error = 'ok', None
         except PermissionError:
             status, error = 'error', 'Provider rejected authentication or permission for this check.'
-        except Exception:
+        except Exception as exc:
             # Provider exceptions may contain secrets or response bodies: do not log them.
-            status, error = 'error', 'Verification failed. Check credentials, permissions, and provider connectivity.'
+            status = 'error'
+            if provider == 'azure' and type(exc).__name__ == 'ClientAuthenticationError':
+                error = 'Azure authentication failed. Use the application (client) ID and its matching client secret; check the tenant ID.'
+            elif provider == 'azure' and getattr(exc, 'status_code', None) == 403:
+                error = 'Azure denied Activity Log access. Check the subscription ID and the reader’s permissions.'
+            else:
+                error = 'Verification failed. Check credentials, permissions, and provider connectivity.'
         # Reload conditionally: updates/deletion while the provider call was in flight win.
         updated = db.query(CredentialWalletEntry).filter_by(id=entry_id, iv=expected_iv).update({
             'verification_status': status, 'verification_error': error,

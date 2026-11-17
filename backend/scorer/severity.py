@@ -151,9 +151,9 @@ class FinancialImpactLine:
     never drift because one is derived from the other.
 
     The distinction that matters most is ``actual``. Stripe events carry a real
-    transacted amount, so that figure is money that actually moved. Every other
-    platform is an order-of-magnitude estimate from public list prices. A report
-    that blurs the two is worse than one that omits the estimate entirely.
+    transacted amount. Twilio may supply a recorded per-resource charge; neither
+    that charge nor the surrounding event is proof of use by a particular key.
+    Other amounts may be estimates from public list prices.
     """
 
     platform: str            # aws | gcp | azure | stripe | twilio
@@ -442,7 +442,8 @@ def _azure_impacts(events: list[ForensicEvent]) -> list[FinancialImpactLine]:
 _STRIPE_CHARGE_EVENTS = frozenset({
     "charge.succeeded", "charge.captured", "payment_intent.succeeded",
 })
-_STRIPE_PAYOUT_EVENTS = frozenset({"payout.created", "payout.paid"})
+_STRIPE_PAYOUT_EVENTS = frozenset({"payout.paid"})
+_STRIPE_ZERO_DECIMAL = frozenset({"BIF", "CLP", "DJF", "GNF", "JPY", "KMF", "KRW", "MGA", "PYG", "RWF", "VND", "VUV", "XAF", "XOF", "XPF"})
 
 
 def _stripe_object(event: ForensicEvent) -> dict | None:
@@ -456,11 +457,12 @@ def _stripe_object(event: ForensicEvent) -> dict | None:
 
 
 def _minor_units(obj: dict, *fields: str) -> float | None:
-    """First numeric amount among ``fields``, converted from minor units."""
+    """First numeric Stripe amount converted to the currency's major units."""
     for field in fields:
         value = obj.get(field)
         if isinstance(value, (int, float)) and not isinstance(value, bool):
-            return float(value) / 100.0
+            divisor = 1 if str(obj.get("currency") or "").upper() in _STRIPE_ZERO_DECIMAL else 100
+            return float(value) / divisor
     return None
 
 
@@ -583,6 +585,7 @@ def _twilio_impacts(events: list[ForensicEvent]) -> list[FinancialImpactLine]:
             e for e in events
             if (e.api_action or "").lower().startswith(prefix)
             and not (e.api_action or "").lower().endswith(_TWILIO_NON_BILLABLE_SUFFIXES)
+            and getattr(e, "event_source", None) != "monitor.twilio.com"
         ]
 
     message_events = _billable("message.")
@@ -590,24 +593,29 @@ def _twilio_impacts(events: list[ForensicEvent]) -> list[FinancialImpactLine]:
     actions = [(e.api_action or "").lower() for e in events]
     numbers = sum(1 for a in actions if "number" in a and ("purchase" in a or "create" in a))
 
-    if message_events:
-        messages = len(message_events)
-        cost = _twilio_cost(message_events, _TWILIO_SMS_COST)
-        impacts.append(FinancialImpactLine(
-            platform="twilio", kind="messaging", label="Twilio",
-            text=f"Twilio: {messages} message(s) at ${cost:.2f}",
-            amount=cost, currency="USD", unit=None,
-            quantity=messages, actual=False,
-        ))
-    if call_events:
-        calls = len(call_events)
-        cost = _twilio_cost(call_events, _TWILIO_CALL_COST)
-        impacts.append(FinancialImpactLine(
-            platform="twilio", kind="messaging", label="Twilio",
-            text=f"Twilio: {calls} call(s) at ${cost:.2f}",
-            amount=cost, currency="USD", unit=None,
-            quantity=calls, actual=False,
-        ))
+    for label, group in (("message", message_events), ("call", call_events)):
+        priced: dict[str, list[float]] = {}
+        pending = 0
+        for event in group:
+            raw = getattr(event, "raw_data", None) or {}
+            price, unit = raw.get("price"), raw.get("price_unit")
+            if isinstance(price, (int, float)) and not isinstance(price, bool) and isinstance(unit, str) and len(unit) == 3 and unit.isalpha():
+                priced.setdefault(unit.upper(), []).append(abs(float(price)))
+            else:
+                pending += 1
+        for currency, amounts in sorted(priced.items()):
+            total = sum(amounts)
+            impacts.append(FinancialImpactLine(
+                platform="twilio", kind="messaging", label="Twilio",
+                text=f"Twilio: {len(amounts)} {label}(s) with recorded charges of {currency} {total:.4f}",
+                amount=total, currency=currency, unit=None, quantity=len(amounts), actual=True,
+            ))
+        if pending:
+            impacts.append(FinancialImpactLine(
+                platform="twilio", kind="messaging", label="Twilio",
+                text=f"Twilio: {pending} {label}(s) with price unavailable or pending",
+                amount=None, currency=None, unit=None, quantity=pending, actual=False,
+            ))
     if numbers > 0:
         cost = numbers * _TWILIO_NUMBER_MONTHLY
         impacts.append(FinancialImpactLine(

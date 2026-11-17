@@ -13,7 +13,7 @@ invisible to the per-module tests:
   * one Stripe payment was counted once per event Stripe emits for it;
   * the report used the AWS profile (CloudTrail, `aws iam delete-access-key`).
 """
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import pytest
 from sqlalchemy import create_engine
@@ -106,7 +106,7 @@ def _twilio_message(status="sent", price=0.0079):
         event_source="api.twilio.com",
         affected_resource="+15551234567",
         resource_type="message",
-        raw_data={"status": status, "price": price, "direction": "outbound-api"},
+        raw_data={"status": status, "price": price, "price_unit": "USD", "direction": "outbound-api"},
     )
 
 
@@ -247,6 +247,16 @@ def test_payout_is_its_own_line_not_a_charge():
     assert compute_financial_impact(events) == "Stripe: 900.00 USD paid out (1 payout(s))"
 
 
+def test_pending_payout_is_not_reported_as_paid():
+    events = [_stripe("payout.created", {"id": "po_1", "object": "payout", "amount": 90000, "currency": "usd"})]
+    assert compute_financial_impact(events) == "No financial impact detected"
+
+
+def test_stripe_zero_decimal_currency_uses_whole_units():
+    events = [_stripe("charge.succeeded", {"id": "ch_1", "object": "charge", "amount": 1000, "currency": "jpy"})]
+    assert compute_financial_impact(events) == "Stripe: 1,000.00 JPY charged (1 transaction(s))"
+
+
 def test_dispute_is_not_a_new_charge():
     events = PAYMENT_EVENTS + [
         _stripe("charge.dispute.created", {"id": "dp_1", "object": "dispute", "amount": 1000, "charge": "ch_1", "currency": "usd"}),
@@ -256,8 +266,9 @@ def test_dispute_is_not_a_new_charge():
 
 def test_twilio_uses_billed_price_when_present():
     events = [_twilio_message(price=0.05)] * 10 + [_twilio_message(price=None)]
-    # 10 x $0.05 billed + 1 x $0.0079 estimate for the unpriced message.
-    assert compute_financial_impact(events) == "Twilio: 11 message(s) at $0.51"
+    # Recorded charges and pending prices remain separate.
+    assert compute_financial_impact(events) == ("Twilio: 10 message(s) with recorded charges of USD 0.5000. "
+                                                 "Twilio: 1 message(s) with price unavailable or pending")
 
 
 # ==========================================================================
@@ -318,5 +329,35 @@ def test_twilio_pipeline_end_to_end(session_factory, monkeypatch):
     assert stored.principal_id == TWILIO_SID   # an identifier, not the secret
     assert stored.overall_severity == 2        # Medium
     assert {e.impact_category for e in stored.events} == {"communication_abuse"}
-    assert stored.financial_impact == "Twilio: 3 message(s) at $0.02"
+    assert stored.financial_impact == "Twilio: 3 message(s) with recorded charges of USD 0.0237"
     assert "Twilio" in stored.report_text and "CloudTrail" not in stored.report_text
+
+
+@pytest.mark.parametrize('platform,credential_type', [
+    ('aws', 'aws_access_key'), ('gcp', 'gcp_service_account'),
+    ('azure', 'azure_service_principal'), ('stripe', 'stripe_secret_key'),
+    ('twilio', 'twilio_account'),
+])
+def test_history_window_keeps_pre_exposure_activity_out_of_incident_impact(session_factory, monkeypatch, platform, credential_type):
+    now = datetime.now(timezone.utc)
+    exposure = now - timedelta(hours=1)
+    historic = ForensicEvent(platform=platform, timestamp=now - timedelta(days=2),
+                             api_action='historical-only', event_source='provider.example',
+                             raw_data={})
+    windows = []
+    class Collector:
+        def collect(self, credential, start_time, end_time):
+            windows.append((start_time, end_time))
+            return [historic]
+    monkeypatch.setitem(pipeline._COLLECTOR_MAP, platform, Collector)
+    with session_factory() as db:
+        incident = create_incident(db, credential_type=credential_type, credential_hint='masked',
+                                   repo_url='https://github.com/example/repo', commit_hash='abc', exposure_start=exposure)
+        incident_id = incident.incident_id
+    pipeline.run_collection_pipeline(incident_id, 'reader-identifier', exposure, platform=platform)
+    with session_factory() as db:
+        stored = db.get(IncidentRecord, incident_id)
+        assert stored.status == 'complete' and len(stored.events) == 1
+        assert 'historical-only' not in stored.report_text
+        assert 'after the detected exposure' in stored.report_text
+    assert windows[0][1] - windows[0][0] == timedelta(days=30)

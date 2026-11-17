@@ -5,6 +5,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import Sequence
 
+from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from db.models import CollectionStatus, IncidentRecord
@@ -104,7 +105,9 @@ def reset_incident_for_refresh(db: Session, incident_id: str) -> IncidentRecord 
         return None
 
     db.query(ORMForensicEvent).filter(
-        ORMForensicEvent.incident_id == incident_id
+        ORMForensicEvent.incident_id == incident_id,
+        or_(ORMForensicEvent.event_source.is_(None),
+            ORMForensicEvent.event_source != "stripe-cli-request-log"),
     ).delete(synchronize_session=False)
 
     incident.status = "collecting"
