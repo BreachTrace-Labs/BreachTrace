@@ -11,7 +11,7 @@ import config
 config.validate_config()
 
 from auth import require_admin_or_lead  # noqa: E402
-from routers import assistant, auth, incidents, org, projects, repositories, research, settings, simulate, webhook  # noqa: E402 — must come after validate_config
+from routers import assistant, auth, incidents, org, projects, repositories, research, settings, simulate, wallet, webhook  # noqa: E402 — must come after validate_config
 
 app = FastAPI(
     title="BreachTrace",
@@ -34,6 +34,7 @@ app.include_router(webhook.router)
 app.include_router(auth.router)
 app.include_router(org.router)
 app.include_router(projects.router)
+app.include_router(wallet.router)
 # The CLI stream has its own ingest-token authentication. Existing routes are
 # admin/lead-only until their data is scoped to project memberships.
 if hasattr(incidents, "stream_router"):

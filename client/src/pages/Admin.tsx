@@ -3,6 +3,7 @@ import { realClient } from '@/api/client'
 import { useAuth } from '@/context/AuthContext'
 import { useProjects } from '@/context/ProjectContext'
 import { Button } from '@/components/ui/button'
+import ProjectWallet from '@/components/ProjectWallet'
 
 type Member = { id: string; email: string; full_name: string; role: string; is_active?: boolean }
 const input = 'border rounded p-2 bg-transparent w-full'
@@ -35,6 +36,7 @@ export default function Admin() {
         <input className={input} required placeholder="Project name" aria-label="Project name" value={name} onChange={e => setName(e.target.value)} /><input className={input} required type="url" placeholder="https://github.com/owner/repository" aria-label="Repository URL" value={repo} onChange={e => setRepo(e.target.value)} /><Button className="sm:col-span-2" type="submit">Create project</Button>
       </form>
     </section>
+    {selected && <ProjectWallet key={selected.id} projectId={selected.id} projectName={selected.name} />}
     {selected && <section className="border rounded p-5 space-y-4"><h2 className="font-semibold">Members · {selected.name}</h2>
       <form className="flex gap-2" onSubmit={e => { e.preventDefault(); void action(() => realClient.put(`/projects/${selected.id}`, { name: rename }), 'Project renamed.') }}><input className={input} aria-label="Project name" required value={rename} onChange={e => setRename(e.target.value)} /><Button>Rename</Button></form>
       {members.map(m => <div key={m.id} className="flex justify-between gap-3 items-center text-sm"><span>{m.full_name} · {m.email} · {m.role}</span><Button size="sm" variant="outline" onClick={() => { if (window.confirm(`Remove ${m.full_name} from this project?`)) void action(() => realClient.delete(`/projects/${selected.id}/members/${m.id}`), 'Member removed.') }}>Remove</Button></div>)}
