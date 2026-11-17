@@ -1,5 +1,5 @@
 import logging
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
@@ -10,7 +10,8 @@ import config
 
 config.validate_config()
 
-from routers import assistant, auth, incidents, repositories, research, settings, simulate, webhook  # noqa: E402 — must come after validate_config
+from auth import require_admin_or_lead  # noqa: E402
+from routers import assistant, auth, incidents, org, projects, repositories, research, settings, simulate, webhook  # noqa: E402 — must come after validate_config
 
 app = FastAPI(
     title="BreachTrace",
@@ -31,13 +32,19 @@ app.add_middleware(
 # ---------------------------------------------------------------------------
 app.include_router(webhook.router)
 app.include_router(auth.router)
-app.include_router(incidents.router)
-app.include_router(incidents.legacy_router)
-app.include_router(research.router)
-app.include_router(simulate.router)
-app.include_router(assistant.router)
-app.include_router(settings.router)
-app.include_router(repositories.router)
+app.include_router(org.router)
+app.include_router(projects.router)
+# The CLI stream has its own ingest-token authentication. Existing routes are
+# admin/lead-only until their data is scoped to project memberships.
+if hasattr(incidents, "stream_router"):
+    app.include_router(incidents.stream_router)
+app.include_router(incidents.router, dependencies=[Depends(require_admin_or_lead)])
+app.include_router(incidents.legacy_router, dependencies=[Depends(require_admin_or_lead)])
+app.include_router(research.router, dependencies=[Depends(require_admin_or_lead)])
+app.include_router(simulate.router, dependencies=[Depends(require_admin_or_lead)])
+app.include_router(assistant.router, dependencies=[Depends(require_admin_or_lead)])
+app.include_router(settings.router, dependencies=[Depends(require_admin_or_lead)])
+app.include_router(repositories.router, dependencies=[Depends(require_admin_or_lead)])
 
 
 @app.exception_handler(RequestValidationError)

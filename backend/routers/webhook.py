@@ -18,6 +18,7 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 import config
+from auth import require_admin_or_lead
 from db.crud import create_incident, finalize_non_forensic_incident, set_exposure_end
 from db.database import SessionLocal, get_db
 from detector.match_resolver import resolve_match
@@ -269,7 +270,7 @@ class RegisterRequest(BaseModel):
     webhook_url: str   # e.g. "http://localhost:8000/webhook/github" or ngrok URL
 
 
-@router.post("/register", status_code=200)
+@router.post("/register", status_code=200, dependencies=[Depends(require_admin_or_lead)])
 async def register_webhook(body: RegisterRequest):
     """
     Use the configured GITHUB_TOKEN to register (or confirm) a push webhook on
@@ -335,7 +336,7 @@ async def register_webhook(body: RegisterRequest):
     }
 
 
-@router.get("/info")
+@router.get("/info", dependencies=[Depends(require_admin_or_lead)])
 async def webhook_info(request: Request):
     """
     Return the webhook URL the frontend should display and offer to register.
