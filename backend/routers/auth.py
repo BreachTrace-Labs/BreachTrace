@@ -10,7 +10,8 @@ from sqlalchemy.orm import Session
 
 from auth import create_access_token, get_current_user, hash_password, verify_password
 from db.database import get_db
-from db.models import AuditLog, Organisation, User
+from db.models import Organisation, User
+from audit import record
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -32,11 +33,6 @@ def profile(user: User) -> dict:
     return {"id": user.id, "email": user.email, "full_name": user.full_name,
             "role": user.role, "organisation_id": user.organisation_id,
             "must_change_password": user.must_change_password}
-
-
-def audit(db: Session, user: User, action: str, request: Request) -> None:
-    db.add(AuditLog(organisation_id=user.organisation_id, actor_user_id=user.id,
-                    action=action, ip_address=request.client.host if request.client else None))
 
 
 @router.get("/setup-status")
@@ -76,7 +72,7 @@ def token(request: Request, form: OAuth2PasswordRequestForm = Depends(), db: Ses
         raise HTTPException(status_code=401, detail="Invalid credentials", headers={"WWW-Authenticate": "Bearer"})
     access_token = create_access_token(user.id)
     user.last_login_at = datetime.now(timezone.utc)
-    audit(db, user, "auth.login", request)
+    record(db, user, "auth.login", request)
     db.commit()
     return {"access_token": access_token, "token_type": "bearer", "user": profile(user)}
 
@@ -88,7 +84,7 @@ def me(user: User = Depends(get_current_user)):
 
 @router.post("/logout")
 def logout(request: Request, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
-    audit(db, user, "auth.logout", request)
+    record(db, user, "auth.logout", request)
     db.commit()
     return {"message": "Logged out"}
 
@@ -102,6 +98,6 @@ def change_password(body: PasswordChange, request: Request, user: User = Depends
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc))
     user.must_change_password = False
-    audit(db, user, "auth.password_changed", request)
+    record(db, user, "auth.password_changed", request)
     db.commit()
     return {"message": "Password changed"}

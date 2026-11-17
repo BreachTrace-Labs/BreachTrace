@@ -9,9 +9,14 @@ import threading
 import uuid
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
 from pydantic import BaseModel, Field, field_validator
+from sqlalchemy.orm import Session
 
+from audit import record
+from auth import require_admin_or_lead
+from db.database import get_db
+from db.models import User
 from repository_snapshot import repository_name, scan_github
 from routers.settings import local_operator
 
@@ -61,9 +66,17 @@ def run_scan(job_id: str):
 
 
 @router.post("/scan", status_code=202)
-def start_scan(body: ScanRequest, tasks: BackgroundTasks):
+def start_scan(body: ScanRequest, tasks: BackgroundTasks, request: Request,
+               user: User = Depends(require_admin_or_lead), db: Session = Depends(get_db)):
     if not _slots.acquire(blocking=False):
         raise HTTPException(409, "A repository scan is already running")
+    try:
+        record(db, user, 'snapshot.started', request, detail={'repository': repository_name(body.repo_url)})
+        db.commit()
+    except Exception:
+        db.rollback()
+        _slots.release()
+        raise
     job_id = str(uuid.uuid4())
     with _lock:
         # Bound process memory. Evidence persists under data/repository-scans.

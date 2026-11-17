@@ -34,7 +34,7 @@ from detector.scanner import scan
 from pipeline import run_collection_pipeline
 from rag.index import index_incident_in_background
 from window.calculator import is_key_revoked, record_exposure_start
-from routers.org import record
+from audit import record
 
 logger = logging.getLogger(__name__)
 

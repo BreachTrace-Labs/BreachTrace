@@ -326,6 +326,7 @@ const Dashboard: React.FC = () => {
   const projectId = selected?.id
   const [incidents, setIncidents] = useState<IncidentSummary[]>([])
   const [loading, setLoading] = useState(true)
+  const [showDismissed, setShowDismissed] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const navigate = useNavigate()
   const [searchParams, setSearchParams] = useSearchParams()
@@ -363,7 +364,7 @@ const Dashboard: React.FC = () => {
   }, [projectId])
 
   const platformOf = (i: IncidentSummary) => derivePlatform(i)
-  const filteredIncidents = incidents.filter(i => filterIncident(i, filterPlatform))
+  const filteredIncidents = incidents.filter(i => (showDismissed || !i.dismissed) && filterIncident(i, filterPlatform))
   const critical = filteredIncidents.filter(i => i.overall_severity === 'CRITICAL').length
   const active = filteredIncidents.filter(i => !['complete', 'error'].includes(i.status)).length
   const credTypes = new Set(filteredIncidents.map(i => i.credential_type)).size
@@ -399,6 +400,7 @@ const Dashboard: React.FC = () => {
       </div>
 
       {demoCount > 0 && <SyntheticNotice />}
+      <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={showDismissed} onChange={event => setShowDismissed(event.target.checked)} /> Show dismissed incidents</label>
       <p className="text-xs text-muted-foreground">Showing {filteredIncidents.length} records · {filterLabel(filterPlatform)}. Processing completion does not confirm remediation or revocation.</p>
       {/* Stats row */}
       <div
@@ -582,7 +584,7 @@ const Dashboard: React.FC = () => {
               incidents
             </p>
             <p className="mt-1 text-sm" style={{ color: 'var(--color-muted-foreground)' }}>
-              {incidents.length} incident{incidents.length !== 1 ? 's' : ''} on other platforms.
+              Adjust the platform filter or show dismissed incidents.
             </p>
             <Button
               variant="outline"
@@ -645,6 +647,7 @@ const Dashboard: React.FC = () => {
                               {inc.credential_hint}
                             </Link>
                             {isSyntheticIncident(inc) && <SyntheticNotice compact />}
+                            {inc.dismissed && <span className="text-xs border rounded px-1">Dismissed</span>}
                             {inc.gdpr_flag && (
                               <span
                                 className="inline-flex items-center gap-1 text-[10px] font-bold px-1.5 py-0.5 rounded uppercase tracking-wider"
@@ -719,6 +722,7 @@ const Dashboard: React.FC = () => {
                       {/* Status */}
                       <TableCell>
                         <StatusPill incident={inc} />
+                        {inc.assigned_to_name && <span className="block text-xs text-muted-foreground">Assigned to {inc.assigned_to_name}</span>}
                       </TableCell>
 
                       {/* Severity */}

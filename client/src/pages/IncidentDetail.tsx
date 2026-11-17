@@ -21,6 +21,7 @@ import {
 } from 'lucide-react'
 import client, { USE_MOCK } from '@/api/client'
 import { useAuth } from '@/context/AuthContext'
+import IncidentActions from '@/components/IncidentActions'
 import type { IncidentRecord, ReportSource, SearchResult } from '@/types'
 import SearchResults from '@/components/SearchResults'
 import { derivePlatform, isForensicTier, PLATFORM_META, platformIdentity } from '@/lib/platform'
@@ -243,6 +244,7 @@ const IncidentDetail: React.FC = () => {
   const [error, setError] = useState<string | null>(null)
   const [refreshing, setRefreshing] = useState(false)
   const [refreshNotice, setRefreshNotice] = useState<string | null>(null)
+  const incidentStatus = incident?.status
 
   useEffect(() => {
     if (!id) return
@@ -259,7 +261,10 @@ const IncidentDetail: React.FC = () => {
       }
     }
     load()
+  }, [id])
 
+  useEffect(() => {
+    if (!id || !incidentStatus || ['complete', 'error'].includes(incidentStatus)) return
     const poll = setInterval(() => {
       client
         .get<IncidentRecord>(`/incidents/${id}`)
@@ -267,7 +272,7 @@ const IncidentDetail: React.FC = () => {
         .catch(() => { })
     }, 3000)
     return () => clearInterval(poll)
-  }, [id])
+  }, [id, incidentStatus])
 
   const handleRefreshForensics = async () => {
     if (!id || refreshing) return
@@ -338,6 +343,7 @@ const IncidentDetail: React.FC = () => {
   return (
     <div className="max-w-7xl mx-auto space-y-8 pb-12 animate-in fade-in duration-500">
       {synthetic && <SyntheticNotice />}
+      <IncidentActions incident={incident} canManage={canManage} onChange={setIncident} />
       {/* Top Header Section */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b pb-6">
         <div className="flex min-w-0 items-center gap-4">

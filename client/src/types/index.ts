@@ -50,6 +50,15 @@ export interface FinancialImpactLine {
 
 export interface IncidentRecord {
   incident_id: string
+  project_id?: string | null
+  assigned_to?: string | null
+  assigned_to_name?: string | null
+  dismissed?: boolean
+  dismissed_by?: string | null
+  dismissed_by_name?: string | null
+  dismissed_at?: string | null
+  dismissal_reason?: string | null
+  dismissal_type?: string | null
   credential_type: string
   credential_hint: string
   // Null for GCP/Azure/SaaS incidents — only AWS has an access key ID.

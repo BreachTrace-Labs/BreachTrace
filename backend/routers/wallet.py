@@ -16,7 +16,7 @@ from auth import require_admin_or_lead
 from crypto import encrypt_blob
 from db.database import get_db
 from db.models import CredentialWalletEntry, User
-from routers.org import record
+from audit import record
 from wallet_verify import verify_entry
 
 router = APIRouter(prefix='/projects/{project_id}/wallet', tags=['credential wallet'])

@@ -1,12 +1,14 @@
 """Organisation and team administration."""
 from typing import Literal
+from datetime import datetime
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, EmailStr, Field
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from auth import get_active_user, hash_password, require_admin
+from audit import public as audit_public, record
 from db.database import get_db
 from db.models import AuditLog, Organisation, User
 
@@ -27,11 +29,6 @@ class Invite(BaseModel):
 class UserUpdate(BaseModel):
     role: Literal["security_lead", "developer"] | None = None
     is_active: bool | None = None
-
-
-def record(db: Session, user: User, action: str, request: Request, *, project_id=None, detail=None):
-    db.add(AuditLog(organisation_id=user.organisation_id, actor_user_id=user.id, project_id=project_id,
-                    action=action, detail=detail, ip_address=request.client.host if request.client else None))
 
 
 def user_data(user: User):
@@ -62,6 +59,25 @@ def update_org(body: OrgUpdate, request: Request, user: User = Depends(require_a
 @router.get("/users")
 def list_users(user: User = Depends(require_admin), db: Session = Depends(get_db)):
     return [user_data(row) for row in db.query(User).filter_by(organisation_id=user.organisation_id).order_by(User.email).all()]
+
+
+@router.get("/audit")
+def list_audit(limit: int = Query(50, ge=1, le=200), offset: int = Query(0, ge=0),
+               action: str | None = None, user_id: str | None = None, project_id: str | None = None,
+               date_from: datetime | None = None, date_to: datetime | None = None,
+               user: User = Depends(require_admin), db: Session = Depends(get_db)):
+    query = db.query(AuditLog, User.full_name).outerjoin(User, User.id == AuditLog.actor_user_id).filter(AuditLog.organisation_id == user.organisation_id)
+    if action:
+        query = query.filter(AuditLog.action == action)
+    if user_id:
+        query = query.filter(AuditLog.actor_user_id == user_id)
+    if project_id:
+        query = query.filter(AuditLog.project_id == project_id)
+    if date_from:
+        query = query.filter(AuditLog.created_at >= date_from)
+    if date_to:
+        query = query.filter(AuditLog.created_at <= date_to)
+    return [audit_public(entry, name) for entry, name in query.order_by(AuditLog.created_at.desc(), AuditLog.id.desc()).offset(offset).limit(limit).all()]
 
 
 @router.post("/users/invite", status_code=201)

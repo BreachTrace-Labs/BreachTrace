@@ -12,18 +12,19 @@ from __future__ import annotations
 
 from collections import Counter
 from dataclasses import asdict
-from datetime import datetime
-from typing import Optional
+from datetime import datetime, timezone
+from typing import Literal, Optional
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy.orm import Session
 
 from access import accessible_project_ids, assert_project_access, incident_access
 from auth import get_active_user, require_admin_or_lead, require_single_organisation
+from audit import public as audit_public, record
 from db.crud import get_incident, list_incidents, reset_incident_for_refresh
 from db.database import get_db
-from db.models import CREDENTIAL_TYPE_TO_PLATFORM, ExperimentRun, IncidentRecord, User
+from db.models import AuditLog, CREDENTIAL_TYPE_TO_PLATFORM, ExperimentRun, IncidentRecord, ProjectMember, User
 from pipeline import run_collection_pipeline
 from scorer.severity import (
     build_compliance_reasons,
@@ -77,6 +78,14 @@ class ForensicEventOut(BaseModel):
 class IncidentSummaryOut(BaseModel):
     incident_id: str
     project_id: Optional[str] = None
+    assigned_to: Optional[str] = None
+    assigned_to_name: Optional[str] = None
+    dismissed: bool = False
+    dismissed_by: Optional[str] = None
+    dismissed_by_name: Optional[str] = None
+    dismissed_at: Optional[datetime] = None
+    dismissal_reason: Optional[str] = None
+    dismissal_type: Optional[str] = None
     credential_type: str
     credential_hint: str
     access_key_id: Optional[str]
@@ -155,6 +164,38 @@ class RefreshResponse(BaseModel):
     message: str
 
 
+class DismissRequest(BaseModel):
+    dismissal_type: Literal['false_positive', 'test_credential', 'acknowledged', 'rotated']
+    reason: str = Field(min_length=10, max_length=500)
+
+    @field_validator('reason')
+    @classmethod
+    def nonempty_reason(cls, value):
+        value = value.strip()
+        if len(value) < 10:
+            raise ValueError('Reason must contain at least 10 non-whitespace characters')
+        return value
+
+
+class AssignRequest(BaseModel):
+    user_id: str = Field(min_length=1, max_length=36)
+
+
+def add_user_names(output: IncidentSummaryOut, incident: IncidentRecord, db: Session):
+    ids = [value for value in (incident.assigned_to, incident.dismissed_by) if value]
+    names = dict(db.query(User.id, User.full_name).filter(User.id.in_(ids)).all()) if ids else {}
+    output.assigned_to_name = names.get(incident.assigned_to)
+    output.dismissed_by_name = names.get(incident.dismissed_by)
+    return output
+
+
+def audit_incident_view(request: Request, incident: IncidentRecord = Depends(incident_access),
+                        user: User = Depends(get_active_user), db: Session = Depends(get_db)):
+    record(db, user, 'incident.viewed', request, project_id=incident.project_id, incident_id=incident.incident_id)
+    db.commit()
+
+
+
 # ---------------------------------------------------------------------------
 # Routes
 # ---------------------------------------------------------------------------
@@ -173,7 +214,16 @@ def list_all_incidents(
     query = db.query(IncidentRecord).filter(IncidentRecord.project_id.in_(accessible_project_ids(user, db)))
     if project_id:
         query = query.filter(IncidentRecord.project_id == project_id)
-    return query.order_by(IncidentRecord.exposure_start.desc()).offset(max(0, offset)).limit(min(max(1, limit), 500)).all()
+    incidents = query.order_by(IncidentRecord.exposure_start.desc()).offset(max(0, offset)).limit(min(max(1, limit), 500)).all()
+    ids = {value for incident in incidents for value in (incident.assigned_to, incident.dismissed_by) if value}
+    names = dict(db.query(User.id, User.full_name).filter(User.id.in_(ids)).all()) if ids else {}
+    result = []
+    for incident in incidents:
+        item = IncidentSummaryOut.model_validate(incident)
+        item.assigned_to_name = names.get(incident.assigned_to)
+        item.dismissed_by_name = names.get(incident.dismissed_by)
+        result.append(item)
+    return result
 
 
 @router.get("/stats", dependencies=[Depends(require_admin_or_lead), Depends(require_single_organisation)])
@@ -200,7 +250,7 @@ def get_incident_stats(db: Session = Depends(get_db)):
     }
 
 
-@router.get("/{incident_id}", response_model=IncidentDetailOut, dependencies=[Depends(incident_access)])
+@router.get("/{incident_id}", response_model=IncidentDetailOut, dependencies=[Depends(audit_incident_view)])
 def get_incident_detail(
     incident_id: str,
     db: Session = Depends(get_db),
@@ -230,7 +280,7 @@ def get_incident_detail(
         FinancialImpactLineOut(**asdict(line))
         for line in compute_financial_impact_lines(incident.events)
     ]
-    return out
+    return add_user_names(out, incident, db)
 
 
 @router.get("/{incident_id}/report.pdf", dependencies=[Depends(incident_access)])
@@ -272,6 +322,47 @@ def get_incident_timeline(
     return incident.events
 
 
+@router.post('/{incident_id}/dismiss', response_model=IncidentDetailOut)
+def dismiss_incident(incident_id: str, body: DismissRequest, request: Request,
+                     incident: IncidentRecord = Depends(incident_access),
+                     user: User = Depends(get_active_user), db: Session = Depends(get_db)):
+    incident.dismissed = True
+    incident.dismissal_type = body.dismissal_type
+    incident.dismissal_reason = body.reason
+    incident.dismissed_by = user.id
+    incident.dismissed_at = datetime.now(timezone.utc)
+    record(db, user, 'incident.dismissed', request, project_id=incident.project_id,
+           incident_id=incident.incident_id, detail={'dismissal_type': body.dismissal_type})
+    db.commit()
+    return get_incident_detail(incident_id, db)
+
+
+@router.post('/{incident_id}/assign', response_model=IncidentDetailOut, dependencies=[Depends(require_admin_or_lead)])
+def assign_incident(incident_id: str, body: AssignRequest, request: Request,
+                    incident: IncidentRecord = Depends(incident_access),
+                    user: User = Depends(require_admin_or_lead), db: Session = Depends(get_db)):
+    target = (db.query(User).join(ProjectMember, ProjectMember.user_id == User.id)
+              .filter(User.id == body.user_id, User.organisation_id == user.organisation_id,
+                      User.is_active.is_(True), ProjectMember.project_id == incident.project_id).first())
+    if target is None:
+        raise HTTPException(400, 'Assignee must be an active member of this project')
+    incident.assigned_to = target.id
+    record(db, user, 'incident.assigned', request, project_id=incident.project_id,
+           incident_id=incident.incident_id, detail={'assigned_to': target.id})
+    db.commit()
+    return get_incident_detail(incident_id, db)
+
+
+@router.get('/{incident_id}/audit', dependencies=[Depends(require_admin_or_lead)])
+def incident_audit(incident_id: str, incident: IncidentRecord = Depends(incident_access),
+                   user: User = Depends(require_admin_or_lead), db: Session = Depends(get_db)):
+    rows = (db.query(AuditLog, User.full_name).outerjoin(User, User.id == AuditLog.actor_user_id)
+            .filter(AuditLog.organisation_id == user.organisation_id, AuditLog.incident_id == incident.incident_id)
+            .order_by(AuditLog.created_at.desc(), AuditLog.id.desc()).limit(200).all())
+    return [audit_public(entry, name) for entry, name in rows]
+
+
+
 # ---------------------------------------------------------------------------
 # Manual CloudTrail refresh endpoint
 # ---------------------------------------------------------------------------
@@ -294,6 +385,8 @@ def _queue_incident_refresh(
     incident_id: str,
     background_tasks: BackgroundTasks,
     db: Session,
+    user: User | None = None,
+    request: Request | None = None,
 ) -> RefreshResponse:
     incident = get_incident(db, incident_id)
     if incident is None:
@@ -328,6 +421,8 @@ def _queue_incident_refresh(
         "twilio": "Twilio Messages and Calls query started.",
     }.get(platform, "Log query started.")
 
+    if user is not None and request is not None:
+        record(db, user, 'incident.refreshed', request, project_id=incident.project_id, incident_id=incident.incident_id)
     reset_incident_for_refresh(db, incident_id)
     background_tasks.add_task(
         run_collection_pipeline,
@@ -349,7 +444,9 @@ def _queue_incident_refresh(
 def refresh_incident_forensics(
     incident_id: str,
     background_tasks: BackgroundTasks,
+    request: Request,
     db: Session = Depends(get_db),
+    user: User = Depends(require_admin_or_lead),
 ):
     """
     Manually re-run forensic collection for an incident.
@@ -358,17 +455,19 @@ def refresh_incident_forensics(
     still delayed. Existing derived events/report output are cleared and the
     normal collector → classifier → scorer → reporter pipeline is queued again.
     """
-    return _queue_incident_refresh(incident_id, background_tasks, db)
+    return _queue_incident_refresh(incident_id, background_tasks, db, user, request)
 
 
 @legacy_router.post("/{incident_id}/refresh", response_model=RefreshResponse, status_code=202, dependencies=[Depends(require_admin_or_lead), Depends(incident_access)])
 def refresh_incident_forensics_legacy_path(
     incident_id: str,
     background_tasks: BackgroundTasks,
+    request: Request,
     db: Session = Depends(get_db),
+    user: User = Depends(require_admin_or_lead),
 ):
     """Compatibility alias for the singular /incident/{id}/refresh path."""
-    return _queue_incident_refresh(incident_id, background_tasks, db)
+    return _queue_incident_refresh(incident_id, background_tasks, db, user, request)
 
 
 # ---------------------------------------------------------------------------

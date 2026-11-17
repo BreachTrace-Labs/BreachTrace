@@ -102,6 +102,9 @@ def test_scan_api_returns_masked_job_and_preserves_failure_safety(monkeypatch, t
     # Keep persistence within the test's throwaway directory.
     monkeypatch.setattr(repositories, "__file__", str(tmp_path / "backend" / "routers" / "repositories.py"))
     app = FastAPI(); app.include_router(repositories.router)
+    app.dependency_overrides[repositories.require_admin_or_lead] = lambda: Mock()
+    app.dependency_overrides[repositories.get_db] = lambda: Mock()
+    monkeypatch.setattr(repositories, 'record', lambda *_args, **_kwargs: None)
     with TestClient(app, base_url="http://localhost", client=("127.0.0.1", 1234)) as client:
         response = client.post("/repositories/scan", json={"repo_url": "https://github.com/team/repo"})
         assert response.status_code == 202

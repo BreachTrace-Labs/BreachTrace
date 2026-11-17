@@ -4,6 +4,7 @@ import { useAuth } from '@/context/AuthContext'
 import { useProjects } from '@/context/ProjectContext'
 import { Button } from '@/components/ui/button'
 import ProjectWallet from '@/components/ProjectWallet'
+import OrgAudit from '@/components/OrgAudit'
 
 type Member = { id: string; email: string; full_name: string; role: string; is_active?: boolean }
 const input = 'border rounded p-2 bg-transparent w-full'
@@ -44,6 +45,7 @@ export default function Admin() {
       {user?.role === 'org_admin' && <Button variant="outline" onClick={() => { if (window.confirm(`Delete project ${selected.name}? Existing incidents are retained.`)) void action(() => realClient.delete(`/projects/${selected.id}`), 'Project deleted.') }}>Delete project</Button>}
       {user?.role === 'org_admin' && <div><Button variant="outline" onClick={() => { if (window.confirm(`Associate older unassigned incidents for ${selected.github_repo_full_name} with this project? Project members can then view them.`)) void action(async () => { const { data } = await realClient.post<{ adopted: number }>(`/projects/${selected.id}/adopt-legacy`); return data }, 'Matching older incidents associated with this project.') }}>Associate older incidents</Button><p className="text-xs text-muted-foreground mt-1">Only unassigned incidents with the same repository URL are included.</p></div>}
     </section>}
+    {user?.role === 'org_admin' && <OrgAudit users={users} />}
     {user?.role === 'org_admin' && <section className="border rounded p-5 space-y-4"><h2 className="font-semibold">Team</h2>
       <form className="flex gap-2" onSubmit={e => { e.preventDefault(); void action(() => realClient.put('/org', { name: orgName }), 'Organisation name updated.') }}><input className={input} aria-label="Organisation name" required value={orgName} onChange={e => setOrgName(e.target.value)} /><Button>Save organisation name</Button></form>
       {users.map(u => <div key={u.id} className="flex flex-wrap gap-3 justify-between items-center text-sm"><span>{u.full_name} · {u.email} · {u.role}{u.is_active === false ? ' · inactive' : ''}</span>{u.role !== 'org_admin' && <div className="flex gap-2"><select className="border rounded p-1 bg-transparent" aria-label={`Role for ${u.full_name}`} value={u.role} onChange={e => void action(() => realClient.put(`/org/users/${u.id}`, { role: e.target.value }), 'Role updated.')}><option value="developer">Developer</option><option value="security_lead">Security lead</option></select><Button size="sm" variant="outline" onClick={() => void action(() => realClient.put(`/org/users/${u.id}`, { is_active: !u.is_active }), u.is_active ? 'User deactivated.' : 'User reactivated.')}>{u.is_active ? 'Deactivate' : 'Reactivate'}</Button></div>}</div>)}

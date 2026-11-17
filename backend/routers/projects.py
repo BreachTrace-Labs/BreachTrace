@@ -9,7 +9,8 @@ from auth import get_active_user, require_admin, require_admin_or_lead, require_
 from db.database import get_db
 from db.models import IncidentRecord, Project, ProjectMember, User
 from repository_snapshot import repository_name
-from routers.org import record, user_data
+from audit import record
+from routers.org import user_data
 
 router = APIRouter(prefix="/projects", tags=["projects"])
 
