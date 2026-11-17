@@ -92,6 +92,7 @@ function ReportSourceBadge({ source }: { source?: ReportSource | null }) {
 /** Search scoped to one incident: its report passages plus the knowledge base. */
 function AskAboutIncident({ incidentId }: { incidentId: string }) {
   const [question, setQuestion] = useState('')
+  const [generateAnswer, setGenerateAnswer] = useState(false)
   const [result, setResult] = useState<SearchResult | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
@@ -106,7 +107,8 @@ function AskAboutIncident({ incidentId }: { incidentId: string }) {
       const { data } = await client.post<SearchResult>('/assistant/search', {
         question: q.trim(),
         incident_id: incidentId,
-      })
+        generate_answer: generateAnswer,
+      }, { timeout: generateAnswer ? 310_000 : 30_000 })
       setResult(data)
     } catch {
       setResult(null)
@@ -144,6 +146,10 @@ function AskAboutIncident({ incidentId }: { incidentId: string }) {
           {loading ? <Loader2 size={14} className="animate-spin" /> : 'Ask'}
         </Button>
       </form>
+      <label className="flex items-start gap-2 text-xs text-muted-foreground">
+        <input type="checkbox" checked={generateAnswer} onChange={e => setGenerateAnswer(e.target.checked)} className="mt-0.5" />
+        <span>Generate an answer from the retrieved evidence with the model selected in Settings. Cloud models receive the question and matching passages.</span>
+      </label>
       {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
       {result && !loading && (
         <SearchResults result={result} showIncidents={false} onSuggestion={(q) => void ask(q)} />

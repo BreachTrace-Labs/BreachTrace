@@ -125,8 +125,10 @@ submitted to a provider. There are no automatic verification requests or charges
   are not supported. YAML uses named fields/context, not a complete YAML parser.
 - Whole-repository scanning still has file/byte/time limits, excludes binaries and
   dependency/admin directories, and scans the current snapshot, not Git history.
-  The scan timeout is 180 seconds with normalization enabled, checked between
-  files and after each file scan. It does not interrupt an in-progress regex.
+  Current defaults are 10 MiB/file, 1 GiB of scanned text, 200,000 files, 10,000
+  findings, a 2 GiB archive limit, and a 10-minute scan timeout. Archive downloads
+  are capped at 5 minutes. The scan timeout is checked between files and after
+  each file scan; it does not interrupt an in-progress regex.
 - Existing AWS/GCP service-account detection remains the path for Bedrock/Vertex
   cloud credentials. The AI bearer/API-key variants are detection-only.
 

@@ -1,1 +1,1 @@
-"""Natural-language search over the knowledge base and incidents (retrieval-only)."""
+"""Evidence retrieval for natural-language search and optional grounded answers."""

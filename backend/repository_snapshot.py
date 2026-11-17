@@ -42,10 +42,10 @@ def unpack(archive: Path, target: Path, limits: ScanLimits) -> dict:
         def read(self, size):
             if time.monotonic() - started > limits.timeout_s:
                 raise ValueError("Archive decompression time limit exceeded")
-            block = self.source.read(min(size, limits.max_total_bytes - self.read_bytes + 1))
+            block = self.source.read(min(size, limits.max_archive_bytes - self.read_bytes + 1))
             self.read_bytes += len(block)
-            if self.read_bytes > limits.max_total_bytes:
-                raise ValueError("Archive decompression byte limit exceeded")
+            if self.read_bytes > limits.max_archive_bytes:
+                raise ValueError("Archive size limit exceeded")
             return block
 
     with gzip.open(archive, "rb") as compressed, tarfile.open(fileobj=BoundedReader(compressed), mode="r|") as stream:
@@ -134,7 +134,7 @@ def scan_github(url: str) -> dict:
         with response, archive.open("wb") as output:
             for block in response.iter_content(65536):
                 downloaded += len(block)
-                if downloaded > 100 * 1024 * 1024 or time.monotonic() - started > 120:
+                if downloaded > limits.max_archive_bytes or time.monotonic() - started > limits.download_timeout_s:
                     raise ValueError("Archive exceeds download size/time limit")
                 output.write(block)
         source = root / "source"; source.mkdir()

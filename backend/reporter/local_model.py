@@ -139,25 +139,29 @@ class LocalReportModel:
     # ------------------------------------------------------------------
     def generate(self, facts: dict, feedback: list[str] | None = None) -> dict | None:
         """Report sections for ``facts``, or None when the output is unusable."""
+        content = self.generate_json(build_messages(facts, feedback), SECTIONS_SCHEMA)
+        return parse_sections(content) if content else None
+
+    def generate_json(self, messages: list[dict], schema: dict, *, max_tokens: int = _MAX_TOKENS) -> str:
+        """Generate schema-constrained JSON for another grounded local task."""
         with self._lock:
             llm = self._load()
             try:
                 response = llm.create_chat_completion(
-                    messages=build_messages(facts, feedback),
-                    response_format={"type": "json_object", "schema": SECTIONS_SCHEMA},
+                    messages=messages,
+                    response_format={"type": "json_object", "schema": schema},
                     temperature=0.2,
                     repeat_penalty=1.1,
-                    max_tokens=_MAX_TOKENS,
+                    max_tokens=max_tokens,
                 )
             finally:
                 self._schedule_unload()
 
         choice = response["choices"][0]
         if choice.get("finish_reason") == "length":
-            # Truncated JSON never parses; say why rather than failing silently.
-            logger.warning("[REPORT MODEL] Output hit the %d-token limit", _MAX_TOKENS)
-            return None
-        return parse_sections(choice["message"]["content"])
+            logger.warning("[REPORT MODEL] JSON output hit the %d-token limit", max_tokens)
+            return ""
+        return choice["message"].get("content", "")
 
 
 _instance: LocalReportModel | None = None

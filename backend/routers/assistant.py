@@ -1,9 +1,9 @@
 """
-POST /assistant/search — natural-language search over incidents and the knowledge base
+POST /assistant/search — retrieval over incidents and the knowledge base, with optional grounded prose
 GET  /assistant/status — what is installed and indexed
 
-Retrieval only: answers are matching incidents and verbatim passages with their
-sources. No text is generated, so nothing can be invented.
+Retrieval is always performed first. Model-written answers are opt-in and cite
+retrieved passages; the verbatim evidence remains available for review.
 """
 from __future__ import annotations
 
@@ -32,6 +32,7 @@ class SearchRequest(BaseModel):
     question: str = Field(..., min_length=2, max_length=500)
     incident_id: Optional[str] = None
     limit: int = Field(5, ge=1, le=20)
+    generate_answer: bool = False
     timeline_start: datetime | None = None
     timeline_end: datetime | None = None
 
@@ -53,8 +54,13 @@ def assistant_search(body: SearchRequest, db: Session = Depends(get_db)):
         from db.models import IncidentRecord
         if db.get(IncidentRecord, body.incident_id) is None:
             raise HTTPException(404, "Incident not found")
-    return answer(db, body.question, incident_id=body.incident_id, k=body.limit,
-                  timeline_start=body.timeline_start, timeline_end=body.timeline_end)
+    result = answer(db, body.question, incident_id=body.incident_id, k=body.limit,
+                    timeline_start=body.timeline_start, timeline_end=body.timeline_end)
+    if body.generate_answer:
+        from rag.grounded_answer import generate_grounded_answer
+        evidence = result.get("passages", []) if result.get("confident") else []
+        result["generated_answer"] = generate_grounded_answer(body.question, evidence)
+    return result
 
 
 @router.get("/status")

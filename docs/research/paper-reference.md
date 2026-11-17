@@ -116,7 +116,7 @@ Severity is computed deterministically from event categories, evidence availabil
 
 The deterministic report contains an executive summary, chronological narrative, business-impact assessment, evidence references, limitations, and remediation checklist. Optional OpenAI, Anthropic, Gemini, Ollama, or GGUF-based prose is generated from a fact sheet and passed through consistency checks for selected identifiers, counts, amounts, and unsupported activity claims. The model cannot change deterministic severity, checklist generation, or financial calculations.
 
-Search uses BM25 and optional embeddings to retrieve stored incident, report, knowledge-base, and timestamped event passages. Retrieval results are evidence pointers, not independent proof, and model-generated prose retrieved from storage inherits the limitations of its original generation.
+Search uses BM25 and optional embeddings to retrieve stored incident, report, knowledge-base, and timestamped event passages. Users may explicitly request a concise answer from the configured report model. The answer cites retrieved passages, which remain visible for review; citations do not prove every generated claim. If no model is configured, retrieval-only search continues to work. Cloud answer generation sends the question and selected passages to the chosen provider. Retrieval results are evidence pointers, not independent proof, and model-generated prose retrieved from storage inherits the limitations of its original generation.
 
 ## 5. Experimental and Verification Design
 

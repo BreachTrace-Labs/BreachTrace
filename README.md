@@ -17,7 +17,7 @@ A detected pattern is **not proof of a valid key or a breach**. Detection-only f
 - **AI candidates:** OpenAI/GPT, Anthropic/Claude, Gemini, DeepSeek, Sarvam, Groq and other registered services. Nine families have distinctive-prefix rules; the rest require provider-specific credential fields or context. A generic Google API key is not automatically labelled Gemini.
 - **Static recovery:** Base64/Base64URL, hex, Unicode/hex escapes, percent encoding, HTML entities, zero-width characters, static literal concatenation/joins, reversed literals and explicit ROT13. Work limits are disclosed; arbitrary encryption, runtime data flow and cross-file assembly are unsupported.
 - **Forensic pipeline:** authorized collectors, normalized events, eight impact categories, rule-based severity and financial-impact summaries. Five collector adapters serve AWS, GCP, Azure, Stripe and Twilio; Firebase service-account findings reuse GCP.
-- **Reports and search:** a deterministic report is available independently of generative models. Optional model-written prose passes heuristic consistency checks before replacement. Search retrieves incidents, report/knowledge passages and timestamped event evidence; it does not generate an answer with an LLM.
+- **Reports and search:** deterministic reports work without a model; optional model-written report prose passes grounding checks before replacing template prose. Search retrieves incidents, reports, knowledge passages and timestamped events. Users can explicitly request a concise model answer grounded in the retrieved passages; citations remain visible, and cloud generation sends the question and passages to the selected provider.
 - **UI:** Monitor, incident detail, Search, Research, Connect and Settings, with explicit detection-only and synthetic-demo states.
 
 **Stack:** Python/FastAPI, SQLAlchemy/Alembic, PostgreSQL, React/TypeScript, Vite, Tailwind, D3, BM25 and optional FastEmbed embeddings.
@@ -105,7 +105,7 @@ Preview incidents and research metrics are synthetic. Repository scanning and mo
 
 Provider access, permissions, retention, latency and logging configuration limit every reconstruction. The collector's availability is not a guarantee that all actions or misuse can be identified. Current collection uses a 120-minute lookback before the exposure start and extends to collection time; research must distinguish that collection interval from the exposure interval.
 
-Repository scans cover the **current snapshot**, not Git history, submodule contents or binaries. Defaults: 2 MiB/file, 512 MiB scanned text, 100,000 files, 10,000 findings and a 180-second timeout checked between/after file scans. Exclusions and decoding limits are reported. See [coverage details](docs/ai-detection.md).
+Repository scans cover the **current snapshot**, not Git history, submodule contents or binaries. Defaults: 10 MiB/file, 1 GiB scanned text, 200,000 files, 10,000 findings, a 2 GiB archive download limit and a 10-minute scan timeout. Downloading an archive is capped at 5 minutes. Exclusions and decoding limits are reported. See [coverage details](docs/ai-detection.md).
 
 ## Reports and model settings
 
@@ -116,7 +116,7 @@ Settings supports deterministic reports, OpenAI, Anthropic, Gemini, local Ollama
 - Ollama requires a running local service and an already-installed model.
 - GGUF support requires `backend/requirements-local.txt`, an existing model file and its applicable quality-gate manifest. Training/distillation/evaluation utilities exist in `backend/research/`; a trained, validated BreachTrace model is **not bundled or claimed as completed**.
 
-The prose validator checks selected identifiers, amounts, counts and unsupported activity expressions. It is **not a proof of semantic correctness**. Severity, checklist generation and financial calculations remain deterministic; users must review evidence. Search retrieves stored prose as well as events, so retrieved model prose inherits the selected model's limitations.
+The report prose validator checks selected identifiers, amounts, counts and unsupported activity expressions. It is **not a proof of semantic correctness**. Severity, checklist generation and financial calculations remain deterministic; users must review evidence. Search answers are also model-written only when explicitly requested; their citations link to retrieved passages but do not prove every generated statement. Cloud answer generation sends the submitted question and selected passages to the configured provider.
 
 ## Verification and research evidence
 

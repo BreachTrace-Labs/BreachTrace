@@ -6,10 +6,13 @@ import { derivePlatform, PLATFORM_META } from '@/lib/platform'
 import { isSyntheticIncident } from '@/lib/incidentPresentation'
 import SyntheticNotice from '@/components/SyntheticNotice'
 
+function sourceAnchor(id: string) {
+  return `source-${encodeURIComponent(id)}`
+}
+
 /**
- * Renders a retrieval-only search result: matching incidents, then verbatim
- * passages with the best-matching sentence highlighted. Nothing here is
- * generated text; every passage links to its source.
+ * Renders matching incidents and verbatim evidence passages, plus an optional
+ * model answer that links back to the passages it cites.
  */
 
 function Highlighted({ passage }: { passage: SearchPassage }) {
@@ -37,7 +40,7 @@ function Highlighted({ passage }: { passage: SearchPassage }) {
 function PassageCard({ passage }: { passage: SearchPassage }) {
   const isIncident = passage.source_type === 'incident'
   return (
-    <div className="border rounded-sm p-4 space-y-2" style={{ borderColor: 'var(--color-border)' }}>
+    <div id={sourceAnchor(passage.id)} className="border rounded-sm p-4 space-y-2 scroll-mt-4" style={{ borderColor: 'var(--color-border)' }}>
       <div className="flex items-start gap-2">
         {isIncident ? (
           <FileSearch size={14} className="mt-0.5 shrink-0" />
@@ -79,10 +82,28 @@ export default function SearchResults({
 }) {
   const { incidents, passages, suggestions } = result
   const nothing = incidents.length === 0 && passages.length === 0
+  const generated = result.generated_answer
 
   return (
     <div className="space-y-5">
       {result.disclaimer && <p role="note" className="text-xs text-muted-foreground">{result.disclaimer}</p>}
+      {generated && (
+        <section className="border rounded-sm p-4 space-y-3" aria-label="Generated answer" style={{ borderColor: 'var(--color-border)' }}>
+          <div className="flex items-center justify-between gap-3">
+            <h2 className="text-sm font-semibold">Evidence-based answer</h2>
+            {generated.status === 'generated' && <span className="text-[10px] uppercase tracking-wider text-muted-foreground">{generated.provider}{generated.model ? ` · ${generated.model}` : ''}</span>}
+          </div>
+          {generated.status === 'generated' ? <>
+            <p className="text-sm leading-relaxed whitespace-pre-wrap">{generated.text}</p>
+            {generated.citations && generated.citations.length > 0 && <div className="flex flex-wrap gap-2" aria-label="Answer sources">
+              {generated.citations.map(source => <a key={source.id} href={`#${sourceAnchor(source.id)}`} className="text-xs underline underline-offset-2 rounded border px-2 py-1">
+                {source.title}
+              </a>)}
+            </div>}
+            {generated.disclaimer && <p className="text-xs text-muted-foreground" role="note">{generated.disclaimer}</p>}
+          </> : <p className="text-sm text-muted-foreground" role="status">{generated.message}</p>}
+        </section>
+      )}
       {showIncidents && incidents.length > 0 && (
         <div className="space-y-2">
           <p

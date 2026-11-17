@@ -22,6 +22,7 @@ export default function Search() {
   const [result, setResult] = useState<SearchResult | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [generateAnswer, setGenerateAnswer] = useState(false)
 
   async function run(q: string) {
     const trimmed = q.trim()
@@ -31,7 +32,7 @@ export default function Search() {
     setError(null)
     setResult(null)
     try {
-      const { data } = await client.post<SearchResult>('/assistant/search', { question: trimmed })
+      const { data } = await client.post<SearchResult>('/assistant/search', { question: trimmed, generate_answer: generateAnswer }, { timeout: generateAnswer ? 310_000 : 30_000 })
       setResult(data)
     } catch {
       setError('Search failed. Is the backend running?')
@@ -46,13 +47,13 @@ export default function Search() {
         <h1 className="text-xl font-bold tracking-tight">Search</h1>
         <p className="text-sm" style={{ color: 'var(--color-muted-foreground)' }}>
           Search forensic timelines, long reports and response guidance. For exact event times,
-          include an ISO timestamp with a zone, such as 2026-10-01T14:23:30Z. Search retrieves evidence locally.
+          include an ISO timestamp with a zone, such as 2026-10-01T14:23:30Z. Retrieval runs locally; model answers are optional.
         </p>
       </div>
 
       <p className="text-sm border rounded p-3" role="note">
         Report prose quality depends on your selected model. Verify conclusions against cited events.
-        Missing logs do not prove no activity. Cloud report generation sends fact sheets to the provider selected in Settings.
+        Missing logs do not prove no activity. Cloud report or answer generation sends incident facts or selected passages to the provider chosen in Settings.
       </p>
 
       <form
@@ -82,6 +83,13 @@ export default function Search() {
           {loading ? <Loader2 size={15} className="animate-spin" /> : 'Search'}
         </Button>
       </form>
+
+      <label className="flex items-start gap-2 text-sm">
+        <input type="checkbox" checked={generateAnswer} onChange={e => setGenerateAnswer(e.target.checked)} className="mt-1" />
+        <span>Generate a concise answer from retrieved evidence using the model selected in Settings.
+          <span className="block text-xs text-muted-foreground">When a cloud model is selected, your question and matching passages are sent to that provider. The retrieved sources remain visible for review.</span>
+        </span>
+      </label>
 
       {!result && !loading && (
         <div className="flex flex-wrap gap-2">

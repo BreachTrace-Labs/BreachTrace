@@ -48,7 +48,7 @@ export default function Settings() {
   const inputClass = 'block w-full border rounded p-2 bg-transparent mt-1'
   return <div className="max-w-2xl mx-auto space-y-6">
     <h1 className="text-xl font-bold">Model settings</h1>
-    <p>Choose the model that writes report prose. Facts, severity and remediation remain checked by BreachTrace. No model is bundled or downloaded automatically.</p>
+    <p>Choose the model that writes report prose and, when requested, answers Search questions from retrieved evidence. Incident facts, severity and remediation remain checked by BreachTrace. No model is bundled or downloaded automatically.</p>
     <p className="text-sm text-[var(--color-muted-foreground)]">Backend hardware: {hardware || 'Loading…'}. Local model memory needs depend on model size, quantization and context. Use measured benchmark results for this machine.</p>
     <form onSubmit={e => { e.preventDefault(); void save() }} className="space-y-4">
       <label className="block">Provider<select className={inputClass} disabled={!ready || busy} value={settings.provider} onChange={e => change('provider', e.target.value)}>

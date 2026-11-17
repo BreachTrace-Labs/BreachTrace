@@ -14,11 +14,13 @@ from detector.scanner import scan_text
 
 @dataclass(frozen=True)
 class ScanLimits:
-    max_file_bytes: int = 2 * 1024 * 1024
-    max_total_bytes: int = 512 * 1024 * 1024
-    max_files: int = 100_000
+    max_file_bytes: int = 10 * 1024 * 1024
+    max_total_bytes: int = 1024 * 1024 * 1024
+    max_files: int = 200_000
     max_findings: int = 10_000
-    timeout_s: float = 180
+    timeout_s: float = 600
+    max_archive_bytes: int = 2 * 1024 * 1024 * 1024
+    download_timeout_s: float = 300
 
 
 # Only administrative/generated/dependency directories. Hidden source and .env

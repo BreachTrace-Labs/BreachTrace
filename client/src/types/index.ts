@@ -202,4 +202,13 @@ export interface SearchResult {
   confident: boolean
   semantic: boolean
   suggestions: string[]
+  generated_answer?: {
+    status: 'generated' | 'unavailable' | 'insufficient_evidence' | 'failed'
+    text?: string
+    provider?: string
+    model?: string
+    citations?: Pick<SearchPassage, 'id' | 'source_type' | 'source_id' | 'title'>[]
+    message?: string
+    disclaimer?: string
+  }
 }

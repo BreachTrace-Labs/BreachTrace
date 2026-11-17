@@ -1,4 +1,5 @@
 import axios from 'axios'
+import type { SearchResult } from '@/types'
 import { AI_LABELS, derivePlatform } from '@/lib/platform'
 import { isAIIncident } from '@/lib/incidentPresentation'
 import {
@@ -94,15 +95,20 @@ const mockClient = {
     }
     if (_url === '/assistant/search') {
       await sleep(MOCK_DELAY_MS)
-      const body = _body as { question?: string; incident_id?: string }
-      return { data: mockSearch(String(body?.question ?? ''), body?.incident_id) }
+      const body = _body as { question?: string; incident_id?: string; generate_answer?: boolean }
+      const result = mockSearch(String(body?.question ?? ''), body?.incident_id)
+      if (body?.generate_answer) result.generated_answer = {
+        status: 'unavailable',
+        message: 'Model answers require the live backend and a model selected in Settings.',
+      }
+      return { data: result }
     }
     throw new Error(`POST ${_url} is not implemented in the mock client`)
   },
 } as Pick<ReturnType<typeof axios.create>, 'get' | 'post'>
 
 /** Mock search: platform-word match over mock incidents. The real one is retrieval over a KB. */
-function mockSearch(question: string, incidentId?: string) {
+function mockSearch(question: string, incidentId?: string): SearchResult {
   const q = question.toLowerCase()
   const aliases: Record<string, string> = { claude: 'anthropic', gpt: 'openai', chatgpt: 'openai', grok: 'xai' }
   const platforms = [...Object.keys(AI_LABELS), 'aws', 'gcp', 'azure', 'stripe', 'twilio', 'github']
@@ -129,7 +135,7 @@ function mockSearch(question: string, incidentId?: string) {
     incidents,
     passages: incidentId ? selected.filter(i => i.report_text).map(i => ({
       id: `demo:${i.incident_id}`, source_type: 'incident', source_id: i.incident_id,
-      title: 'Synthetic incident report', text: i.report_text, highlight: '', similarity: null,
+      title: 'Synthetic incident report', text: i.report_text ?? '', highlight: '', similarity: null,
     })) : [],
     confident: incidents.length > 0,
     semantic: false,
