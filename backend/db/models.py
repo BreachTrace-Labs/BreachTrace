@@ -12,6 +12,7 @@ from sqlalchemy import (
     Index,
     Integer,
     Text,
+    UniqueConstraint,
     VARCHAR,
 )
 from sqlalchemy import String
@@ -81,6 +82,14 @@ class IncidentRecord(Base):
     """
 
     __tablename__ = "incident_records"
+
+    project_id = Column(String(36), ForeignKey("projects.id"), nullable=True, index=True)
+    assigned_to = Column(String(36), ForeignKey("users.id"), nullable=True)
+    dismissed = Column(Boolean, nullable=False, default=False, server_default="false")
+    dismissed_by = Column(String(36), ForeignKey("users.id"), nullable=True)
+    dismissed_at = Column(DateTime(timezone=True), nullable=True)
+    dismissal_reason = Column(String(500), nullable=True)
+    dismissal_type = Column(String(30), nullable=True)
 
     incident_id = Column(
         String(36),
@@ -608,3 +617,108 @@ class ExperimentRun(Base):
             f"group={self.experiment_group!r} "
             f"severity={self.overall_severity!r}>"
         )
+
+
+def _new_id():
+    return str(uuid.uuid4())
+
+
+class Organisation(Base):
+    __tablename__ = "organisations"
+    id = Column(String(36), primary_key=True, default=_new_id)
+    name = Column(String(120), nullable=False)
+    slug = Column(String(60), nullable=False, unique=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+
+class User(Base):
+    __tablename__ = "users"
+    id = Column(String(36), primary_key=True, default=_new_id)
+    organisation_id = Column(String(36), ForeignKey("organisations.id"), nullable=False, index=True)
+    email = Column(String(254), nullable=False, unique=True)
+    hashed_password = Column(String(128), nullable=True)
+    full_name = Column(String(120), nullable=False)
+    role = Column(String(20), nullable=False)
+    is_active = Column(Boolean, nullable=False, default=True, server_default="true")
+    must_change_password = Column(Boolean, nullable=False, default=False, server_default="false")
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    last_login_at = Column(DateTime(timezone=True), nullable=True)
+    __table_args__ = (CheckConstraint("role IN ('org_admin', 'security_lead', 'developer')", name="ck_users_role"),)
+
+
+class Project(Base):
+    __tablename__ = "projects"
+    id = Column(String(36), primary_key=True, default=_new_id)
+    organisation_id = Column(String(36), ForeignKey("organisations.id"), nullable=False, index=True)
+    name = Column(String(120), nullable=False)
+    github_repo_url = Column(String(300), nullable=False)
+    github_repo_full_name = Column(String(200), nullable=False, index=True)
+    webhook_secret = Column(Text, nullable=True)
+    webhook_registered_at = Column(DateTime(timezone=True), nullable=True)
+    created_by = Column(String(36), ForeignKey("users.id"), nullable=False)
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    is_deleted = Column(Boolean, nullable=False, default=False, server_default="false")
+    __table_args__ = (UniqueConstraint("organisation_id", "github_repo_full_name", name="uq_project_repo"),)
+
+
+class ProjectMember(Base):
+    __tablename__ = "project_members"
+    id = Column(String(36), primary_key=True, default=_new_id)
+    project_id = Column(String(36), ForeignKey("projects.id"), nullable=False, index=True)
+    user_id = Column(String(36), ForeignKey("users.id"), nullable=False, index=True)
+    granted_by = Column(String(36), ForeignKey("users.id"), nullable=False)
+    granted_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    __table_args__ = (UniqueConstraint("project_id", "user_id", name="uq_project_member"),)
+
+
+class CredentialWalletEntry(Base):
+    __tablename__ = "credential_wallet_entries"
+    id = Column(String(36), primary_key=True, default=_new_id)
+    project_id = Column(String(36), ForeignKey("projects.id"), nullable=False, index=True)
+    provider = Column(String(20), nullable=False)
+    label = Column(String(80), nullable=True)
+    encrypted_blob = Column(Text, nullable=False)
+    iv = Column(String(32), nullable=False)
+    created_by = Column(String(36), ForeignKey("users.id"), nullable=False)
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    last_verified_at = Column(DateTime(timezone=True), nullable=True)
+    verification_status = Column(String(20), nullable=False, default="pending", server_default="pending")
+    verification_error = Column(String(300), nullable=True)
+    __table_args__ = (
+        UniqueConstraint("project_id", "provider", name="uq_wallet_project_provider"),
+        CheckConstraint("provider IN ('aws','gcp','azure','stripe','twilio')", name="ck_wallet_provider"),
+        CheckConstraint("verification_status IN ('ok','error','pending')", name="ck_wallet_status"),
+    )
+
+
+class NotificationConfig(Base):
+    __tablename__ = "notification_configs"
+    id = Column(String(36), primary_key=True, default=_new_id)
+    project_id = Column(String(36), ForeignKey("projects.id"), nullable=False, index=True)
+    channel = Column(String(20), nullable=False)
+    target = Column(Text, nullable=False)
+    enabled = Column(Boolean, nullable=False, default=True, server_default="true")
+    min_severity = Column(String(20), nullable=False, default="low", server_default="low")
+    created_by = Column(String(36), ForeignKey("users.id"), nullable=False)
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    __table_args__ = (
+        CheckConstraint("channel IN ('email','slack')", name="ck_notification_channel"),
+        CheckConstraint("min_severity IN ('low','medium','high','critical')", name="ck_notification_severity"),
+    )
+
+
+class AuditLog(Base):
+    __tablename__ = "audit_log"
+    id = Column(String(36), primary_key=True, default=_new_id)
+    organisation_id = Column(String(36), ForeignKey("organisations.id"), nullable=False)
+    actor_user_id = Column(String(36), ForeignKey("users.id"), nullable=True)
+    project_id = Column(String(36), ForeignKey("projects.id"), nullable=True)
+    incident_id = Column(String(36), ForeignKey("incident_records.incident_id"), nullable=True)
+    action = Column(String(80), nullable=False)
+    detail = Column(JSONB, nullable=True)
+    ip_address = Column(String(45), nullable=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    __table_args__ = (
+        Index("ix_audit_organisation_created", "organisation_id", created_at.desc()),
+        Index("ix_audit_project_created", "project_id", created_at.desc()),
+    )

@@ -65,7 +65,7 @@ def main():
                 else:
                     raise AssertionError("Populated rollback must preserve current research rows")
                 with engine.connect() as connection:
-                    assert connection.execute(text("SELECT version_num FROM alembic_version")).scalar() == "e8f9a0b1c2d3"
+                    assert connection.execute(text("SELECT version_num FROM alembic_version")).scalar() == "f2b31ad59101"
             with Session(engine) as db:
                 if scenario == "populated":
                     legacy = db.get(ExperimentRun, "legacy-research-run")

@@ -10,7 +10,7 @@ import config
 
 config.validate_config()
 
-from routers import assistant, incidents, repositories, research, settings, simulate, webhook  # noqa: E402 — must come after validate_config
+from routers import assistant, auth, incidents, repositories, research, settings, simulate, webhook  # noqa: E402 — must come after validate_config
 
 app = FastAPI(
     title="BreachTrace",
@@ -30,6 +30,7 @@ app.add_middleware(
 # Routers
 # ---------------------------------------------------------------------------
 app.include_router(webhook.router)
+app.include_router(auth.router)
 app.include_router(incidents.router)
 app.include_router(incidents.legacy_router)
 app.include_router(research.router)
