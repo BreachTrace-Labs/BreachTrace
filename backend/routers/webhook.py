@@ -32,6 +32,7 @@ from db.models import Project, User
 from detector.match_resolver import resolve_match
 from detector.scanner import scan
 from pipeline import run_collection_pipeline
+from notifications import notify_incident_created_by_id
 from rag.index import index_incident_in_background
 from window.calculator import is_key_revoked, record_exposure_start
 from audit import record
@@ -39,6 +40,14 @@ from audit import record
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/webhook", tags=["webhook"])
+
+
+def _run_initial_pipeline_and_notify(incident_id: str, credential: str, exposure_start: datetime, *, platform: str) -> None:
+    """Run initial forensics, then notify using the persisted severity."""
+    try:
+        run_collection_pipeline(incident_id, credential, exposure_start, platform=platform)
+    finally:
+        notify_incident_created_by_id(incident_id)
 
 
 # ---------------------------------------------------------------------------
@@ -246,7 +255,7 @@ async def github_webhook(
 
             if resolved.is_collectable:
                 background_tasks.add_task(
-                    run_collection_pipeline,
+                    _run_initial_pipeline_and_notify,
                     incident.incident_id,
                     credential,
                     exposure_start,
@@ -259,6 +268,7 @@ async def github_webhook(
                     db, incident.incident_id, resolved.unavailable_reason
                 )
                 background_tasks.add_task(index_incident_in_background, incident.incident_id)
+                background_tasks.add_task(notify_incident_created_by_id, incident.incident_id)
 
             # Launch revocation monitor for known experiment credentials only.
             if match_platform == "aws" and credential == config.EXPERIMENT_AWS_ACCESS_KEY_ID:

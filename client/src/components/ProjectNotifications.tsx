@@ -1,0 +1,94 @@
+import { useCallback, useEffect, useState, type FormEvent } from 'react'
+import { realClient } from '@/api/client'
+import { Button } from '@/components/ui/button'
+
+type Config = {
+  id: string
+  channel: 'email' | 'slack'
+  target: string | null
+  target_display: string
+  enabled: boolean
+  min_severity: string
+}
+
+const levels = ['low', 'medium', 'high', 'critical']
+const input = 'border rounded p-2 bg-transparent w-full'
+const errorMessage = (error: unknown) => {
+  const detail = (error as { response?: { data?: { detail?: unknown } } }).response?.data?.detail
+  return typeof detail === 'string' ? detail : 'Could not update notification settings.'
+}
+
+export default function ProjectNotifications({ projectId, projectName }: { projectId: string; projectName: string }) {
+  const [items, setItems] = useState<Config[]>([])
+  const [smtpReady, setSmtpReady] = useState(false)
+  const [channel, setChannel] = useState<'email' | 'slack'>('email')
+  const [target, setTarget] = useState('')
+  const [severity, setSeverity] = useState('low')
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
+  const [notice, setNotice] = useState('')
+
+  const load = useCallback(async () => {
+    try {
+      const { data } = await realClient.get<{ items: Config[]; smtp_configured: boolean }>(`/projects/${projectId}/notifications`)
+      setItems(data.items)
+      setSmtpReady(data.smtp_configured)
+      setError('')
+    } catch (err) { setError(errorMessage(err)) }
+  }, [projectId])
+
+  useEffect(() => { void load() }, [load])
+
+  async function save(action: () => Promise<unknown>, message: string) {
+    setBusy(true); setError(''); setNotice('')
+    try { await action(); await load(); setNotice(message) }
+    catch (err) { setError(errorMessage(err)) }
+    finally { setBusy(false) }
+  }
+
+  async function add(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    await save(async () => {
+      await realClient.post(`/projects/${projectId}/notifications`, { channel, target, min_severity: severity })
+      setTarget('')
+    }, 'Notification destination added.')
+  }
+
+  return <section className="border rounded p-5 space-y-4" aria-label={`Notifications for ${projectName}`}>
+    <div><h2 className="font-semibold">Notifications · {projectName}</h2>
+      <p className="text-sm text-muted-foreground">Send alerts when a new incident is processed. Severity filters use the forensic score.</p></div>
+    {!smtpReady && <p className="text-sm border rounded p-3">SMTP is not configured on the backend. Email notifications and welcome emails will not be delivered until SMTP_HOST and SMTP_FROM are set.</p>}
+    {error && <p role="alert" className="text-red-500 text-sm">{error}</p>}{notice && <p role="status" className="text-sm">{notice}</p>}
+    {items.length === 0 ? <p className="text-sm text-muted-foreground">No notification destinations configured.</p> : <div className="space-y-2">
+      {items.map(item => <div key={item.id} className="border rounded p-3 flex flex-wrap gap-3 items-center justify-between">
+        <div className="min-w-0"><strong className="capitalize">{item.channel}</strong><p className="text-sm break-all">{item.target_display}</p></div>
+        <label className="flex items-center gap-2 text-sm"><span>Minimum severity</span>
+          <select aria-label={`Minimum severity for ${item.target_display}`} className="border rounded p-2 bg-transparent" value={item.min_severity}
+            disabled={busy} onChange={e => void save(() => realClient.put(`/projects/${projectId}/notifications/${item.id}`, { min_severity: e.target.value }), 'Severity filter updated.')}>
+            {levels.map(level => <option key={level} value={level}>{level}</option>)}
+          </select>
+        </label>
+        <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={item.enabled} disabled={busy}
+          onChange={e => void save(() => realClient.put(`/projects/${projectId}/notifications/${item.id}`, { enabled: e.target.checked }), e.target.checked ? 'Notification enabled.' : 'Notification disabled.')} />Enabled</label>
+        {item.channel === 'slack' && <form className="flex gap-2 w-full" onSubmit={e => { e.preventDefault(); void save(async () => { await realClient.put(`/projects/${projectId}/notifications/${item.id}`, { target }); setTarget('') }, 'Slack webhook replaced.') }}>
+          <input className={input} type="url" aria-label="Replace Slack webhook URL" placeholder="Replace Slack webhook URL" value={target} onChange={e => setTarget(e.target.value)} />
+          <Button type="submit" variant="outline" disabled={busy || !target}>Replace</Button>
+        </form>}
+        <Button size="sm" variant="outline" disabled={busy} onClick={() => { if (window.confirm(`Remove this ${item.channel} notification destination?`)) void save(() => realClient.delete(`/projects/${projectId}/notifications/${item.id}`), 'Notification destination removed.') }}>Remove</Button>
+      </div>)}
+    </div>}
+    <form className="grid sm:grid-cols-2 gap-2" onSubmit={add}>
+      <select className={input} aria-label="Notification channel" value={channel} onChange={e => { setChannel(e.target.value as 'email' | 'slack'); setTarget('') }}>
+        <option value="email">Email</option><option value="slack">Slack incoming webhook</option>
+      </select>
+      <select className={input} aria-label="New notification minimum severity" value={severity} onChange={e => setSeverity(e.target.value)}>
+        {levels.map(level => <option key={level} value={level}>Minimum: {level}</option>)}
+      </select>
+      <input className={`${input} sm:col-span-2`} required aria-label={channel === 'email' ? 'Notification email address' : 'Slack incoming webhook URL'}
+        type={channel === 'email' ? 'email' : 'url'} autoComplete="off"
+        placeholder={channel === 'email' ? 'security@example.com' : 'https://hooks.slack.com/services/…'} value={target} onChange={e => setTarget(e.target.value)} />
+      <p className="sm:col-span-2 text-xs text-muted-foreground">Slack webhook URLs are encrypted and cannot be viewed after saving. Incidents without a severity score notify only destinations set to “low” and are labeled “not assessed.”</p>
+      <Button className="sm:col-span-2" type="submit" disabled={busy || !target}>Add notification destination</Button>
+    </form>
+  </section>
+}

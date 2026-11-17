@@ -4,6 +4,7 @@ import { useAuth } from '@/context/AuthContext'
 import { useProjects } from '@/context/ProjectContext'
 import { Button } from '@/components/ui/button'
 import ProjectWallet from '@/components/ProjectWallet'
+import ProjectNotifications from '@/components/ProjectNotifications'
 import OrgAudit from '@/components/OrgAudit'
 
 type Member = { id: string; email: string; full_name: string; role: string; is_active?: boolean }
@@ -26,7 +27,7 @@ export default function Admin() {
   useEffect(() => { void Promise.resolve().then(refreshTeam) }, [refreshTeam])
   useEffect(() => { void Promise.resolve().then(() => setRename(selected?.name ?? '')) }, [selected])
   useEffect(() => { if (user?.role === 'org_admin') void realClient.get<{ name: string }>('/org').then(({ data }) => setOrgName(data.name)).catch(() => setError('Could not load organisation details.')) }, [user?.role])
-  async function action(fn: () => Promise<unknown>, success: string) { setError(''); setNotice(''); try { await fn(); await refresh(); await refreshTeam(); setNotice(success) } catch (err) { setError(reason(err)) } }
+  async function action(fn: () => Promise<unknown>, success: string | ((result: unknown) => string)) { setError(''); setNotice(''); try { const result = await fn(); await refresh(); await refreshTeam(); setNotice(typeof success === 'function' ? success(result) : success) } catch (err) { setError(reason(err)) } }
   if (user?.role === 'developer') return <div className="space-y-4"><h1 className="text-xl font-bold">Projects</h1>{projects.length ? projects.map(p => <div key={p.id} className="border p-3 rounded">{p.name} · {p.github_repo_full_name}</div>) : <p>You have not been added to a project yet.</p>}</div>
   return <div className="max-w-4xl space-y-8"><h1 className="text-xl font-bold">Organisation and projects</h1>
     {(error || projectError) && <p role="alert" className="text-red-500">{error || projectError}</p>}{notice && <p role="status">{notice}</p>}
@@ -38,6 +39,7 @@ export default function Admin() {
       </form>
     </section>
     {selected && <ProjectWallet key={selected.id} projectId={selected.id} projectName={selected.name} />}
+    {selected && <ProjectNotifications key={`notifications-${selected.id}`} projectId={selected.id} projectName={selected.name} />}
     {selected && <section className="border rounded p-5 space-y-4"><h2 className="font-semibold">Members · {selected.name}</h2>
       <form className="flex gap-2" onSubmit={e => { e.preventDefault(); void action(() => realClient.put(`/projects/${selected.id}`, { name: rename }), 'Project renamed.') }}><input className={input} aria-label="Project name" required value={rename} onChange={e => setRename(e.target.value)} /><Button>Rename</Button></form>
       {members.map(m => <div key={m.id} className="flex justify-between gap-3 items-center text-sm"><span>{m.full_name} · {m.email} · {m.role}</span><Button size="sm" variant="outline" onClick={() => { if (window.confirm(`Remove ${m.full_name} from this project?`)) void action(() => realClient.delete(`/projects/${selected.id}/members/${m.id}`), 'Member removed.') }}>Remove</Button></div>)}
@@ -49,7 +51,7 @@ export default function Admin() {
     {user?.role === 'org_admin' && <section className="border rounded p-5 space-y-4"><h2 className="font-semibold">Team</h2>
       <form className="flex gap-2" onSubmit={e => { e.preventDefault(); void action(() => realClient.put('/org', { name: orgName }), 'Organisation name updated.') }}><input className={input} aria-label="Organisation name" required value={orgName} onChange={e => setOrgName(e.target.value)} /><Button>Save organisation name</Button></form>
       {users.map(u => <div key={u.id} className="flex flex-wrap gap-3 justify-between items-center text-sm"><span>{u.full_name} · {u.email} · {u.role}{u.is_active === false ? ' · inactive' : ''}</span>{u.role !== 'org_admin' && <div className="flex gap-2"><select className="border rounded p-1 bg-transparent" aria-label={`Role for ${u.full_name}`} value={u.role} onChange={e => void action(() => realClient.put(`/org/users/${u.id}`, { role: e.target.value }), 'Role updated.')}><option value="developer">Developer</option><option value="security_lead">Security lead</option></select><Button size="sm" variant="outline" onClick={() => void action(() => realClient.put(`/org/users/${u.id}`, { is_active: !u.is_active }), u.is_active ? 'User deactivated.' : 'User reactivated.')}>{u.is_active ? 'Deactivate' : 'Reactivate'}</Button></div>}</div>)}
-      <form className="grid sm:grid-cols-2 gap-2" onSubmit={e => { e.preventDefault(); void action(async () => { await realClient.post('/org/users/invite', { email, full_name: fullName, role, temporary_password: password }); setFullName(''); setEmail(''); setPassword('') }, 'User created. Share the temporary password securely; email delivery is not configured yet.') }}>
+      <form className="grid sm:grid-cols-2 gap-2" onSubmit={e => { e.preventDefault(); void action(async () => { const { data } = await realClient.post<{ welcome_email_sent: boolean }>('/org/users/invite', { email, full_name: fullName, role, temporary_password: password }); setFullName(''); setEmail(''); if (data.welcome_email_sent) setPassword(''); return data }, result => (result as { welcome_email_sent: boolean }).welcome_email_sent ? 'User created and welcome email sent.' : 'User created, but email delivery failed. The temporary password remains in the field so you can share it securely.') }}>
         <input className={input} required placeholder="Full name" aria-label="Full name" value={fullName} onChange={e => setFullName(e.target.value)} /><input className={input} type="email" required placeholder="Email" aria-label="Email" value={email} onChange={e => setEmail(e.target.value)} /><select className={input} aria-label="Role" value={role} onChange={e => setRole(e.target.value)}><option value="developer">Developer</option><option value="security_lead">Security lead</option></select><input className={input} type="password" minLength={10} required placeholder="Temporary password" aria-label="Temporary password" value={password} onChange={e => setPassword(e.target.value)} /><Button className="sm:col-span-2">Create user</Button>
       </form>
     </section>}

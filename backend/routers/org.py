@@ -11,6 +11,7 @@ from auth import get_active_user, hash_password, require_admin
 from audit import public as audit_public, record
 from db.database import get_db
 from db.models import AuditLog, Organisation, User
+from notifications import send_welcome_email
 
 router = APIRouter(prefix="/org", tags=["organisation"])
 
@@ -99,7 +100,10 @@ def invite(body: Invite, request: Request, user: User = Depends(require_admin), 
     except IntegrityError:
         db.rollback()
         raise HTTPException(409, "Email is already registered")
-    return {"user_id": target.id, "message": "User created; share the temporary password securely"}
+    org = db.get(Organisation, user.organisation_id)
+    email_sent = send_welcome_email(target, body.temporary_password, org.name if org else "your organisation")
+    message = "User created and welcome email sent" if email_sent else "User created; email could not be sent, share the temporary password securely"
+    return {"user_id": target.id, "welcome_email_sent": email_sent, "message": message}
 
 
 def find_target(db, actor, user_id):

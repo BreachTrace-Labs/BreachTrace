@@ -338,7 +338,7 @@ def dismiss_incident(incident_id: str, body: DismissRequest, request: Request,
 
 
 @router.post('/{incident_id}/assign', response_model=IncidentDetailOut, dependencies=[Depends(require_admin_or_lead)])
-def assign_incident(incident_id: str, body: AssignRequest, request: Request,
+def assign_incident(incident_id: str, body: AssignRequest, request: Request, background_tasks: BackgroundTasks,
                     incident: IncidentRecord = Depends(incident_access),
                     user: User = Depends(require_admin_or_lead), db: Session = Depends(get_db)):
     target = (db.query(User).join(ProjectMember, ProjectMember.user_id == User.id)
@@ -350,6 +350,8 @@ def assign_incident(incident_id: str, body: AssignRequest, request: Request,
     record(db, user, 'incident.assigned', request, project_id=incident.project_id,
            incident_id=incident.incident_id, detail={'assigned_to': target.id})
     db.commit()
+    from notifications import notify_incident_assigned_by_id
+    background_tasks.add_task(notify_incident_assigned_by_id, incident.incident_id, target.id)
     return get_incident_detail(incident_id, db)
 
 

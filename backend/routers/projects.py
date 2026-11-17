@@ -7,12 +7,68 @@ from sqlalchemy.orm import Session
 from access import assert_project_access
 from auth import get_active_user, require_admin, require_admin_or_lead, require_single_organisation
 from db.database import get_db
-from db.models import IncidentRecord, Project, ProjectMember, User
+from db.models import IncidentRecord, NotificationConfig, Project, ProjectMember, User
 from repository_snapshot import repository_name
 from audit import record
 from routers.org import user_data
 
 router = APIRouter(prefix="/projects", tags=["projects"])
+
+_NOTIFICATION_SEVERITIES = {"low", "medium", "high", "critical"}
+
+
+class NotificationCreate(BaseModel):
+    channel: str = Field(pattern="^(email|slack)$")
+    target: str = Field(min_length=1, max_length=500)
+    min_severity: str = "low"
+
+    @field_validator("min_severity")
+    @classmethod
+    def valid_severity(cls, value):
+        value = value.lower()
+        if value not in _NOTIFICATION_SEVERITIES:
+            raise ValueError("Choose low, medium, high, or critical")
+        return value
+
+
+class NotificationUpdate(BaseModel):
+    target: str | None = Field(default=None, min_length=1, max_length=500)
+    min_severity: str | None = None
+    enabled: bool | None = None
+
+    @field_validator("min_severity")
+    @classmethod
+    def valid_severity(cls, value):
+        if value is None:
+            return value
+        value = value.lower()
+        if value not in _NOTIFICATION_SEVERITIES:
+            raise ValueError("Choose low, medium, high, or critical")
+        return value
+
+
+def _validate_notification_target(channel: str, target: str) -> str:
+    target = target.strip()
+    if channel == "email":
+        from email.utils import parseaddr
+        if "\r" in target or "\n" in target:
+            raise HTTPException(422, "Enter a valid email address")
+        _, address = parseaddr(target)
+        if not address or "@" not in address or address.startswith("@") or address.endswith("@"):
+            raise HTTPException(422, "Enter a valid email address")
+        return address
+    from notifications import validate_slack_webhook
+    if not validate_slack_webhook(target):
+        raise HTTPException(422, "Use a Slack incoming webhook URL from hooks.slack.com")
+    return target
+
+
+def _notification_data(item: NotificationConfig):
+    return {"id": item.id, "channel": item.channel,
+            "target": item.target if item.channel == "email" else None,
+            "target_display": item.target if item.channel == "email" else "Slack webhook (encrypted)",
+            "enabled": item.enabled, "min_severity": item.min_severity,
+            "created_at": item.created_at}
 
 
 class ProjectCreate(BaseModel):
@@ -75,6 +131,80 @@ def create_project(body: ProjectCreate, request: Request, user: User = Depends(r
 @router.get("/{project_id}")
 def get_project(project_id: str, user: User = Depends(get_active_user), db: Session = Depends(get_db)):
     return project_data(db, assert_project_access(project_id, user, db))
+
+
+@router.get("/{project_id}/notifications")
+def list_notifications(project_id: str, user: User = Depends(require_admin_or_lead), db: Session = Depends(get_db)):
+    project = assert_project_access(project_id, user, db)
+    from notifications import smtp_configured
+    rows = db.query(NotificationConfig).filter_by(project_id=project.id).order_by(NotificationConfig.created_at).all()
+    return {"items": [_notification_data(item) for item in rows], "smtp_configured": smtp_configured()}
+
+
+@router.post("/{project_id}/notifications", status_code=201)
+def create_notification(project_id: str, body: NotificationCreate, request: Request,
+                        user: User = Depends(require_admin_or_lead), db: Session = Depends(get_db)):
+    project = assert_project_access(project_id, user, db)
+    target = _validate_notification_target(body.channel, body.target)
+    if body.channel == "slack":
+        try:
+            from crypto import encrypt_blob
+            ciphertext, iv = encrypt_blob({"url": target})
+            target = f"{iv}.{ciphertext}"
+        except RuntimeError:
+            raise HTTPException(503, "Configure wallet encryption before saving a Slack webhook") from None
+    item = NotificationConfig(project_id=project.id, channel=body.channel, target=target,
+                              enabled=True, min_severity=body.min_severity, created_by=user.id)
+    db.add(item)
+    db.flush()
+    record(db, user, "notification.created", request, project_id=project.id,
+           detail={"notification_id": item.id, "channel": item.channel, "min_severity": item.min_severity})
+    db.commit()
+    db.refresh(item)
+    return _notification_data(item)
+
+
+@router.put("/{project_id}/notifications/{notification_id}")
+def update_notification(project_id: str, notification_id: str, body: NotificationUpdate, request: Request,
+                        user: User = Depends(require_admin_or_lead), db: Session = Depends(get_db)):
+    project = assert_project_access(project_id, user, db)
+    item = db.query(NotificationConfig).filter_by(id=notification_id, project_id=project.id).first()
+    if item is None:
+        raise HTTPException(404, "Notification configuration not found")
+    changes = body.model_dump(exclude_unset=True)
+    if "target" in changes and changes["target"] is not None:
+        target = _validate_notification_target(item.channel, changes["target"])
+        if item.channel == "slack":
+            from crypto import encrypt_blob
+            try:
+                ciphertext, iv = encrypt_blob({"url": target})
+            except RuntimeError:
+                raise HTTPException(503, "Configure wallet encryption before saving a Slack webhook") from None
+            target = f"{iv}.{ciphertext}"
+        item.target = target
+    if "min_severity" in changes and changes["min_severity"] is not None:
+        item.min_severity = changes["min_severity"]
+    if "enabled" in changes and changes["enabled"] is not None:
+        item.enabled = changes["enabled"]
+    record(db, user, "notification.updated", request, project_id=project.id,
+           detail={"notification_id": item.id, "enabled": item.enabled, "min_severity": item.min_severity})
+    db.commit()
+    db.refresh(item)
+    return _notification_data(item)
+
+
+@router.delete("/{project_id}/notifications/{notification_id}")
+def delete_notification(project_id: str, notification_id: str, request: Request,
+                        user: User = Depends(require_admin_or_lead), db: Session = Depends(get_db)):
+    project = assert_project_access(project_id, user, db)
+    item = db.query(NotificationConfig).filter_by(id=notification_id, project_id=project.id).first()
+    if item is None:
+        raise HTTPException(404, "Notification configuration not found")
+    db.delete(item)
+    record(db, user, "notification.deleted", request, project_id=project.id,
+           detail={"notification_id": item.id, "channel": item.channel})
+    db.commit()
+    return {"message": "Notification configuration deleted"}
 
 
 @router.put("/{project_id}")
