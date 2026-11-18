@@ -6,8 +6,6 @@ import {
   Printer,
   ExternalLink,
   ShieldAlert,
-  Scale,
-  Building2,
   Activity,
   Clock3,
   GitCommitHorizontal,
@@ -32,8 +30,11 @@ import ForensicTimeline from '@/components/ForensicTimeline'
 import ForensicsUnavailable from '@/components/ForensicsUnavailable'
 import FinancialImpactPanel from '@/components/FinancialImpactPanel'
 import BlastRadiusSummary from '@/components/BlastRadiusSummary'
+import { inExposureWindow } from '@/lib/forensicEvidence'
 import AffectedResources from '@/components/AffectedResources'
 import SourceIPs from '@/components/SourceIPs'
+import RelatedCredentials from '@/components/RelatedCredentials'
+import ComplianceReview from '@/components/ComplianceReview'
 import ReactMarkdown from 'react-markdown'
 import RemediationChecklist from '@/components/RemediationChecklist'
 import EventAnalytics from '@/components/EventAnalytics'
@@ -246,6 +247,7 @@ const IncidentDetail: React.FC = () => {
   const [error, setError] = useState<string | null>(null)
   const [refreshing, setRefreshing] = useState(false)
   const [refreshNotice, setRefreshNotice] = useState<string | null>(null)
+  const [evidenceScope, setEvidenceScope] = useState<'window' | 'history'>('window')
   const [twilioAccount, setTwilioAccount] = useState('')
   const [azureClientId, setAzureClientId] = useState('')
   const [azureOwnershipConfirmed, setAzureOwnershipConfirmed] = useState(false)
@@ -253,6 +255,7 @@ const IncidentDetail: React.FC = () => {
 
   useEffect(() => {
     if (!id) return
+    setEvidenceScope('window')
     const load = async () => {
       setLoading(true)
       setError(null)
@@ -270,13 +273,13 @@ const IncidentDetail: React.FC = () => {
   }, [id])
 
   useEffect(() => {
-    if (!id || !incidentStatus || ['complete', 'error'].includes(incidentStatus)) return
+    if (!id || !incidentStatus || incidentStatus === 'error' || USE_MOCK) return
     const poll = setInterval(() => {
       client
         .get<IncidentRecord>(`/incidents/${id}`)
         .then(({ data }) => setIncident(data))
         .catch(() => { })
-    }, 3000)
+    }, incidentStatus === 'complete' ? 30000 : 3000)
     return () => clearInterval(poll)
   }, [id, incidentStatus])
 
@@ -287,7 +290,7 @@ const IncidentDetail: React.FC = () => {
     setRefreshNotice(null)
     try {
       const { data } = await client.post<RefreshResponse>(`/incidents/${id}/refresh`)
-      setIncident((current) => current ? { ...current, status: 'collecting', events: [], report_text: null } : current)
+      setIncident((current) => current ? { ...current, status: 'collecting', events: [], report_text: null, dynamic_blast_radius: null } : current)
       setRefreshNotice(data.message || 'Forensics refresh started.')
 
       const detail = await client.get<IncidentRecord>(`/incidents/${id}`)
@@ -352,7 +355,7 @@ const IncidentDetail: React.FC = () => {
   if (error || !incident) {
     return (
       <div className="max-w-2xl mx-auto mt-12 space-y-6">
-        <Button variant="ghost" size="sm" onClick={() => navigate('/')} className="hover:bg-accent -ml-3">
+        <Button variant="ghost" size="sm" onClick={() => navigate('/dashboard')} className="hover:bg-accent -ml-3">
           <ArrowLeft size={16} className="mr-2" />
           Back to Dashboard
         </Button>
@@ -375,6 +378,10 @@ const IncidentDetail: React.FC = () => {
   const identity = platformIdentity(incident, incident.events ?? [])
   const exposureTimestamp = new Date(incident.exposure_start).getTime()
   const exposureEvents = incident.events.filter(event => new Date(event.timestamp).getTime() >= exposureTimestamp)
+  const windowEvents = inExposureWindow(incident.events, incident.exposure_start, incident.exposure_end)
+  const evidenceEvents = evidenceScope === 'window' ? windowEvents : incident.events
+  const collectionInProgress = ['detecting', 'collecting', 'classifying', 'scoring', 'reporting'].includes(incident.status)
+  const collectionFailed = incident.status === 'error' || incident.collection_status === 'error'
 
   return (
     <div className="max-w-7xl mx-auto space-y-8 pb-12 animate-in fade-in duration-500">
@@ -382,7 +389,7 @@ const IncidentDetail: React.FC = () => {
       {/* Top Header Section */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b pb-6">
         <div className="flex min-w-0 items-center gap-4">
-          <Button variant="outline" size="icon" aria-label="Back to incident monitor" onClick={() => navigate('/')} className="rounded-sm shadow-sm">
+          <Button variant="outline" size="icon" aria-label="Back to incident monitor" onClick={() => navigate('/dashboard')} className="rounded-sm shadow-sm">
             <ArrowLeft size={18} />
           </Button>
           <div className="min-w-0">
@@ -426,7 +433,7 @@ const IncidentDetail: React.FC = () => {
       <div className="grid grid-cols-1 xl:grid-cols-12 gap-8">
 
         {/* Left Column (Main Info) */}
-        <div className="xl:col-span-8 space-y-8">
+        <div className="xl:col-span-8 min-w-0 space-y-8">
 
           {/* Overview Card */}
           <div className="bg-card border rounded-sm shadow-sm overflow-hidden">
@@ -518,6 +525,8 @@ const IncidentDetail: React.FC = () => {
                 )}
               </div>
 
+              <RelatedCredentials key={incident.incident_id} incidentId={incident.incident_id} />
+
               {/* Leaked principal — named per platform. AWS reports an access key
                   ID, GCP a service account email, Azure a client ID; showing an
                   empty "Access Key ID" on a GCP incident reads as a bug. */}
@@ -535,52 +544,7 @@ const IncidentDetail: React.FC = () => {
               )}
             </div>
 
-            {(incident.gdpr_flag || incident.pcidss_flag || incident.soc2_flag) && (
-              <div className="border-t bg-orange-500/5 dark:bg-orange-500/10 border-orange-500/20 px-6 sm:px-8 py-5">
-                <div className="flex items-center gap-2 mb-4">
-                  <AlertTriangle className="text-orange-500" size={18} />
-                  <h3 className="text-sm font-semibold text-orange-700 dark:text-orange-400">Potential compliance relevance</h3>
-                </div>
-                <div className="grid sm:grid-cols-3 gap-4">
-                  {incident.gdpr_flag && (
-                    <div className="bg-background rounded-sm p-3 border shadow-sm">
-                      <div className="flex items-center gap-2 mb-1 text-orange-600 dark:text-orange-400">
-                        <ShieldAlert size={14} />
-                        <span className="text-xs font-bold uppercase">GDPR — Art. 33</span>
-                      </div>
-                      <p className="text-xs text-muted-foreground">Review the evidence with your privacy team. This flag does not establish a reportable breach.</p>
-                    </div>
-                  )}
-                  {incident.pcidss_flag && (
-                    <div className="bg-background rounded-sm p-3 border shadow-sm">
-                      <div className="flex items-center gap-2 mb-1 text-orange-600 dark:text-orange-400">
-                        <Scale size={14} />
-                        <span className="text-xs font-bold uppercase">PCI-DSS — Req 12</span>
-                      </div>
-                      <p className="text-xs text-muted-foreground">Review payment-data exposure and your incident response obligations with the responsible team.</p>
-                    </div>
-                  )}
-                  {incident.soc2_flag && (
-                    <div className="bg-background rounded-sm p-3 border shadow-sm">
-                      <div className="flex items-center gap-2 mb-1 text-orange-600 dark:text-orange-400">
-                        <Building2 size={14} />
-                        <span className="text-xs font-bold uppercase">SOC 2 — CC6/A1</span>
-                      </div>
-                      <p className="text-xs text-muted-foreground">Review the relevant security controls and incident evidence with your compliance team.</p>
-                    </div>
-                  )}
-                </div>
-                {incident.compliance_reasons && incident.compliance_reasons.length > 0 && (
-                  <div className="mt-4 pt-3 border-t border-orange-500/10">
-                    <ul className="list-inside list-disc space-y-1">
-                      {incident.compliance_reasons.map((reason, i) => (
-                        <li key={i} className="text-xs text-orange-700/80 dark:text-orange-300/80 pl-2">{reason}</li>
-                      ))}
-                    </ul>
-                  </div>
-                )}
-              </div>
-            )}
+            <ComplianceReview incident={incident} />
 
             {/* Financial impact moved to FinancialImpactPanel in the sidebar.
                 It renders one figure per currency and separates money that
@@ -660,22 +624,32 @@ const IncidentDetail: React.FC = () => {
         </div>
 
         {/* Right Column (Sidebar) */}
-        <div className="xl:col-span-4 space-y-6">
+        <div className="xl:col-span-4 min-w-0 space-y-6">
           <div className="xl:sticky xl:top-24 space-y-6">
             {/* First in the stack: on a Stripe incident this is real money
                 moved, which should not sit below three other cards. Self-hides
                 when there is nothing to report. */}
             {forensic ? <>
-              <FinancialImpactPanel incident={incident} />
-              <BlastRadiusSummary incident={{...incident, events: exposureEvents}} />
-              <SourceIPs events={exposureEvents} />
-              <AffectedResources events={exposureEvents} />
-            </> : <div className="rounded-sm border bg-card p-5 space-y-3 text-sm">
+              <BlastRadiusSummary incident={incident} />
+            </> : <><BlastRadiusSummary incident={incident} /><div className="rounded-sm border bg-card p-5 space-y-3 text-sm">
               <h2 className="font-semibold">Detection evidence</h2>
               <p>Credential candidate found · validity not verified</p>
               <p className="text-muted-foreground">Usage, billing impact and severity have not been assessed by BreachTrace. Review available records in the provider console.</p>
               {synthetic && <p className="text-muted-foreground">This example uses a fabricated key. No provider request was made.</p>}
-            </div>}
+            </div></>}
+            <div className="forensic-range">
+              <p className="forensic-range-title">Evidence time range</p>
+              <p className="forensic-range-intro">Applies to financial activity, source IPs and resources below.</p>
+              <div className="forensic-range-options" role="group" aria-label="Event time range">
+                <button type="button" aria-pressed={evidenceScope === 'window'} onClick={() => setEvidenceScope('window')}>Exposure window <span>{windowEvents.length}</span></button>
+                <button type="button" aria-pressed={evidenceScope === 'history'} onClick={() => setEvidenceScope('history')}>All history <span>{incident.events.length}</span></button>
+              </div>
+              <p className="forensic-range-help">{evidenceScope === 'window' ? windowEvents.length === 0 && incident.events.length > 0 ? 'No events fall within the recorded exposure window. Choose All history to view events outside it as context.' : 'From the estimated exposure start through the recorded end, if present.' : 'Includes events outside the exposure window. These are context, not evidence of activity caused by this exposure.'}</p>
+              {!forensic && <p className="forensic-range-help">This credential type is detection only; provider activity is not collected for this finding.</p>}
+            </div>
+            {forensic && <FinancialImpactPanel incident={incident} scope={evidenceScope} />}
+            <SourceIPs events={evidenceEvents} platform={platform} collecting={collectionInProgress} error={collectionFailed} />
+            <AffectedResources events={evidenceEvents} collecting={collectionInProgress} error={collectionFailed} />
             <RemediationChecklist steps={incident.remediation_steps} />
           </div>
         </div>

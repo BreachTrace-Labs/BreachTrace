@@ -18,9 +18,9 @@ export const LANDING = {
     { value: 2, suffix: '', description: 'Forensic tiers distinguish supported collection from detection-only findings.', source: 'FORENSIC TIERS' },
   ],
   highlights: [
-    { title: 'For developers', description: 'Scan the current default branch for credential candidates or monitor future pushes with a GitHub webhook.', label: 'DETECT EXPOSURE' },
+    { title: 'For project members', description: 'Review incidents in assigned projects and document a dismissal when appropriate.', label: 'REVIEW FINDINGS' },
     { title: 'For responders', description: 'Review available provider events, see the exposure timeline, and refresh supported investigations.', label: 'INVESTIGATE ACTIVITY' },
-    { title: 'For teams', description: 'Assign incidents, document dismissals, and review the audit trail within your project.', label: 'COORDINATE RESPONSE' },
+    { title: 'For administrators', description: 'Manage projects and access, invite users, and review the organisation audit log.', label: 'COORDINATE RESPONSE' },
   ],
   capabilities: ['Project access', 'Signed webhooks', 'Masked credentials', 'Encrypted wallet', 'Audit trail', 'Incident assignment', 'PDF reports', 'Email & Slack alerts'],
   tools: ['GitHub', 'AWS', 'Google Cloud', 'Azure', 'Stripe', 'Twilio', 'OpenAI', 'Anthropic', 'Gemini', 'Ollama', 'Local GGUF'],

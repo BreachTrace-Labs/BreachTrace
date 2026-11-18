@@ -54,8 +54,10 @@ def test_wallet_lifecycle_and_role_boundaries(wallet_client):
     dev = login('dev@example.com','dev password')
     client.post('/auth/change-password', headers=dev, json={'current_password':'dev password','new_password':'new dev password'})
     assert client.post(f'/projects/{project}/members', headers=admin, json={'user_id':invited}).status_code == 201
-    assert client.get(path, headers=dev).status_code == 403
+    assert client.get(path, headers=dev).status_code == 200
     entry_id = entries[0]['id']
+    assert client.post(f'{path}/{entry_id}/verify', headers=dev).status_code == 403
+    assert client.delete(f'{path}/{entry_id}', headers=dev).status_code == 403
     assert client.post(f'{path}/{entry_id}/verify', headers=admin).status_code == 202
     assert client.delete(f'{path}/{entry_id}', headers=admin).status_code == 200
     assert client.get(path, headers=admin).json() == []
@@ -167,3 +169,40 @@ def test_azure_verification_reads_activity_log_with_supplied_subscription(monkey
     assert ('subscription', 'sub') in calls
     assert calls[-1][0] == 'list'
     assert 'eventTimestamp ge' in calls[-1][1]['filter']
+
+
+def test_developer_can_add_but_not_replace_project_reader(wallet_client):
+    client, factory, _ = wallet_client
+    client.post('/auth/register', json={'org_name':'Acme','slug':'acme','admin_email':'admin@example.com',
+                'admin_password':'admin password','admin_full_name':'Admin'})
+    def login(email, password):
+        return {'Authorization': 'Bearer ' + client.post('/auth/token', data={'username':email, 'password':password}).json()['access_token']}
+    admin = login('admin@example.com', 'admin password')
+    a = client.post('/projects', headers=admin, json={'name':'Assigned','github_repo_url':'https://github.com/acme/assigned'}).json()['id']
+    b = client.post('/projects', headers=admin, json={'name':'Other','github_repo_url':'https://github.com/acme/other'}).json()['id']
+    dev_id = client.post('/org/users/invite', headers=admin, json={'email':'dev@example.com','full_name':'Dev',
+        'role':'developer','temporary_password':'temporary password'}).json()['user_id']
+    dev = login('dev@example.com', 'temporary password')
+    assert client.post('/auth/change-password', headers=dev, json={'current_password':'temporary password','new_password':'new password 123'}).status_code == 200
+    client.post(f'/projects/{a}/members', headers=admin, json={'user_id':dev_id})
+    path = f'/projects/{a}/wallet'
+    payload = {'provider':'stripe','label':'Reader','credentials':{'api_key':'rk_test_fakeReaderForTest'}}
+    assert client.get(f'/projects/{b}/wallet', headers=dev).status_code == 403
+    assert client.post(f'/projects/{b}/wallet', headers=dev, json=payload).status_code == 403
+    response = client.post(path, headers=dev, json=payload)
+    assert response.status_code == 202 and payload['credentials']['api_key'] not in response.text
+    entry_id = response.json()['id']
+    entries = client.get(path, headers=dev).json()
+    assert len(entries) == 1 and 'credentials' not in entries[0] and payload['credentials']['api_key'] not in str(entries)
+    assert client.post(path, headers=dev, json=payload).status_code == 409
+    assert client.post(f'{path}/{entry_id}/verify', headers=dev).status_code == 403
+    assert client.delete(f'{path}/{entry_id}', headers=dev).status_code == 403
+    with factory() as db:
+        row = db.get(CredentialWalletEntry, entry_id)
+        assert row.created_by == dev_id and payload['credentials']['api_key'] not in row.encrypted_blob
+        assert any(entry.action == 'wallet.created' and entry.actor_user_id == dev_id for entry in db.query(AuditLog).all())
+    client.post(f'/projects/{b}/members', headers=admin, json={'user_id':dev_id})
+    assert {project['id'] for project in client.get('/projects', headers=dev).json()} == {a, b}
+    assert client.get(f'/projects/{b}/wallet', headers=dev).json() == []
+    client.delete(f'/projects/{a}/members/{dev_id}', headers=admin)
+    assert client.get(path, headers=dev).status_code == 403

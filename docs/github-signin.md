@@ -2,6 +2,10 @@
 
 GitHub sign-in is optional and only signs in an existing, active BreachTrace user whose email is verified on the GitHub account. An administrator must create or invite the user first. A GitHub account with verified emails matching more than one active BreachTrace account is rejected. Existing roles, project membership and mandatory temporary-password changes remain in effect. The GitHub token is used only to fetch identity and verified emails; BreachTrace does not store it or use it to register repository webhooks.
 
+## Invite a GitHub user
+
+After configuring GitHub sign-in, an organisation administrator can open **Admin → Users → Invite user**, choose **GitHub (verified email)**, and enter an email verified on the recipient's GitHub account. The account has no BreachTrace password; the queued welcome email instructs the recipient to use **Continue with GitHub**. SMTP must be configured for delivery. Add the invited user to the appropriate projects separately. Password invitations continue to require a temporary password change.
+
 ## Configure the local app
 
 1. Register a GitHub OAuth app with homepage `http://127.0.0.1:5173` and authorization callback URL `http://127.0.0.1:5173/auth/github/callback`. Use the same host consistently: `localhost` and `127.0.0.1` are different browser origins.

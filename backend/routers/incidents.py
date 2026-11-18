@@ -30,10 +30,12 @@ from audit import public as audit_public, record
 from db.crud import get_incident, list_incidents, reset_incident_for_refresh
 from db.database import get_db
 from db.models import AuditLog, CREDENTIAL_TYPE_TO_PLATFORM, ExperimentRun, IncidentRecord, ProjectMember, User, ForensicEvent as StoredEvent
-from normalizer.time_window import after_exposure
+from normalizer.time_window import after_exposure, within_exposure
 from routers.settings import local_operator
 from pipeline import run_collection_pipeline
 from redaction import mask_identifier, redact
+from scorer.blast_radius import dynamic_blast_radius
+from scorer.compliance import compliance_review_flags
 from scorer.severity import (
     build_compliance_reasons,
     check_gdpr_flag,
@@ -177,12 +179,15 @@ class IncidentDetailOut(IncidentSummaryOut):
     pcidss_flag: bool = False
     soc2_flag: bool = False
     compliance_reasons: list[str] = []
+    compliance_review_flags: list[dict[str, str]] = []
     # Structured view of estimated_financial_impact. Computed per request from
     # the same events, following the precedent of the compliance flags above —
     # so no migration is needed and existing incidents get it immediately.
     financial_impact_lines: list[FinancialImpactLineOut] = []
+    financial_history_lines: list[FinancialImpactLineOut] = []
     collection_status: Optional[str] = None
     collection_error: Optional[str] = None
+    dynamic_blast_radius: dict | None = None
 
     @field_validator("report_text", "remediation_steps", mode="before")
     @classmethod
@@ -392,26 +397,66 @@ def get_incident_detail(
         out.collection_status = latest.status
         out.collection_error = redact(latest.error_message)
 
+    out.dynamic_blast_radius = redact(dynamic_blast_radius(incident.events, incident.exposure_start, forensic_tier=incident.forensic_tier, incident_status=incident.status, collection_status=out.collection_status, exposure_end=incident.exposure_end))
+
     # Compute per-regulation compliance flags from live event data.
     exposure_events = after_exposure(incident.events, incident.exposure_start)
-    gdpr = check_gdpr_flag(exposure_events)
-    pcidss = check_pcidss_flag(exposure_events)
-    soc2 = check_soc2_flag(exposure_events)
+    compliance_events = within_exposure(incident.events, incident.exposure_start, incident.exposure_end) if incident.forensic_tier != 2 else []
+    gdpr = check_gdpr_flag(compliance_events)
+    pcidss = check_pcidss_flag(compliance_events)
+    soc2 = check_soc2_flag(compliance_events)
+    out.compliance_review_flags = compliance_review_flags(incident.credential_type, compliance_events, forensic_tier=incident.forensic_tier)
     out.pcidss_flag = pcidss
     out.soc2_flag = soc2
-    # Refresh gdpr_flag in case the DB value pre-dates the improved detector.
-    out.gdpr_flag = incident.gdpr_flag or gdpr
+    # Historical rows stored a combined GDPR/PCI flag; recompute from evidence.
+    out.gdpr_flag = gdpr
     out.compliance_reasons = build_compliance_reasons(
         gdpr=out.gdpr_flag,
         pcidss=pcidss,
         soc2=soc2,
-        events=exposure_events,
+        events=compliance_events,
     )
     out.financial_impact_lines = [
         FinancialImpactLineOut(**asdict(line))
-        for line in compute_financial_impact_lines(exposure_events)
+        for line in compute_financial_impact_lines(within_exposure(incident.events, incident.exposure_start, incident.exposure_end))
+    ]
+    out.financial_history_lines = [
+        FinancialImpactLineOut(**asdict(line))
+        for line in compute_financial_impact_lines(incident.events)
     ]
     return add_user_names(out, incident, db)
+
+
+class RelatedCredentialOut(BaseModel):
+    incident_id: str
+    credential_type: str
+    credential_hint: str
+    status: str
+    forensic_tier: int
+    dismissed: bool
+
+
+class RelatedCredentialsOut(BaseModel):
+    commit_available: bool
+    total: int
+    offset: int
+    items: list[RelatedCredentialOut]
+
+
+@router.get("/{incident_id}/related-credentials", response_model=RelatedCredentialsOut)
+def related_credentials(incident: IncidentRecord = Depends(incident_access), db: Session = Depends(get_db),
+                        offset: int = 0, limit: int = 25):
+    """Other incidents on the exact commit in this same authorised project."""
+    offset, limit = max(0, offset), min(max(1, limit), 100)
+    if not incident.commit_hash or not incident.commit_hash.strip():
+        return RelatedCredentialsOut(commit_available=False, total=0, offset=offset, items=[])
+    query = db.query(IncidentRecord).filter(IncidentRecord.project_id == incident.project_id,
+        IncidentRecord.commit_hash == incident.commit_hash, IncidentRecord.incident_id != incident.incident_id)
+    rows = query.order_by(IncidentRecord.created_at.asc(), IncidentRecord.incident_id.asc()).offset(offset).limit(limit).all()
+    return RelatedCredentialsOut(commit_available=True, total=query.count(), offset=offset,
+        items=[RelatedCredentialOut(incident_id=row.incident_id, credential_type=redact(row.credential_type),
+            credential_hint=redact(row.credential_hint), status=row.status, forensic_tier=row.forensic_tier,
+            dismissed=row.dismissed) for row in rows])
 
 
 @router.get("/{incident_id}/report.pdf", dependencies=[Depends(incident_access)])

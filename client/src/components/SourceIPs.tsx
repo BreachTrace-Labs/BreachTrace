@@ -1,105 +1,21 @@
 import type { ForensicEvent } from '../types'
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
-import { Globe } from 'lucide-react'
+import { Globe, Info } from 'lucide-react'
 
-interface Props {
-  events: ForensicEvent[]
-}
-
-type IPEntry = {
-  ip: string
-  count: number
-  actions: string[]
-}
-
-function buildIPTable(events: ForensicEvent[]): IPEntry[] {
-  const map = new Map<string, IPEntry>()
-  for (const e of events) {
-    const ip = e.source_ip ?? 'unknown'
-    if (!map.has(ip)) map.set(ip, { ip, count: 0, actions: [] })
-    const entry = map.get(ip)!
-    entry.count++
-    if (e.api_action && !entry.actions.includes(e.api_action)) {
-      entry.actions.push(e.api_action)
-    }
+export default function SourceIPs({ events, platform, collecting, error }: { events: ForensicEvent[]; platform: string; collecting: boolean; error: boolean }) {
+  const counts = new Map<string, { count: number; actions: Set<string> }>()
+  for (const event of events) {
+    const ip = event.source_ip?.trim()
+    if (!ip) continue
+    const entry = counts.get(ip) ?? { count: 0, actions: new Set<string>() }
+    entry.count++; if (event.api_action) entry.actions.add(event.api_action); counts.set(ip, entry)
   }
-  return Array.from(map.values()).sort((a, b) => b.count - a.count)
+  const missing = events.filter(event => !event.source_ip?.trim()).length
+  const entries = [...counts.entries()].sort((a,b) => b[1].count-a[1].count)
+  return <Card className="forensic-card"><CardHeader className="forensic-card-header"><div className="forensic-card-heading"><span className="forensic-icon"><Globe size={17}/></span><div><CardTitle>Source IPs</CardTitle><p>Addresses reported by the provider</p></div></div>{entries.length > 0 && <span className="forensic-count">{entries.length} {entries.length === 1 ? 'address' : 'addresses'}</span>}</CardHeader><CardContent className="forensic-card-content">
+    {entries.length ? <ul className="forensic-list">{entries.map(([ip, entry]) => <li key={ip}><div className="forensic-list-title"><code>{ip}</code><span>{entry.count} {entry.count === 1 ? 'event' : 'events'}</span></div>{entry.actions.size > 0 && <p>{[...entry.actions].slice(0,3).join(', ')}{entry.actions.size > 3 && ` +${entry.actions.size - 3} more`}</p>}</li>)}</ul> : <div className="forensic-empty"><Globe size={18}/><div><strong>No source IPs available</strong><p>{collecting ? 'Collection is in progress.' : error ? 'Collection failed; source IPs could not be assessed.' : events.length ? 'The selected events do not contain source IPs.' : 'No events in the selected time range. Source IPs are unknown.'}</p></div></div>}
+    {missing > 0 && entries.length > 0 && <p className="forensic-meta">{missing} {missing === 1 ? 'event has' : 'events have'} no source IP.</p>}
+    {platform === 'stripe' && <p className="forensic-provider-note"><Info size={14}/>Stripe Events and the supported sandbox request stream do not supply source IPs.</p>}
+    {platform === 'twilio' && <p className="forensic-provider-note"><Info size={14}/>Twilio message and call records do not supply source IPs; some Monitor events may.</p>}
+  </CardContent></Card>
 }
-
-function ipLabel(ip: string) {
-  if (ip === 'unknown') return 'unknown'
-  // AWS internal calls show up as service DNS names
-  if (ip.includes('.amazonaws.com') || ip === 'AWS Internal') return ip
-  return ip
-}
-
-const SourceIPs: React.FC<Props> = ({ events }) => {
-  const ips = buildIPTable(events)
-
-  return (
-    <Card>
-      <CardHeader className="pb-3">
-        <CardTitle className="flex items-center gap-2 text-sm">
-          <Globe size={13} strokeWidth={2} />
-          Source IPs
-          {ips.length > 0 && (
-            <span
-              className="ml-auto text-xs font-mono px-1.5 py-0.5 rounded"
-              style={{ backgroundColor: 'var(--color-muted)', color: 'var(--color-muted-foreground)' }}
-            >
-              {ips.length}
-            </span>
-          )}
-        </CardTitle>
-      </CardHeader>
-      <CardContent>
-        {ips.length === 0 ? (
-          <p className="text-sm" style={{ color: 'var(--color-muted-foreground)' }}>
-            No IP data collected yet
-          </p>
-        ) : (
-          <div className="space-y-3">
-            {ips.map(({ ip, count, actions }) => (
-              <div
-                key={ip}
-                className="border-l-2 pl-3 py-1"
-                style={{ borderColor: 'var(--color-border)' }}
-              >
-                <div className="flex items-center justify-between gap-2">
-                  <span
-                    className="font-mono text-xs font-semibold truncate flex-1 min-w-0"
-                    style={{ color: 'var(--color-foreground)' }}
-                    title={ip}
-                  >
-                    {ipLabel(ip)}
-                  </span>
-                  <span
-                    className="text-xs font-mono shrink-0 px-1.5 py-0.5 rounded"
-                    style={{
-                      backgroundColor: 'var(--color-muted)',
-                      color: 'var(--color-muted-foreground)',
-                    }}
-                  >
-                    {count} {count === 1 ? 'call' : 'calls'}
-                  </span>
-                </div>
-                {actions.length > 0 && (
-                  <p
-                    className="text-[11px] mt-0.5 truncate"
-                    style={{ color: 'var(--color-muted-foreground)' }}
-                    title={actions.join(', ')}
-                  >
-                    {actions.slice(0, 3).join(', ')}
-                    {actions.length > 3 && ` +${actions.length - 3} more`}
-                  </p>
-                )}
-              </div>
-            ))}
-          </div>
-        )}
-      </CardContent>
-    </Card>
-  )
-}
-
-export default SourceIPs

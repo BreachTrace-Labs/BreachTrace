@@ -47,6 +47,17 @@ export interface FinancialImpactLine {
   actual: boolean
 }
 
+export interface DynamicBlastRadius {
+  status: 'unavailable' | 'collecting' | 'error' | 'observed' | 'no_observed_activity'
+  severity: IncidentRecord['overall_severity']
+  event_count: number
+  successful_count: number
+  failed_count: number
+  resource_count: number
+  last_observed_at: string | null
+  platforms: { platform: string; event_count: number; successful_count: number; failed_count: number; resource_count: number; categories: { category: string; count: number }[]; actions: { action: string; count: number }[] }[]
+}
+
 export interface IncidentRecord {
   incident_id: string
   project_id?: string | null
@@ -80,6 +91,7 @@ export interface IncidentRecord {
   report_source?: ReportSource | null
   collection_status?: string | null
   collection_error?: string | null
+  dynamic_blast_radius?: DynamicBlastRadius | null
   remediation_steps: string[]
   gdpr_flag: boolean
   estimated_financial_impact: string | null
@@ -101,10 +113,12 @@ export interface IncidentRecord {
   // endpoint only. Optional: an older backend omits it, and
   // FinancialImpactPanel falls back to rendering the string.
   financial_impact_lines?: FinancialImpactLine[]
+  financial_history_lines?: FinancialImpactLine[]
   // Computed by the detail endpoint — may be absent on list responses
   pcidss_flag?: boolean
   soc2_flag?: boolean
   compliance_reasons?: string[]
+  compliance_review_flags?: { id: string; reason: string }[]
 }
 
 // IncidentSummary matches the list endpoint response (no events/report fields)

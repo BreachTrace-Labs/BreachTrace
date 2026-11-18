@@ -1,7 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useState } from 'react'
 import { realClient, USE_MOCK } from '@/api/client'
 
-export type User = { id: string; email: string; full_name: string; role: 'org_admin' | 'security_lead' | 'developer'; organisation_id: string; must_change_password: boolean }
+export type User = { id: string; email: string; full_name: string; role: 'org_admin' | 'security_lead' | 'developer'; organisation_id: string; must_change_password: boolean; has_password?: boolean }
 type Auth = { user: User | null; loading: boolean; login: (email: string, password: string) => Promise<void>; logout: () => Promise<void>; reload: () => Promise<void>; startPreview: () => void; githubLogin: (code: string, verifier: string) => Promise<User> }
 const AuthContext = createContext<Auth | null>(null)
 const mockUser: User = { id: 'preview', email: '', full_name: 'Preview', role: 'org_admin', organisation_id: '', must_change_password: false }

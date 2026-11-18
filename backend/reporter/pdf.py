@@ -54,8 +54,7 @@ def build_incident_pdf(inc) -> bytes:
         ["Estimated start", _fmt(inc.exposure_start)],
         ["Closure recorded", _fmt(inc.exposure_end) if inc.exposure_end else "Not confirmed"],
         ["Status", inc.status],
-        ["Compliance flags", ", ".join(n for n, f in (("GDPR", inc.gdpr_flag), ("PCI-DSS", inc.pcidss_flag),
-                                                      ("SOC 2", inc.soc2_flag)) if f) or "none"],
+        ["Framework review", ", ".join({"owasp-nhi2": "OWASP NHI2", "gdpr-32-33": "GDPR", "pci-incident-response": "PCI DSS", "soc2-security": "SOC 2"}.get(f.get("id"), "Review") for f in getattr(inc, "compliance_review_flags", [])) or "Not assessed"],
     ]
     t = Table([[Paragraph(f"<b>{a}</b>", body), Paragraph(escape(str(b)), body)] for a, b in rows],
               colWidths=[38 * mm, 140 * mm])
@@ -64,6 +63,7 @@ def build_incident_pdf(inc) -> bytes:
                            ("VALIGN", (0, 0), (-1, -1), "TOP")]))
     s += [Spacer(1, 6), t]
     s.append(Paragraph("The start is estimated from the detected commit. A recorded closure time does not independently establish provider-side revocation.", body))
+    s.append(Paragraph("Framework review signals suggest areas for human review; they do not determine applicability, a breach, or compliance.", body))
     profile = PLATFORM_PROFILES.get((inc.platform or '').lower())
     if profile and profile.blind_spot:
         s.append(Paragraph(escape(profile.blind_spot), body))

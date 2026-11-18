@@ -1,7 +1,7 @@
 import { useEffect } from 'react'
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu'
 import { Link, NavLink, useLocation, useNavigate } from 'react-router-dom'
-import { Activity, Bell, ChevronDown, FlaskConical, Link2, LogOut, Moon, Search, Settings, Sun, Users } from 'lucide-react'
+import { Activity, Bell, ChevronDown, FlaskConical, KeyRound, Link2, LogOut, Moon, Search, Settings, Sun, Users } from 'lucide-react'
 import { USE_MOCK } from '@/api/client'
 import { BrandLogo } from '@/components/BrandLogo'
 import { useAuth } from '@/context/AuthContext'
@@ -12,6 +12,7 @@ import './app-shell.css'
 const nav = [
   { to: '/dashboard', label: 'Dashboard', icon: Activity },
   { to: '/connect', label: 'Connect', icon: Link2 },
+  { to: '/project-connections', label: 'Project connections', icon: KeyRound },
   { to: '/search', label: 'Search', icon: Search },
   { to: '/research', label: 'Research', icon: FlaskConical },
   { to: '/settings', label: 'Settings', icon: Settings },
@@ -25,12 +26,12 @@ function AccountMenu() {
     navigate('/', { replace: true })
   }
   const initials = (user?.full_name || 'User').split(/\s+/).filter(Boolean).slice(0, 2).map(s => s[0]).join('').toUpperCase()
-  return <DropdownMenu.Root><DropdownMenu.Trigger className="shell-account" aria-label="Account menu"><span className="shell-avatar">{initials}</span><span className="shell-account-name"><strong>{user?.full_name || 'Account'}</strong><small>{user?.role.replace('_', ' ')}</small></span><ChevronDown size={15}/></DropdownMenu.Trigger><DropdownMenu.Portal><DropdownMenu.Content className="shell-menu" sideOffset={6} align="end"><DropdownMenu.Label className="shell-menu-label">{user?.email || 'Preview session'}</DropdownMenu.Label><DropdownMenu.Item asChild><Link to="/settings">Profile & settings</Link></DropdownMenu.Item><DropdownMenu.Item asChild><Link to="/change-password">Change password</Link></DropdownMenu.Item><DropdownMenu.Item onSelect={() => void signOut()}><LogOut size={15}/> Sign out</DropdownMenu.Item></DropdownMenu.Content></DropdownMenu.Portal></DropdownMenu.Root>
+  return <DropdownMenu.Root><DropdownMenu.Trigger className="shell-account" aria-label="Account menu"><span className="shell-avatar">{initials}</span><span className="shell-account-name"><strong>{user?.full_name || 'Account'}</strong><small>{user?.role.replace('_', ' ')}</small></span><ChevronDown size={15}/></DropdownMenu.Trigger><DropdownMenu.Portal><DropdownMenu.Content className="shell-menu" sideOffset={6} align="end"><DropdownMenu.Label className="shell-menu-label">{user?.email || 'Preview session'}</DropdownMenu.Label><DropdownMenu.Item asChild><Link to="/settings">Profile & settings</Link></DropdownMenu.Item>{user?.has_password !== false && <DropdownMenu.Item asChild><Link to="/change-password">Change password</Link></DropdownMenu.Item>}<DropdownMenu.Item onSelect={() => void signOut()}><LogOut size={15}/> Sign out</DropdownMenu.Item></DropdownMenu.Content></DropdownMenu.Portal></DropdownMenu.Root>
 }
 export function AppShell({ children }: { children: React.ReactNode }) {
   const { user } = useAuth(); const { projects, selected, select } = useProjects(); const { toggle, theme } = useTheme(); const location = useLocation(); const navigate = useNavigate()
   useEffect(() => { const handle = (event: KeyboardEvent) => { if (!(event.metaKey || event.ctrlKey) || event.key.toLowerCase() !== 'k' || user?.role === 'developer') return; event.preventDefault(); if (location.pathname === '/search') window.dispatchEvent(new Event('bt-focus-search')); else navigate('/search') }; window.addEventListener('keydown', handle); return () => window.removeEventListener('keydown', handle) }, [location.pathname, navigate, user?.role])
-  const visible = nav.filter(item => user?.role !== 'developer' || item.to === '/dashboard' || item.to === '/settings')
+  const visible = nav.filter(item => user?.role === 'developer' ? ['/dashboard', '/project-connections', '/settings'].includes(item.to) : item.to !== '/project-connections')
   const active = (to: string) => to === '/dashboard' ? location.pathname === '/' || location.pathname === '/dashboard' || location.pathname.startsWith('/incident/') || location.pathname.startsWith('/incidents/') : location.pathname.startsWith(to)
   const current = visible.find(item => active(item.to))?.label ?? 'Dashboard'
   return <div className="shell"><aside className="shell-sidebar"><Link to="/" className="shell-logo" aria-label="BreachTrace home"><BrandLogo variant="stacked" /></Link>

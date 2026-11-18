@@ -132,3 +132,52 @@ def test_legacy_database_with_multiple_organisations_fails_closed(app_client):
     signature = 'sha256=' + hmac.new(secret.encode(), body, hashlib.sha256).hexdigest()
     assert client.post('/webhook/github', content=body, headers={'X-GitHub-Event':'ping',
                        'X-Hub-Signature-256':signature}).status_code == 503
+
+
+def test_github_invitation_requires_configuration_and_verified_email(app_client, monkeypatch):
+    from db.models import BackgroundJob, User
+    from github_oauth import GitHubIdentity
+    import notifications
+
+    client, factory = app_client
+    client.post('/auth/register', json={'org_name': 'Acme', 'slug': 'acme', 'admin_email': 'admin@example.com',
+                                       'admin_password': 'admin password', 'admin_full_name': 'Admin'})
+    admin = login(client, 'admin@example.com', 'admin password')
+    invitation = {'email': 'dev@example.com', 'full_name': 'Developer', 'role': 'developer', 'sign_in_method': 'github'}
+    monkeypatch.delenv('GITHUB_OAUTH_CLIENT_ID', raising=False)
+    assert client.post('/org/users/invite', headers=admin, json=invitation).status_code == 503
+    monkeypatch.setenv('GITHUB_OAUTH_CLIENT_ID', 'client')
+    monkeypatch.setenv('GITHUB_OAUTH_CLIENT_SECRET', 'secret')
+    monkeypatch.setenv('GITHUB_OAUTH_CALLBACK_URL', 'http://127.0.0.1:5173/auth/github/callback')
+    assert client.post('/org/users/invite', json=invitation).status_code == 401
+    response = client.post('/org/users/invite', headers=admin, json=invitation)
+    assert response.status_code == 201, response.text
+    assert client.post('/org/users/invite', headers=admin, json=invitation).status_code == 409
+    with factory() as db:
+        user = db.get(User, response.json()['user_id'])
+        assert user.hashed_password is None and not user.must_change_password
+        payload = db.query(BackgroundJob).filter_by(kind='notification').one().payload
+        assert payload['method'] == 'github' and 'ciphertext' not in payload
+    sent = []
+    monkeypatch.setattr(notifications, 'SessionLocal', factory)
+    monkeypatch.setattr(notifications, 'send_email', lambda *args: sent.append(args) or True)
+    assert notifications.deliver_job(payload) == 'sent'
+    assert 'Continue with GitHub' in sent[0][3] and 'verified' in sent[0][3]
+    assert 'Temporary password' not in sent[0][3]
+    assert client.post('/auth/token', data={'username': 'dev@example.com', 'password': 'any password'}).status_code == 401
+    async def unverified(*args, **kwargs):
+        return GitHubIdentity('42', 'person', ())
+    monkeypatch.setattr('routers.auth.fetch_identity', unverified)
+    exchange = {'code': 'code', 'code_verifier': 'a' * 43}
+    assert client.post('/auth/github/exchange', json=exchange).status_code == 403
+    async def verified(*args, **kwargs):
+        return GitHubIdentity('42', 'person', ('dev@example.com',))
+    monkeypatch.setattr('routers.auth.fetch_identity', verified)
+    result = client.post('/auth/github/exchange', json=exchange)
+    assert result.status_code == 200
+    assert result.json()['user']['role'] == 'developer'
+    assert result.json()['user']['must_change_password'] is False
+    assert result.json()['user']['has_password'] is False
+    assert notifications.deliver_job(payload) == 'skipped'
+    assert client.delete('/org/users/' + response.json()['user_id'], headers=admin).status_code == 200
+    assert client.post('/auth/github/exchange', json=exchange).status_code == 403

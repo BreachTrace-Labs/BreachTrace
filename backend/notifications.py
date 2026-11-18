@@ -246,10 +246,17 @@ def deliver_job(payload: dict) -> str:
         if payload['type'] == 'welcome':
             from db.models import Organisation
             user = db.get(User, payload['user_id'])
-            if user is None or not user.is_active or not user.must_change_password:
+            if user is None or not user.is_active:
                 return 'skipped'
             org = db.get(Organisation, user.organisation_id)
-            password = decrypt_blob(payload['ciphertext'], payload['iv'])['temporary_password']
+            if payload.get('method') == 'github':
+                if user.hashed_password is not None or user.last_login_at is not None:
+                    return 'skipped'
+                password = None
+            else:
+                if not user.must_change_password:
+                    return 'skipped'
+                password = decrypt_blob(payload['ciphertext'], payload['iv'])['temporary_password']
             if not send_welcome_email(user, password, org.name if org else 'your organisation'):
                 raise RuntimeError('Email delivery failed')
             return 'sent'
@@ -315,20 +322,25 @@ def notify_incident_assigned_by_id(incident_id: str, assigned_user_id: str) -> N
         db.close()
 
 
-def send_welcome_email(user: User, temporary_password: str, org_name: str, app_url: str | None = None) -> bool:
-    """Deliver the invited user's one-time temporary password over SMTP."""
+def send_welcome_email(user: User, temporary_password: str | None, org_name: str, app_url: str | None = None) -> bool:
+    """Deliver sign-in instructions for an invited user over SMTP."""
     app_url = app_url or _app_url()
     parsed = urlsplit(app_url)
     safe_url = app_url.rstrip("/") if parsed.scheme in {"http", "https"} and parsed.netloc and not parsed.username and not parsed.password else _app_url()
     name = html.escape(user.full_name or user.email)
+    if temporary_password is None:
+        instruction_html = '<p>Select <strong>Continue with GitHub</strong> and use a GitHub account with this email verified.</p>'
+        instruction_plain = 'Select Continue with GitHub and use a GitHub account with this email verified.'
+    else:
+        instruction_html = (f'<p><strong>Temporary password:</strong> {html.escape(temporary_password)}</p>'
+                            '<p>Change your password immediately after signing in. This temporary password is for first sign-in only.</p>')
+        instruction_plain = f'Temporary password: {temporary_password}\nChange your password immediately after signing in.'
     body = (
         f"<p>Hello {name},</p><p>Your BreachTrace account for {html.escape(org_name)} is ready.</p>"
         f"<p><strong>Email:</strong> {html.escape(user.email)}</p>"
-        f"<p><strong>Temporary password:</strong> {html.escape(temporary_password)}</p>"
+        f"{instruction_html}"
         f"<p><a href=\"{html.escape(safe_url, quote=True)}\">Open BreachTrace</a></p>"
-        "<p>Change your password immediately after signing in. This temporary password is for first sign-in only.</p>"
     )
     plain = (f"Your BreachTrace account for {org_name} is ready.\nEmail: {user.email}\n"
-             f"Temporary password: {temporary_password}\nSign in: {safe_url}\n"
-             "Change your password immediately after signing in.")
+             f"{instruction_plain}\nSign in: {safe_url}")
     return send_email(user.email, f"Your BreachTrace account for {org_name}", body, plain)

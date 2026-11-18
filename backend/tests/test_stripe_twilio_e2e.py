@@ -308,7 +308,7 @@ def test_stripe_pipeline_end_to_end(session_factory, monkeypatch):
     assert stored.overall_severity == 4  # Critical
     assert {e.impact_category for e in stored.events} == {"financial_abuse"}
     assert stored.financial_impact == "Stripe: 10.00 USD charged (1 transaction(s))"
-    assert stored.gdpr_flag is True      # PCI-DSS: financial abuse in the payment environment
+    assert stored.gdpr_flag is False     # Payment activity alone does not establish a GDPR signal
     assert "Stripe" in stored.report_text and "CloudTrail" not in stored.report_text
     assert stored.remediation_steps
 

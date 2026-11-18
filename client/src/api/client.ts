@@ -18,9 +18,18 @@ function sleep(ms: number) {
 }
 
 // Route patterns → handlers
-type MockHandler = (params: { id?: string }) => unknown
+type MockHandler = (params: { id?: string; offset?: number }) => unknown
 
 const MOCK_ROUTES: Array<{ pattern: RegExp; handler: MockHandler }> = [
+  {
+    pattern: /^\/incidents\/([^/]+)\/related-credentials$/,
+    handler: ({ id, offset = 0 }) => {
+      const incident = MOCK_INCIDENTS.find(item => item.incident_id === id)
+      if (!incident) throw { response: { status: 404 } }
+      const items = incident.commit_hash ? MOCK_INCIDENTS.filter(item => item.incident_id !== id && item.commit_hash === incident.commit_hash && item.project_id === incident.project_id && item.repo_url === incident.repo_url) : []
+      return { commit_available: Boolean(incident.commit_hash), total: items.length, offset, items: items.slice(offset, offset + 25) }
+    },
+  },
   {
     // GET /incidents/:id/timeline  — not currently used but wired in context doc
     pattern: /^\/incidents\/([^/]+)\/timeline$/,
@@ -61,14 +70,14 @@ const MOCK_ROUTES: Array<{ pattern: RegExp; handler: MockHandler }> = [
 ]
 
 const mockClient = {
-  get: async (url: string) => {
+  get: async (url: string, config?: { params?: { offset?: number } }) => {
     await sleep(MOCK_DELAY_MS)
     // extract path param if present
     for (const route of MOCK_ROUTES) {
       const match = url.match(route.pattern)
       if (match) {
         const id = match[1]
-        const data = route.handler({ id })
+        const data = route.handler({ id, offset: config?.params?.offset })
         return { data }
       }
     }

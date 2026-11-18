@@ -1,6 +1,6 @@
 """Organisation and team administration."""
 from typing import Literal
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, EmailStr, Field
@@ -23,7 +23,8 @@ class Invite(BaseModel):
     email: EmailStr
     full_name: str = Field(min_length=1, max_length=120)
     role: Literal["security_lead", "developer"]
-    temporary_password: str = Field(min_length=10, max_length=72)
+    sign_in_method: Literal["password", "github"] = "password"
+    temporary_password: str | None = Field(default=None, min_length=10, max_length=72)
 
 
 class UserUpdate(BaseModel):
@@ -85,24 +86,36 @@ def invite(body: Invite, request: Request, user: User = Depends(require_admin), 
     name = body.full_name.strip()
     if not name:
         raise HTTPException(422, "Full name cannot be empty")
-    try:
-        password = hash_password(body.temporary_password)
-    except ValueError as exc:
-        raise HTTPException(422, str(exc))
+    if body.sign_in_method == 'github':
+        from routers.auth import github_oauth_config
+        if not github_oauth_config():
+            raise HTTPException(503, 'GitHub sign-in is not configured. Configure GitHub OAuth before inviting GitHub users.')
+        if body.temporary_password is not None:
+            raise HTTPException(422, 'GitHub invitations do not use a temporary password')
+        password = None
+    else:
+        if body.temporary_password is None:
+            raise HTTPException(422, 'A temporary password is required for password invitations')
+        try:
+            password = hash_password(body.temporary_password)
+        except ValueError as exc:
+            raise HTTPException(422, str(exc))
     target = User(organisation_id=user.organisation_id, email=body.email.lower(), full_name=name,
-                  role=body.role, hashed_password=password, must_change_password=True)
+                  role=body.role, hashed_password=password, must_change_password=body.sign_in_method == 'password')
     db.add(target)
     try:
         db.flush()
         from background_jobs import enqueue
-        from crypto import encrypt_blob
-        try:
-            ciphertext, iv = encrypt_blob({'temporary_password': body.temporary_password})
-        except Exception:
-            raise HTTPException(503, 'Configure wallet encryption before inviting users') from None
-        enqueue(db, 'notification', {'type':'welcome', 'channel':'email', 'user_id':target.id,
-                                     'ciphertext':ciphertext, 'iv':iv})
-        record(db, user, "user.invited", request, detail={"user_id": target.id, "role": target.role})
+        payload = {'type': 'welcome', 'channel': 'email', 'user_id': target.id, 'method': body.sign_in_method}
+        if body.sign_in_method == 'password':
+            from crypto import encrypt_blob
+            try:
+                ciphertext, iv = encrypt_blob({'temporary_password': body.temporary_password})
+            except Exception:
+                raise HTTPException(503, 'Configure wallet encryption before inviting users') from None
+            payload.update(ciphertext=ciphertext, iv=iv)
+        enqueue(db, 'notification', payload)
+        record(db, user, "user.invited", request, detail={"user_id": target.id, "role": target.role, "sign_in_method": body.sign_in_method})
         db.commit()
     except IntegrityError:
         db.rollback()
@@ -118,18 +131,22 @@ def welcome_deliveries(user: User = Depends(require_admin), db: Session = Depend
     return [{'id': row.id, 'type': row.payload.get('type'), 'user_id': row.payload.get('user_id'), 'status': row.status,
              'outcome': (row.result or {}).get('outcome'), 'attempts': row.attempts,
              'max_attempts': row.max_attempts, 'last_error': row.last_error,
-             'can_retry': row.status == 'failed' and 'ciphertext' in row.payload,
+             'can_retry': can_retry_welcome(row),
              'created_at': row.created_at} for row in rows if row.payload.get('type') == 'welcome']
+
+
+def can_retry_welcome(job: BackgroundJob) -> bool:
+    created = job.created_at.replace(tzinfo=job.created_at.tzinfo or timezone.utc)
+    return (job.status == 'failed' and created >= datetime.now(timezone.utc) - timedelta(hours=24)
+            and (job.payload.get('method') == 'github' or 'ciphertext' in job.payload))
 
 
 @router.post('/notification-deliveries/{job_id}/retry', status_code=202)
 def retry_welcome_delivery(job_id: str, request: Request, user: User = Depends(require_admin), db: Session = Depends(get_db)):
-    from datetime import datetime, timezone, timedelta
     job = db.query(BackgroundJob).filter_by(id=job_id, kind='notification', project_id=None).with_for_update().first()
     if not job or job.payload.get('type') != 'welcome':
         raise HTTPException(404, 'Delivery not found')
-    created = job.created_at.replace(tzinfo=job.created_at.tzinfo or timezone.utc)
-    if job.status != 'failed' or 'ciphertext' not in job.payload or created < datetime.now(timezone.utc) - timedelta(hours=24):
+    if not can_retry_welcome(job):
         raise HTTPException(409, 'This welcome email cannot be retried')
     job.status, job.attempts, job.last_error = 'queued', 0, None
     job.available_at = datetime.now(timezone.utc)

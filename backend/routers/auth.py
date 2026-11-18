@@ -60,7 +60,7 @@ class PasswordChange(BaseModel):
 def profile(user: User) -> dict:
     return {"id": user.id, "email": user.email, "full_name": user.full_name,
             "role": user.role, "organisation_id": user.organisation_id,
-            "must_change_password": user.must_change_password}
+            "must_change_password": user.must_change_password, "has_password": user.hashed_password is not None}
 
 
 @router.get("/setup-status")

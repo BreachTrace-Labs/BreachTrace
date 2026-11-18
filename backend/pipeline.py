@@ -45,7 +45,6 @@ from reporter.facts import build_fact_sheet
 from reporter.writers import upgrade_report
 from scorer.severity import (
     check_gdpr_flag,
-    check_pcidss_flag,
     compute_financial_impact,
     score_incident,
 )
@@ -345,8 +344,8 @@ def run_collection_pipeline(
         try:
             overall_severity = score_incident(exposure_events)
             financial_impact = compute_financial_impact(exposure_events)
-            # gdpr_flag covers both GDPR and PCI-DSS — either triggers the flag
-            gdpr_flag = check_gdpr_flag(exposure_events) or check_pcidss_flag(exposure_events)
+            # The GDPR indicator is distinct from payment-related indicators.
+            gdpr_flag = check_gdpr_flag(exposure_events)
 
             incident_record: IncidentRecord | None = db.get(IncidentRecord, incident_id)
             if incident_record is not None:

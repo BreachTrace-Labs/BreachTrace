@@ -12,7 +12,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from access import assert_project_access
-from auth import require_admin_or_lead
+from auth import get_active_user, require_admin_or_lead
 from crypto import encrypt_blob
 from db.database import get_db
 from db.models import CredentialWalletEntry, User
@@ -84,14 +84,14 @@ def get_entry(db: Session, project_id: str, entry_id: str):
 
 
 @router.get('')
-def list_entries(project_id: str, user: User = Depends(require_admin_or_lead), db: Session = Depends(get_db)):
+def list_entries(project_id: str, user: User = Depends(get_active_user), db: Session = Depends(get_db)):
     assert_project_access(project_id, user, db)
     return [public(row) for row in db.query(CredentialWalletEntry).filter_by(project_id=project_id).order_by(CredentialWalletEntry.provider).all()]
 
 
 @router.post('', status_code=202)
 def save_entry(project_id: str, body: WalletInput, request: Request,
-               user: User = Depends(require_admin_or_lead), db: Session = Depends(get_db)):
+               user: User = Depends(get_active_user), db: Session = Depends(get_db)):
     assert_project_access(project_id, user, db)
     values = validate_credentials(body.provider, body.credentials)
     try:
@@ -99,6 +99,8 @@ def save_entry(project_id: str, body: WalletInput, request: Request,
     except Exception:
         raise HTTPException(503, 'Wallet encryption is not configured correctly') from None
     entry = db.query(CredentialWalletEntry).filter_by(project_id=project_id, provider=body.provider).first()
+    if entry is not None and user.role == 'developer':
+        raise HTTPException(409, 'A connection for this provider already exists. Ask an administrator or security lead to replace it.')
     if entry is None:
         entry = CredentialWalletEntry(project_id=project_id, provider=body.provider, created_by=user.id,
                                       encrypted_blob=ciphertext, iv=iv)

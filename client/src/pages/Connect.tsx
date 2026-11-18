@@ -307,7 +307,7 @@ const Connect: React.FC = () => {
 
       <Section step={3} title="Preview detection with synthetic incidents">
         <p className="text-sm text-muted-foreground">The local demo includes fabricated AI credentials detected as plaintext, encoded values and split strings. A demo detection does not prove real key validity or provider activity.</p>
-        <Link to="/?platform=ai" className="inline-flex items-center gap-2 text-sm font-medium underline underline-offset-4">View AI detection examples <ExternalLink size={13} /></Link>
+        <Link to="/dashboard?platform=ai" className="inline-flex items-center gap-2 text-sm font-medium underline underline-offset-4">View AI detection examples <ExternalLink size={13} /></Link>
         <p className="text-xs text-muted-foreground">Webhook detections depend on delivery and API access. Cloud activity reconstruction also requires authorized provider logs. No fixed processing time is guaranteed.</p>
       </Section>
 

@@ -163,3 +163,34 @@ def test_azure_secret_requires_authorized_explicit_application_association(clien
         assert updated.status == 'collecting'
     assert len(runs) == 1 and runs[0][0][1] == client_id and runs[0][1]['platform'] == 'azure'
     assert client.post(path, headers=headers, json={'client_id':client_id}).status_code == 400
+
+
+def test_related_credentials_are_scoped_to_same_project_and_exact_commit(client_factory):
+    from datetime import datetime, timezone
+    from db.crud import create_incident
+    client, factory = client_factory
+    client.post('/auth/register', json={'org_name':'Acme','slug':'acme','admin_email':'admin@example.com','admin_password':'admin password','admin_full_name':'Admin'})
+    def login(email, password):
+        return {'Authorization': 'Bearer ' + client.post('/auth/token', data={'username':email,'password':password}).json()['access_token']}
+    admin = login('admin@example.com', 'admin password')
+    a = client.post('/projects', headers=admin, json={'name':'A','github_repo_url':'https://github.com/acme/a'}).json()['id']
+    b = client.post('/projects', headers=admin, json={'name':'B','github_repo_url':'https://github.com/acme/b'}).json()['id']
+    with factory() as db:
+        def create(project, sha, hint):
+            return create_incident(db, project_id=project, credential_type='github_pat', credential_hint=hint,
+                repo_url='https://github.com/acme/a', commit_hash=sha, exposure_start=datetime.now(timezone.utc)).incident_id
+        first = create(a, 'a'*40, 'first')
+        second = create(a, 'a'*40, 'second')
+        create(a, 'b'*40, 'other-commit')
+        foreign = create(b, 'a'*40, 'other-project')
+        no_commit = create(a, None, 'no-commit')
+    invited = client.post('/org/users/invite', headers=admin, json={'email':'dev@example.com','full_name':'Dev','role':'developer','temporary_password':'dev password'}).json()['user_id']
+    dev = login('dev@example.com', 'dev password')
+    client.post('/auth/change-password', headers=dev, json={'current_password':'dev password','new_password':'new dev password'})
+    client.post(f'/projects/{a}/members', headers=admin, json={'user_id':invited})
+    response = client.get(f'/incidents/{first}/related-credentials', headers=dev)
+    assert response.status_code == 200 and response.json()['total'] == 1
+    assert [item['incident_id'] for item in response.json()['items']] == [second]
+    assert client.get(f'/incidents/{foreign}/related-credentials', headers=dev).status_code == 403
+    assert client.get(f'/incidents/{no_commit}/related-credentials', headers=dev).json()['commit_available'] is False
+    assert client.get(f'/incidents/{first}/related-credentials', headers=dev, params={'offset':1}).json()['items'] == []

@@ -727,30 +727,27 @@ def build_compliance_reasons(
         ]
         resource_hint = f" (e.g. '{pii_resources[0]}')" if pii_resources else ""
         reasons.append(
-            f"GDPR Article 33: Personal data may have been accessed{resource_hint}. "
-            "Notify your Data Protection Authority within 72 hours if a breach is confirmed."
+            f"GDPR Articles 32/33: A data-access event refers to a resource whose name may suggest personal data{resource_hint}. "
+            "Review whether personal data is involved and whether notification obligations apply."
         )
 
     if pcidss:
         fin_events = [e for e in events if e.impact_category == "financial_abuse"]
         if fin_events:
             reasons.append(
-                "PCI-DSS Requirement 12.10: Financial abuse events detected in the payment "
-                "card environment. Initiate your incident response plan immediately and "
-                "notify your acquiring bank and card brands."
+                "PCI-DSS Requirement 12: An event was classified as financial activity. "
+                "Review whether the affected environment is in PCI DSS scope and assess incident response obligations."
             )
         else:
             reasons.append(
-                "PCI-DSS Requirement 12.10: Payment-related resources were accessed during "
-                "the exposure window. Review cardholder data access logs and notify your "
-                "acquiring bank if cardholder data was compromised."
+                "PCI-DSS Requirement 12: An event refers to a resource with a payment-related name. "
+                "Review whether cardholder data or an in-scope environment is involved."
             )
 
     if soc2:
         reasons.append(
-            "SOC 2 (CC6 / A1): A security event affecting logical access controls or system "
-            "availability was detected. Document this incident in your SOC 2 evidence records "
-            "and inform your auditor at the next review cycle."
+            "SOC 2 (CC6 / A1): An event was classified as privilege escalation, exfiltration, "
+            "or resource abuse. Review whether it relates to controls in your SOC 2 scope."
         )
 
     return reasons
