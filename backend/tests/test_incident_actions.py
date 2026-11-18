@@ -114,9 +114,6 @@ def test_refresh_and_snapshot_start_are_audited(environment, monkeypatch, tmp_pa
         incident_id=incident.incident_id
     monkeypatch.setattr(incidents,'run_collection_pipeline',lambda *args, **kwargs: None)
     assert client.post(f'/incidents/{incident_id}/refresh',headers=admin).status_code==202
-    monkeypatch.setattr(repositories,'_jobs',{})
-    monkeypatch.setattr(repositories,'scan_github',lambda url: {'repo_url':url,'findings':[],'finding_count':0})
-    monkeypatch.setattr(repositories,'__file__',str(tmp_path/'backend'/'routers'/'repositories.py'))
     from main import app
     local=TestClient(app,base_url='http://localhost',client=('127.0.0.1',1234))
     assert local.post('/repositories/scan',headers=admin,json={'repo_url':'https://github.com/acme/app'}).status_code==202

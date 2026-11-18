@@ -138,8 +138,6 @@ def test_azure_secret_requires_authorized_explicit_application_association(clien
     app.dependency_overrides[local_operator] = lambda: None
     for name in ('AZURE_TENANT_ID', 'AZURE_CLIENT_ID', 'AZURE_CLIENT_SECRET', 'AZURE_SUBSCRIPTION_ID'):
         monkeypatch.setattr(config, name, 'configured')
-    runs = []
-    monkeypatch.setattr(incidents, 'run_collection_pipeline', lambda *args, **kwargs: runs.append((args, kwargs)))
     client.post('/auth/register', json={'org_name':'Acme','slug':'acme','admin_email':'admin@example.com',
                                        'admin_password':'admin password','admin_full_name':'Admin'})
     token = client.post('/auth/token', data={'username':'admin@example.com','password':'admin password'}).json()['access_token']
@@ -165,7 +163,10 @@ def test_azure_secret_requires_authorized_explicit_application_association(clien
         updated = db.get(IncidentRecord, incident_id)
         assert updated.principal_id == client_id and updated.forensic_tier == 1
         assert updated.status == 'collecting'
-    assert len(runs) == 1 and runs[0][0][1] == client_id and runs[0][1]['platform'] == 'azure'
+    with factory() as db:
+        from db.models import BackgroundJob
+        jobs = db.query(BackgroundJob).filter_by(kind='incident_collect').all()
+        assert len(jobs) == 1 and jobs[0].payload['incident_id'] == incident_id
     assert client.post(path, headers=headers, json={'client_id':client_id}).status_code == 400
 
 

@@ -41,10 +41,16 @@ def test_wallet_lifecycle_and_role_boundaries(wallet_client):
     assert result.status_code == 202
     assert fake_key not in result.text
     entries = client.get(path, headers=admin).json()
-    assert len(entries) == 1 and entries[0]['verification_status'] == 'ok'
+    assert len(entries) == 1 and entries[0]['verification_status'] == 'pending'
     assert 'encrypted_blob' not in entries[0] and 'iv' not in entries[0]
     assert fake_key not in str(entries)
+    with factory() as db:
+        row = db.query(CredentialWalletEntry).one()
+        row_id, row_iv = row.id, row.iv
+    import wallet_verify
+    wallet_verify.verify_entry(row_id, row_iv, client.get('/auth/me', headers=admin).json()['id'])
     assert checks == [('stripe', {'api_key': fake_key})]
+    assert client.get(path, headers=admin).json()[0]['verification_status'] == 'ok'
     with factory() as db:
         row = db.query(CredentialWalletEntry).one()
         assert fake_key not in row.encrypted_blob
@@ -139,7 +145,7 @@ def test_verification_does_not_overwrite_newer_credentials(wallet_client, monkey
     client.post(path, headers=headers, json={'provider':'stripe','credentials':{'api_key':'rk_test_67890'}})
     monkeypatch.setattr(wallet_verify, '_check', lambda *_: (_ for _ in ()).throw(PermissionError()))
     wallet_verify.verify_entry(entry_id, old_iv)
-    assert client.get(path, headers=headers).json()[0]['verification_status'] == 'ok'
+    assert client.get(path, headers=headers).json()[0]['verification_status'] == 'pending'
 
 
 def test_stripe_verifier_uses_events_read_and_sanitizes_provider_errors(monkeypatch):

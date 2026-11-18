@@ -32,7 +32,7 @@ def test_sandbox_request_is_redacted_deduplicated_and_survives_refresh(sqlite_fa
         assert len(rows) == 1
         assert rows[0].api_action == "GET /v1/customers/…"
         assert "private" not in str(rows[0].raw_data)
-        assert rows[0].raw_data["attribution"] == "sandbox activity; key identity not provided"
+        assert rows[0].raw_data["attribution"] == "sandbox account activity; key identity not provided"
 
 
 def test_rejects_wrong_mode_unconfirmed_and_outside_window(sqlite_factory):

@@ -108,10 +108,15 @@ def test_operator_associates_only_configured_account_and_queues_collection(sqlit
     with pytest.raises(HTTPException) as exc:
         associate_twilio_account(incident.incident_id, TwilioAccountRequest(account_sid='AC' + '1' * 32), tasks, None, db)
     assert exc.value.status_code == 400
-    assert incident.forensic_tier == 2 and incident.principal_id is None and not tasks.tasks
+    assert incident.forensic_tier == 2 and incident.principal_id is None and not _queued(db)
     result = associate_twilio_account(incident.incident_id, TwilioAccountRequest(account_sid=ACCOUNT), tasks, None, db)
     assert result.status == 'collecting' and incident.principal_id == ACCOUNT
-    assert incident.forensic_tier == 1 and len(tasks.tasks) == 1
+    assert incident.forensic_tier == 1 and _queued(db) == 1
+
+
+def _queued(db):
+    from db.models import BackgroundJob
+    return db.query(BackgroundJob).filter_by(kind='incident_collect').count()
 
 
 def test_monitor_permission_failure_is_not_a_successful_empty_result(monkeypatch):
