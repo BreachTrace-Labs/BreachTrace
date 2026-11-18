@@ -1,5 +1,7 @@
 # Run and test locally
 
+For the current startup, first-time setup, model, webhook and provider workflow, use [RUNNING.md](../RUNNING.md). Historical verification results below describe the earlier test setup.
+
 The isolated local profile uses real application APIs, a separate PostgreSQL
 database, and clearly labelled synthetic incident data. It does not consume cloud
 credentials from the existing `.env`. Synthetic fixtures are not research evidence.
@@ -58,8 +60,8 @@ Reseed them with `.venv/bin/python scripts/seed_ai_demos.py` when needed.
    in Settings; they are not needed for local testing.
 4. **Connect:** enter `https://github.com/fastapi/fastapi` in the repository URL
    field and click **Scan repository**. No webhook or GitHub token is needed
-   for this public scan. Private repositories and webhook registration require
-   a suitable GitHub token configured explicitly in the test profile and restart.
+   for this public scan. Private repositories and automatic webhook registration require
+   a suitable token saved in Connect → Project GitHub connection; it takes effect immediately.
 5. **AI detection:** `/test/simulate` in API docs can accept a synthetic credential
    diff. The automated smoke test adds a synthetic Groq-format detection-only
    incident. No detected key is validated with the provider.
