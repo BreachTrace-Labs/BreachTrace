@@ -10,6 +10,7 @@ A detected pattern is **not proof of a valid key or a breach**. Detection-only f
 - [AI coverage and limitations](docs/ai-detection.md)
 - [Six synthetic AI examples](docs/ai-ui-demo.md)
 - [Local testing guide](docs/local-testing.md)
+- [GitHub sign-in setup](docs/github-signin.md)
 - [Logic and migration review](docs/logic-review.md)
 
 ## What is implemented

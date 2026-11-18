@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import {
   CheckCircle2,
@@ -6,13 +6,13 @@ import {
   Copy,
   Check,
   ExternalLink,
-  Loader2,
   Webhook,
 } from 'lucide-react'
 import client, { realClient } from '@/api/client'
 import { Button } from '@/components/ui/button'
 import RepositoryScan from '@/components/RepositoryScan'
 import { useProjects } from '@/context/ProjectContext'
+import './connect.css'
 
 /* ─── types ────────────────────────────────────────────────────────── */
 
@@ -105,6 +105,7 @@ function Section({
 
 const Connect: React.FC = () => {
   const { selected, refresh } = useProjects()
+  const webhookDetails = useRef<HTMLDetailsElement>(null)
   const [manualSecret, setManualSecret] = useState('')
   const [secretMessage, setSecretMessage] = useState('')
   const [infoError, setInfoError] = useState(false)
@@ -156,21 +157,21 @@ const Connect: React.FC = () => {
   }
 
   return (
-    <div className="space-y-8 max-w-2xl">
+    <div className="connect-page">
       {/* Page header */}
       <div>
-        <h1 className="text-xl font-bold tracking-tight">Scan GitHub Repository</h1>
+        <h1 className="text-xl font-semibold tracking-tight">Connect</h1>
         <p className="mt-1 text-sm" style={{ color: 'var(--color-muted-foreground)' }}>
           Scan the current default branch for credential candidates, and optionally monitor future pushes.
         </p>
       </div>
 
-      <RepositoryScan repoUrl={repoUrl} onRepoUrlChange={url => {
+      <div className="connect-grid"><RepositoryScan repoUrl={repoUrl} onRepoUrlChange={url => {
         setRepoUrl(url); setResult(null); setRegisterError(null)
       }} trigger={scanTrigger} />
-      <p className="text-sm">{selected ? `Selected project: ${selected.name} (${selected.github_repo_full_name}) · Webhook ${selected.webhook_registered_at ? 'registered' : 'not registered'}` : 'Select or create a project before registering a webhook.'}</p>
+      <aside className="connect-webhook"><h2>Webhook status</h2>{selected ? <><strong>{selected.name}</strong><p>{selected.github_repo_full_name}</p><p className="connect-status"><span className={selected.webhook_registered_at ? 'connect-dot connect-dot--registered' : 'connect-dot'}/>{selected.webhook_registered_at ? 'Registered' : 'Not registered'}</p>{selected.webhook_registered_at && <p>Registered {new Date(selected.webhook_registered_at).toLocaleString()}. Delivery status is not available here.</p>}<a href="#webhook-settings" onClick={() => { if (webhookDetails.current) webhookDetails.current.open = true }}>{selected.webhook_registered_at ? 'Manage webhook →' : 'Register webhook →'}</a><Link to={`/admin/projects/${selected.id}`}>Project settings →</Link></> : <><p>Select or create a project to register a webhook.</p><Link to="/admin">Manage projects →</Link></>}</aside></div>
 
-      <details className="space-y-6">
+      <details id="webhook-settings" ref={webhookDetails} className="connect-details">
         <summary className="cursor-pointer font-semibold">Monitor future commits (optional)</summary>
         <p className="text-sm text-muted-foreground">A signed push containing a qualifying credential can create an incident in Monitor. Connecting a webhook does not scan earlier commits.</p>
         <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={scanOnConnect} onChange={e => setScanOnConnect(e.target.checked)} />Also scan the selected project's current default branch after connecting</label>
@@ -215,23 +216,19 @@ const Connect: React.FC = () => {
             <p className="text-sm break-all flex-1">{selected?.github_repo_url || 'Select a project to enable webhook registration.'}</p>
             <Button
               onClick={handleRegister}
-              disabled={registering || !selected}
+              disabled={!selected}
+              loading={registering}
               size="sm"
               className="gap-2 shrink-0"
             >
-              {registering ? (
-                <Loader2 size={13} strokeWidth={2} className="animate-spin" />
-              ) : (
-                <Webhook size={13} strokeWidth={2} />
-              )}
-              {registering ? 'Registering…' : 'Register Webhook'}
+              <Webhook size={13} strokeWidth={2} /> Register webhook
             </Button>
           </div>
         </div>
 
         {/* Editable webhook URL */}
         <div className="space-y-2">
-          <label className="text-xs font-semibold uppercase tracking-wider" style={{ color: 'var(--color-muted-foreground)' }}>
+          <label htmlFor="webhook-url" className="text-xs font-semibold uppercase tracking-wider" style={{ color: 'var(--color-muted-foreground)' }}>
             Webhook URL
           </label>
           <p className="text-xs" style={{ color: 'var(--color-muted-foreground)' }}>
@@ -239,6 +236,7 @@ const Connect: React.FC = () => {
           </p>
           <div className="flex gap-2">
             <input
+              id="webhook-url"
               type="text"
               value={webhookUrl}
               onChange={(e) => setWebhookUrl(e.target.value)}

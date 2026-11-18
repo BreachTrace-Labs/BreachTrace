@@ -69,8 +69,8 @@ export default function RepositoryScan({ repoUrl, onRepoUrlChange, trigger = 0 }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [trigger])
   const running = starting || (scan && ['queued', 'scanning'].includes(scan.status))
-  return <section className="border rounded p-6 space-y-4">
-    <h2 className="font-semibold">Scan current repository snapshot</h2>
+  return <section className="border rounded-xl bg-card p-6 space-y-4">
+    <h2 className="text-lg font-semibold">Scan a repository</h2>
     <p className="text-sm">Paste a GitHub repository URL to check the current default branch for credential candidates. Private repositories require GitHub access configured on the backend.</p>
     <p className="text-sm text-muted-foreground">Snapshot findings appear here for review. They do not create Monitor incidents or start provider log collection. To monitor future pushes, register the webhook below.</p>
     <form onSubmit={event => { event.preventDefault(); void start() }} className="space-y-2">
@@ -79,11 +79,12 @@ export default function RepositoryScan({ repoUrl, onRepoUrlChange, trigger = 0 }
         <input id="scan-repository-url" type="url" required disabled={!!running} value={repoUrl}
           onChange={event => onRepoUrlChange(event.target.value)} placeholder="https://github.com/owner/repository"
           className="min-w-0 flex-1 border rounded px-3 py-2 text-sm bg-transparent" />
-        <Button type="submit" disabled={!repoUrl.trim() || !!running}>{running ? 'Scanning…' : 'Scan repository'}</Button>
+        <Button type="submit" loading={!!running}>Start scan</Button>
       </div>
     </form>
     <p className="text-xs text-[var(--color-muted-foreground)]">No webhook or new commit is needed. The scan covers current text files within size limits and exclusions; Git history, submodules and binaries are excluded.</p>
     {error && <p role="alert">{error}</p>}
+    {running && <p role="status" className="text-sm text-muted-foreground">{starting || scan?.status === 'queued' ? 'Preparing scan…' : 'Fetching and scanning the repository…'}</p>}
     {scan && <div role="status" className="space-y-2 text-sm">
       <p>Scan {scan.scan_id}: {scan.status}</p>
       {scan.error && <p>{scan.error}</p>}

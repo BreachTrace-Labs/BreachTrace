@@ -1,18 +1,23 @@
 """Initial organisation registration and session endpoints."""
 from datetime import datetime, timezone
+import os
+from urllib.parse import urlsplit
+
+import httpx
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.security import OAuth2PasswordRequestForm
 from pydantic import BaseModel, EmailStr, Field
-from sqlalchemy import text
+from sqlalchemy import func, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from auth import create_access_token, ensure_single_organisation, get_current_user, hash_password, verify_password
+from auth import create_access_token, ensure_single_organisation, get_active_user, get_current_user, hash_password, verify_password
 from db.database import get_db
 from db.models import Organisation, User
 from audit import record
 from rate_limit import limiter
+from github_oauth import GitHubOAuthError, fetch_identity
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -23,6 +28,28 @@ class Registration(BaseModel):
     admin_email: EmailStr
     admin_password: str = Field(min_length=10, max_length=72)
     admin_full_name: str = Field(min_length=1, max_length=120)
+
+
+class GitHubExchange(BaseModel):
+    code: str = Field(min_length=1, max_length=2048)
+    code_verifier: str = Field(min_length=43, max_length=128, pattern=r"^[A-Za-z0-9._~-]+$")
+
+
+def github_oauth_config():
+    client_id = os.environ.get("GITHUB_OAUTH_CLIENT_ID", "").strip()
+    secret = os.environ.get("GITHUB_OAUTH_CLIENT_SECRET", "").strip()
+    callback = os.environ.get("GITHUB_OAUTH_CALLBACK_URL", "").strip()
+    try:
+        parsed = urlsplit(callback)
+        safe_scheme = parsed.scheme == "https" or (parsed.scheme == "http" and parsed.hostname in ("localhost", "127.0.0.1", "::1"))
+        valid = safe_scheme and parsed.hostname and not parsed.username and not parsed.password and parsed.path == "/auth/github/callback" and not parsed.query and not parsed.fragment and (parsed.port is None or 1 <= parsed.port <= 65535)
+    except ValueError:
+        valid = False
+    return (client_id, secret, callback) if client_id and secret and valid else None
+
+
+class ProfileUpdate(BaseModel):
+    full_name: str = Field(min_length=1, max_length=120)
 
 
 class PasswordChange(BaseModel):
@@ -80,8 +107,51 @@ def token(request: Request, form: OAuth2PasswordRequestForm = Depends(), db: Ses
     return {"access_token": access_token, "token_type": "bearer", "user": profile(user)}
 
 
+@router.get("/github/config")
+def github_config():
+    config = github_oauth_config()
+    return {"enabled": bool(config), "client_id": config[0] if config else None,
+            "callback_url": config[2] if config else None}
+
+
+@router.post("/github/exchange")
+@limiter.limit("10/minute")
+async def github_exchange(body: GitHubExchange, request: Request, db: Session = Depends(get_db)):
+    config = github_oauth_config()
+    if config is None:
+        raise HTTPException(503, "GitHub sign-in is not configured")
+    try:
+        async with httpx.AsyncClient(timeout=15, follow_redirects=False) as client:
+            identity = await fetch_identity(client, client_id=config[0], client_secret=config[1],
+                                            code=body.code, redirect_uri=config[2], code_verifier=body.code_verifier)
+    except GitHubOAuthError:
+        raise HTTPException(401, "Could not verify GitHub sign-in. Please try again.") from None
+    ensure_single_organisation(db)
+    if not identity.verified_emails:
+        raise HTTPException(403, "No invited account matches a verified GitHub email.")
+    users = db.query(User).filter(func.lower(User.email).in_(identity.verified_emails), User.is_active.is_(True)).limit(2).all()
+    if len(users) != 1:
+        raise HTTPException(403, "No unique invited account matches a verified GitHub email. Contact your administrator.")
+    user = users[0]
+    user.last_login_at = datetime.now(timezone.utc)
+    record(db, user, "auth.github_login", request)
+    db.commit()
+    return {"access_token": create_access_token(user.id), "token_type": "bearer", "user": profile(user)}
+
+
 @router.get("/me")
 def me(user: User = Depends(get_current_user)):
+    return profile(user)
+
+
+@router.put("/me")
+def update_profile(body: ProfileUpdate, request: Request, user: User = Depends(get_active_user), db: Session = Depends(get_db)):
+    name = body.full_name.strip()
+    if not name:
+        raise HTTPException(422, "Full name cannot be empty")
+    user.full_name = name
+    record(db, user, "user.profile_updated", request)
+    db.commit()
     return profile(user)
 
 

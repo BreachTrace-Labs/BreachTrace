@@ -38,6 +38,8 @@ import ReactMarkdown from 'react-markdown'
 import RemediationChecklist from '@/components/RemediationChecklist'
 import EventAnalytics from '@/components/EventAnalytics'
 import { Button } from '@/components/ui/button'
+import { CodeBlock } from '@/components/ui/code-block'
+import './incident-detail.css'
 
 /* ─── helpers ─────────────────────────────────────────────────── */
 
@@ -344,14 +346,7 @@ const IncidentDetail: React.FC = () => {
   }
 
   if (loading) {
-    return (
-      <div className="flex items-center justify-center min-h-[60vh]">
-        <div className="flex flex-col items-center gap-4">
-          <div className="w-8 h-8 border-4 rounded-full border-muted-foreground/20 border-t-primary animate-spin" />
-          <p className="text-sm font-medium text-muted-foreground animate-pulse">Loading incident details...</p>
-        </div>
-      </div>
-    )
+    return <div className="incident-loading" role="status" aria-label="Loading incident details"><div className="incident-loading-header"/><div className="incident-loading-grid"><div><div/><div/><div/></div><aside><div/><div/></aside></div></div>
   }
 
   if (error || !incident) {
@@ -384,7 +379,6 @@ const IncidentDetail: React.FC = () => {
   return (
     <div className="max-w-7xl mx-auto space-y-8 pb-12 animate-in fade-in duration-500">
       {synthetic && <SyntheticNotice />}
-      <IncidentActions incident={incident} canManage={canManage} onChange={setIncident} />
       {/* Top Header Section */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b pb-6">
         <div className="flex min-w-0 items-center gap-4">
@@ -393,7 +387,7 @@ const IncidentDetail: React.FC = () => {
           </Button>
           <div className="min-w-0">
             <h1 className="text-2xl font-bold tracking-tight text-foreground flex flex-wrap items-center gap-3">
-              Incident Detail
+              {incident.credential_type.replace(/_/g, ' ')}
               <SeverityBadge severity={incident.overall_severity} />
               {!incident.overall_severity && <span className="rounded border px-2 py-1 text-xs font-medium text-muted-foreground">Severity not assessed</span>}
             </h1>
@@ -426,6 +420,8 @@ const IncidentDetail: React.FC = () => {
         </div>
       </div>
 
+      <IncidentActions incident={incident} canManage={canManage} onChange={setIncident} />
+
       {/* Main Content Grid */}
       <div className="grid grid-cols-1 xl:grid-cols-12 gap-8">
 
@@ -444,9 +440,7 @@ const IncidentDetail: React.FC = () => {
                 <div className="space-y-6">
                   <div>
                     <h2 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground mb-1">Detected Credential</h2>
-                    <p className="text-2xl sm:text-3xl font-mono font-bold tracking-tight text-foreground break-all">
-                      {incident.credential_hint}
-                    </p>
+                    <CodeBlock value={incident.credential_hint} />
                   </div>
                   <div className="flex flex-wrap items-center gap-3 text-sm">
                     <span

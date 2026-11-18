@@ -1,11 +1,15 @@
 import { useEffect, useState } from 'react'
 import { realClient as api } from '@/api/client'
 import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import { useAuth } from '@/context/AuthContext'
+import { USE_MOCK } from '@/api/client'
+import './settings.css'
 
 type SettingsData = { provider: string; model: string; ollama_url: string; model_path: string; timeout_s: number; api_key_configured: boolean }
 const initial: SettingsData = { provider: 'none', model: '', ollama_url: 'http://127.0.0.1:11434', model_path: '', timeout_s: 60, api_key_configured: false }
 
-export default function Settings() {
+function ModelSettings() {
   const [settings, setSettings] = useState(initial)
   const [key, setKey] = useState('')
   const [clearKey, setClearKey] = useState(false)
@@ -67,4 +71,12 @@ export default function Settings() {
     </form>
     {message && <p role="status" className="border rounded p-3">{message}</p>}
   </div>
+}
+
+export default function Settings() {
+  const { user, reload } = useAuth(); const [section, setSection] = useState('profile'); const [name, setName] = useState(user?.full_name ?? ''); const [current, setCurrent] = useState(''); const [next, setNext] = useState(''); const [confirm, setConfirm] = useState(''); const [busy, setBusy] = useState(false); const [message, setMessage] = useState(''); const [error, setError] = useState('')
+  async function saveProfile(event: React.FormEvent) { event.preventDefault(); setError(''); setMessage(''); setBusy(true); try { await api.put('/auth/me', { full_name: name.trim() }); await reload(); setMessage('Profile updated.') } catch { setError('Could not update your name. Please try again.') } finally { setBusy(false) } }
+  async function changePassword(event: React.FormEvent) { event.preventDefault(); setError(''); setMessage(''); if (next !== confirm) { setError('New passwords do not match.'); return } setBusy(true); try { await api.post('/auth/change-password', { current_password: current, new_password: next }); setCurrent(''); setNext(''); setConfirm(''); await reload(); setMessage('Password updated.') } catch (err) { const detail = (err as { response?: { data?: { detail?: unknown } } }).response?.data?.detail; setError(typeof detail === 'string' ? detail : 'Could not change the password. Please try again.') } finally { setBusy(false) } }
+  const sections = [{id:'profile',label:'Profile'}, {id:'password',label:'Change password'}, ...(user?.role !== 'developer' ? [{id:'model',label:'Model settings'}] : [])]
+  return <div className="settings-page"><header><h1>Settings</h1><p>Manage your account and preferences.</p></header><div className="settings-layout"><nav aria-label="Settings sections">{sections.map(item => <button key={item.id} type="button" aria-current={section === item.id ? 'page' : undefined} onClick={() => { setSection(item.id); setError(''); setMessage('') }}>{item.label}</button>)}</nav><section className="settings-content">{section === 'profile' && <form className="settings-form" onSubmit={event => void saveProfile(event)}><h2>Profile</h2><Input label="Full name" required maxLength={120} value={name} onChange={e => setName(e.target.value)} /><Input label="Email" value={user?.email ?? ''} readOnly /><Input label="Role" value={user?.role.replace('_', ' ') ?? ''} readOnly />{name.trim() !== user?.full_name && <Button type="submit" loading={busy} disabled={USE_MOCK}>Save changes</Button>}{USE_MOCK && <p>Profile updates require a backend session.</p>}</form>}{section === 'password' && <form className="settings-form" onSubmit={event => void changePassword(event)}><h2>Change password</h2><Input label="Current password" type="password" autoComplete="current-password" required value={current} onChange={e => setCurrent(e.target.value)}/><Input label="New password" type="password" autoComplete="new-password" minLength={10} maxLength={72} required value={next} onChange={e => setNext(e.target.value)}/><Input label="Confirm new password" type="password" autoComplete="new-password" required value={confirm} onChange={e => setConfirm(e.target.value)}/><Button type="submit" loading={busy} disabled={USE_MOCK}>Update password</Button></form>}{section === 'model' && <ModelSettings/>}{error && <p role="alert" className="settings-error">{error}</p>}{message && <p role="status" className="settings-message">{message}</p>}</section></div></div>
 }

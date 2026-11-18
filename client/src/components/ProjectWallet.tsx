@@ -1,6 +1,10 @@
 import { useCallback, useEffect, useState } from 'react'
 import { realClient } from '@/api/client'
 import { Button } from '@/components/ui/button'
+import { SlideOver, Modal } from '@/components/ui/overlay'
+import { ProviderIcon } from '@/components/ui/provider-icon'
+import { Badge } from '@/components/ui/badge'
+import './project-management.css'
 
 type Provider = 'aws' | 'gcp' | 'azure' | 'stripe' | 'twilio'
 type Entry = { id: string; provider: Provider; label: string | null; verification_status: 'pending' | 'ok' | 'error'; verification_error: string | null; last_verified_at: string | null }
@@ -26,30 +30,28 @@ const input = 'min-w-0 w-full rounded-md border bg-transparent p-2 text-sm'
 const detail = (err: unknown) => { const value = (err as { response?: { data?: { detail?: unknown } } }).response?.data?.detail; return typeof value === 'string' ? value : 'Unable to complete the request. Check your settings and try again.' }
 
 export default function ProjectWallet({ projectId, projectName }: { projectId: string; projectName: string }) {
+  const [open, setOpen] = useState(false); const [remove, setRemove] = useState<Entry | null>(null); const [loading, setLoading] = useState(true)
   const [entries, setEntries] = useState<Entry[]>([]); const [provider, setProvider] = useState<Provider>('stripe')
   const [twilioAuth, setTwilioAuth] = useState<'api_key' | 'auth_token'>('api_key')
   const [credentials, setCredentials] = useState<Record<string, string>>({}); const [label, setLabel] = useState(''); const [error, setError] = useState(''); const [notice, setNotice] = useState(''); const [busy, setBusy] = useState(false)
   const load = useCallback(async () => { const {data} = await realClient.get<Entry[]>(`/projects/${projectId}/wallet`); setEntries(data) }, [projectId])
-  useEffect(() => { let active = true; realClient.get<Entry[]>(`/projects/${projectId}/wallet`).then(({data}) => { if (active) { setEntries(data); setError('') } }).catch(() => { if (active) setError('Could not load wallet connections.') }); return () => { active = false } }, [projectId])
+  useEffect(() => { let active = true; realClient.get<Entry[]>(`/projects/${projectId}/wallet`).then(({data}) => { if (active) { setEntries(data); setError(''); setLoading(false) } }).catch(() => { if (active) { setError('Could not load wallet connections.'); setLoading(false) } }); return () => { active = false } }, [projectId])
   useEffect(() => { if (!entries.some(entry => entry.verification_status === 'pending')) return; const timer = window.setInterval(() => { void load().catch(() => setError('Could not refresh verification status.')) }, 2000); return () => window.clearInterval(timer) }, [entries, load])
   async function save(event: React.FormEvent) {
     event.preventDefault(); setBusy(true); setError(''); setNotice('')
-    try { await realClient.post(`/projects/${projectId}/wallet`, { provider, label: label.trim() || null, credentials }); setCredentials({}); setLabel(''); setNotice('Connection saved. Verification has started.'); await load() }
+    try { await realClient.post(`/projects/${projectId}/wallet`, { provider, label: label.trim() || null, credentials }); setCredentials({}); setLabel(''); setNotice('Connection saved. Verification has started.'); setOpen(false); await load() }
     catch (err) { setError(detail(err)) } finally { setBusy(false) }
   }
   async function modify(entry: Entry, action: 'verify' | 'delete') {
-    if (action === 'delete' && !window.confirm(`Remove the ${entry.provider.toUpperCase()} connection from ${projectName}?`)) return
     setError(''); setNotice(''); setBusy(true)
-    try { if (action === 'delete') await realClient.delete(`/projects/${projectId}/wallet/${entry.id}`); else await realClient.post(`/projects/${projectId}/wallet/${entry.id}/verify`); await load(); setNotice(action === 'delete' ? 'Connection removed.' : 'Verification has started.') }
+    try { if (action === 'delete') await realClient.delete(`/projects/${projectId}/wallet/${entry.id}`); else await realClient.post(`/projects/${projectId}/wallet/${entry.id}/verify`); await load(); setRemove(null); setNotice(action === 'delete' ? 'Connection removed.' : 'Verification has started.') }
     catch (err) { setError(detail(err)) } finally { setBusy(false) }
   }
-  return <section className="rounded-lg border bg-card p-5 space-y-4"><h2 className="font-semibold">Credential wallet · {projectName}</h2>
-    <p className="text-sm text-muted-foreground">Credentials are encrypted at rest and cannot be displayed after saving. Use restricted, read-only credentials where supported. Verification checks a specific read operation.</p>
-    <p className="text-sm text-muted-foreground">Verified connections are used to collect activity for this project. Choose the account and environment that own the exposed credentials.</p>
-    {error && <p role="alert" className="text-red-500 text-sm">{error}</p>}{notice && <p role="status" className="text-sm">{notice}</p>}
-    {entries.length === 0 && <p className="text-sm">No connections configured.</p>}
-    {entries.map(entry => <div className="border rounded p-3 space-y-2" key={entry.id}><div className="flex flex-wrap items-center justify-between gap-2"><div><strong>{entry.provider.toUpperCase()}</strong>{entry.label ? ` · ${entry.label}` : ''}<span className="ml-2 text-sm">{entry.verification_status === 'ok' ? 'Verified' : entry.verification_status === 'pending' ? 'Verifying…' : 'Verification failed'}</span></div><div className="flex gap-2"><Button size="sm" variant="outline" disabled={busy || entry.verification_status === 'pending'} onClick={() => void modify(entry, 'verify')}>Verify</Button><Button size="sm" variant="outline" disabled={busy} onClick={() => void modify(entry, 'delete')}>Remove</Button></div></div>{entry.verification_error && <p className="text-sm text-red-500">{entry.verification_error}</p>}{entry.last_verified_at && <p className="text-xs text-muted-foreground">Last checked {new Date(entry.last_verified_at).toLocaleString()}</p>}</div>)}
-    <form className="space-y-3" onSubmit={event => void save(event)}><h3 className="font-medium">Add or replace a connection</h3>
+  return <section className="pm-section" aria-label={`Credential wallet for ${projectName}`}><div className="pm-heading"><div><h2>Credential wallet · {projectName}</h2><p>Verified connections are used for activity collection. Choose the account and environment that own the exposed credentials.</p></div><Button onClick={() => { setError(''); setOpen(true) }}>Add connection</Button></div>
+    {error && !open && !remove && <p role="alert" className="pm-error">{error}</p>}{notice && <p role="status">{notice}</p>}
+    {loading ? <p role="status">Loading connections…</p> : entries.length === 0 ? <p>No connections configured. Add a provider reader to enable supported collection.</p> : <div className="pm-table-wrap"><table className="pm-table"><thead><tr><th>Provider</th><th>Label</th><th>Status</th><th>Last verified</th><th>Actions</th></tr></thead><tbody>{entries.map(entry => <tr key={entry.id}><td><ProviderIcon provider={entry.provider}/></td><td>{entry.label || '—'}</td><td title={entry.verification_error || undefined}><Badge variant={entry.verification_status === 'ok' ? 'success' : entry.verification_status === 'pending' ? 'warning' : 'critical'}>{entry.verification_status === 'ok' ? 'Verified' : entry.verification_status === 'pending' ? 'Verifying' : 'Error'}</Badge>{entry.verification_error && <p className="pm-error">{entry.verification_error}</p>}</td><td>{entry.last_verified_at ? new Date(entry.last_verified_at).toLocaleString() : '—'}</td><td><div className="pm-actions"><Button size="sm" variant="outline" disabled={busy || entry.verification_status === 'pending'} onClick={() => void modify(entry, 'verify')}>Verify</Button><Button size="sm" variant="outline" disabled={busy} onClick={() => { setError(''); setRemove(entry) }}>Remove</Button></div></td></tr>)}</tbody></table></div>}
+    <SlideOver open={open} title="Add provider connection" onClose={() => { setOpen(false); setCredentials({}); setError('') }} preventClose={busy} footer={<><Button type="button" variant="ghost" disabled={busy} onClick={() => { setOpen(false); setCredentials({}); setError('') }}>Cancel</Button><Button type="submit" form="wallet-form" loading={busy}>Save and verify</Button></>}>
+    <form id="wallet-form" className="space-y-3" onSubmit={event => void save(event)}><p className="pm-notice">Use restricted, read-only credentials where supported. Values are encrypted and cannot be retrieved after saving.</p>
       <label className="block text-sm">Provider<select className={`${input} mt-1`} value={provider} onChange={event => { setProvider(event.target.value as Provider); setCredentials({}); setError('') }}><option value="stripe">Stripe</option><option value="aws">AWS</option><option value="gcp">Google Cloud</option><option value="azure">Azure</option><option value="twilio">Twilio</option></select></label>
       <label className="block text-sm">Label (optional)<input className={`${input} mt-1`} maxLength={80} value={label} onChange={event => setLabel(event.target.value)} /></label>
       {provider === 'gcp' && <label className="block text-sm">Upload service account JSON<input className="block mt-1" type="file" accept="application/json,.json" onChange={event => { const file = event.target.files?.[0]; if (file) void file.text().then(text => setCredentials({service_account_json:text})).catch(() => setError('Could not read file.')) }} /></label>}
@@ -57,7 +59,9 @@ export default function ProjectWallet({ projectId, projectName }: { projectId: s
       {[...fields[provider], ...(provider === 'twilio' ? twilioFields[twilioAuth] : [])].map(field => <label className="block text-sm" key={field.key}>{field.label}{field.key === 'service_account_json' ? <textarea className={`${input} mt-1 font-mono`} rows={4} required value={credentials[field.key] ?? ''} onChange={event => setCredentials({...credentials,[field.key]:event.target.value})} /> : <input className={`${input} mt-1`} required type={field.secret ? 'password' : 'text'} autoComplete="off" value={credentials[field.key] ?? ''} onChange={event => setCredentials({...credentials,[field.key]:event.target.value})} />}</label>)}
       <p className="text-sm text-muted-foreground">{verificationDescriptions[provider]}</p>
       {provider === 'twilio' && <p className="text-sm text-muted-foreground">Use the owning Account SID with an API key from the same account. Service and Environment SIDs identify Serverless resources and are not login credentials.</p>}
-      <Button disabled={busy}>{busy ? 'Saving…' : 'Save and verify'}</Button>
+      {error && <p role="alert" className="pm-error">{error}</p>}
     </form>
+    </SlideOver>
+    <Modal open={!!remove} title="Remove connection" onClose={() => setRemove(null)} preventClose={busy} footer={<><Button variant="ghost" disabled={busy} onClick={() => setRemove(null)}>Cancel</Button><Button variant="danger" loading={busy} onClick={() => { if (remove) void modify(remove, 'delete') }}>Remove connection</Button></>}><p>This will stop future collection using this {remove?.provider.toUpperCase()} connection. Existing incident records are retained.</p>{error && <p role="alert" className="pm-error">{error}</p>}</Modal>
   </section>
 }

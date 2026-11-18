@@ -11,7 +11,7 @@ export default function WelcomeDeliveries() {
     try { const { data } = await realClient.get<Delivery[]>('/org/notification-deliveries'); setItems(data); setError('') }
     catch { setError('Could not load welcome email delivery status.') }
   }, [])
-  useEffect(() => { void load(); const timer = window.setInterval(() => { void load() }, 5000); return () => window.clearInterval(timer) }, [load])
+  useEffect(() => { void Promise.resolve().then(load); const timer = window.setInterval(() => { void load() }, 5000); return () => window.clearInterval(timer) }, [load])
   async function retry(id: string) {
     try { await realClient.post(`/org/notification-deliveries/${id}/retry`); await load() }
     catch { setError('Could not retry the welcome email. It may have expired.') }

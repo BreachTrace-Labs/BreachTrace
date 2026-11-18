@@ -1,0 +1,5 @@
+{
+  "name": "BreachTrace",
+  "short_name": "BreachTrace",
+  "icons": [{ "src": "/favicon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }]
+}

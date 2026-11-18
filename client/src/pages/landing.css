@@ -56,6 +56,7 @@
 .lp-brand-mark, .lp-nav-button, .lp-button-primary { background:#fafafa; color:#09090b!important; border-color:#fafafa; }
 .lp-hero-glow { background:radial-gradient(ellipse at 50% 70%,rgba(161,161,170,.12),transparent 58%); }
 .lp-gradient-text { color:#a1a1aa; background:linear-gradient(105deg,#fafafa 10%,#d4d4d8 58%,#a1a1aa); background-clip:text; -webkit-text-fill-color:transparent; }
+
 .lp-stats-intro h2 span,.lp-section h2 span,.lp-final h2 span { color:#a1a1aa; }
 .lp-pipeline-metrics>div { font-size:clamp(22px,2vw,28px); letter-spacing:-.03em; }
 .lp-footer-columns { grid-template-columns:repeat(3,1fr); }
@@ -65,3 +66,18 @@
 .lp-faq-anchor { position:absolute; margin-top:-100px; }
 @media(max-width:768px) { .lp-tools-grid { grid-template-columns:repeat(4,minmax(0,1fr)); } }
 @media(max-width:480px) { .lp-tools-grid { grid-template-columns:repeat(3,minmax(0,1fr)); } .lp-tool small { font-size:9px; } }
+.lp-theme-toggle { display:grid; place-items:center; flex:none; width:38px; height:38px; border:1px solid var(--lp-line-hover); border-radius:10px; background:var(--lp-raised); cursor:pointer; }
+.landing-page[data-theme='light'] { --lp-bg:#fafafa; --lp-raised:#fff; --lp-text:#18181b; --lp-body:#52525b; --lp-caption:#62626b; --lp-line:#e4e4e7; --lp-line-hover:#a1a1aa; --lp-cool:#52525b; --lp-accent-soft:rgba(82,82,91,.1); }
+.landing-page[data-theme='light'] .lp-header, .landing-page[data-theme='light'] .lp-header.is-scrolled { background:rgba(250,250,250,.95); }
+.landing-page[data-theme='light'] .lp-promo, .landing-page[data-theme='light'] .lp-footer { background:#f1f1f3; }
+.landing-page[data-theme='light'] .lp-promo a, .landing-page[data-theme='light'] .lp-promo a>span, .landing-page[data-theme='light'] .lp-desktop-nav button, .landing-page[data-theme='light'] .lp-desktop-nav>a, .landing-page[data-theme='light'] .lp-mega-group a, .landing-page[data-theme='light'] .lp-mega-feature small, .landing-page[data-theme='light'] .lp-mega-tour a { color:#3f3f46; }
+.landing-page[data-theme='light'] .lp-mega, .landing-page[data-theme='light'] .lp-mobile-drawer { background:#fafafa; border-color:#d4d4d8; }
+.landing-page[data-theme='light'] .lp-mega-feature, .landing-page[data-theme='light'] .lp-mega-tour, .landing-page[data-theme='light'] .lp-menu-button, .landing-page[data-theme='light'] .lp-stat-card, .landing-page[data-theme='light'] .lp-quote, .landing-page[data-theme='light'] .lp-ticker-card, .landing-page[data-theme='light'] .lp-final-columns article, .landing-page[data-theme='light'] .lp-tool, .landing-page[data-theme='light'] .lp-resource-info, .landing-page[data-theme='light'] .lp-newsletter-icon { background:#fff; color:#27272a; border-color:#d4d4d8; }
+.landing-page[data-theme='light'] .lp-brand-mark, .landing-page[data-theme='light'] .lp-nav-button, .landing-page[data-theme='light'] .lp-button-primary { background:#18181b; color:#fff!important; border-color:#18181b; }
+.landing-page[data-theme='light'] .lp-gradient-text { background:linear-gradient(105deg,#18181b,#71717a); background-clip:text; -webkit-text-fill-color:transparent; }
+.landing-page[data-theme='light'] .lp-kicker, .landing-page[data-theme='light'] .lp-mini-kicker, .landing-page[data-theme='light'] h2 span, .landing-page[data-theme='light'] .lp-feature-copy li, .landing-page[data-theme='light'] .lp-stat-card p, .landing-page[data-theme='light'] .lp-pipeline-step, .landing-page[data-theme='light'] .lp-compliance-grid>div>span, .landing-page[data-theme='light'] .lp-footer-columns a, .landing-page[data-theme='light'] .lp-logo-group span, .landing-page[data-theme='light'] .lp-logo-group i { color:#52525b; }
+.landing-page[data-theme='light'] .lp-text-link, .landing-page[data-theme='light'] .lp-button-outline, .landing-page[data-theme='light'] .lp-button-ghost { color:#27272a!important; border-color:#a1a1aa; }
+.landing-page[data-theme='light'] .lp-eyebrow, .landing-page[data-theme='light'] .lp-proof, .landing-page[data-theme='light'] .lp-orbit-label { background:#fff; color:#3f3f46!important; border-color:#d4d4d8; }
+.landing-page[data-theme='light'] .lp-resource-art, .landing-page[data-theme='light'] .lp-mock, .landing-page[data-theme='light'] .lp-vault-visual { color:#fafafa; }
+.landing-page[data-theme='light'] .lp-step-icon, .landing-page[data-theme='light'] .lp-ticker-icon { background:#f4f4f5; color:#52525b; border-color:#d4d4d8; }
+@media(max-width:480px) { .lp-header-actions { gap:6px; } .lp-theme-toggle { width:34px; height:34px; } }

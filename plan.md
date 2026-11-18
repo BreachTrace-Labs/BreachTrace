@@ -12,6 +12,71 @@
 
 ---
 
+## Current progress update — 2026-11-18
+
+This update reflects the implementation on branch `ese1` at `515c9b5`. It
+supersedes the August 7 state audit below for current status. The detailed
+research boundaries and evidence remain in
+[`docs/research/paper-reference.md`](docs/research/paper-reference.md),
+[`docs/exposure-attribution.md`](docs/exposure-attribution.md), and
+[`docs/meeting-actions.md`](docs/meeting-actions.md).
+
+### Implemented
+
+- **Detection and repository scanning:** GitHub push-diff detection and bounded
+  current-snapshot scans; 49 AI credential families; bounded static recovery for
+  supported encodings and literal constructions. Findings are masked, and
+  snapshot scans do not start provider collection.
+- **Forensic pipeline:** AWS, GCP, Azure, Stripe and Twilio collectors, with
+  Firebase service-account findings routed through GCP. Events are normalized,
+  classified, scored and included in deterministic reports and the incident UI.
+- **Investigation workflow:** organization/project and role foundation, project
+  credential wallet, incident assignment/dismissal/refresh, audit views, PDF
+  export, project notifications, evidence search, and optional checked model
+  prose. The UI distinguishes detection-only findings and synthetic examples.
+- **Research and local workflow:** experiment recording and platform comparison
+  code, Azure scenario scaffolding, repository stress tooling, model evaluation
+  tooling, Docker Compose local demo, setup guides and migration checks.
+
+### Remaining implementation
+
+1. **Production readiness:** complete authorization and tenant-isolation review
+   across the API; make background scans and notification delivery durable with
+   retry and delivery state; finish deployment hardening. Current documentation
+   describes a local research prototype, not a production-hardened service.
+2. **Credential lifecycle evidence:** record the source, identity, timestamp and
+   confidence of rotation/revocation observations. Ordinary incidents do not
+   automatically establish a confirmed exposure end; timeout or failed checks
+   must not be treated as proof of revocation.
+3. **Stronger provider attribution (optional extensions):** investigate GCP
+   service-account key identifiers, Azure service-principal sign-in evidence,
+   Stripe per-key request logs, and stronger Twilio actor/request data. Existing
+   collectors often establish account-, principal- or application-level
+   correlation rather than exact-key causation.
+4. **Research harness cleanup:** fix the scenario chronology before using it to
+   measure post-exposure activity, then run a common-ground-truth evaluation
+   across supported providers and publish reproducible results.
+
+### Still needed for research claims (not core feature implementation)
+
+- Independent labelled detector evaluation. SecretBench's labelled data is not
+  present in this repository; published-pattern parity checks are not an
+  accuracy benchmark.
+- Controlled cross-provider results for event capture, mapping, attribution,
+  latency, collection failures and cost. Code and synthetic tests alone do not
+  establish live-account behavior or a completed multi-provider evaluation.
+- Blinded human assessment of severity/report quality and a larger model study.
+  The existing local model pilot is small and synthetic.
+- Ethics and institutional review before any study that exposes credentials or
+  collects public-repository data at scale.
+
+**Status note:** the older sprint assignments and exit criteria below are the
+August 2026 plan, not a current task checklist. Check the current code and the
+linked research/status documents before reopening an item; several August gaps
+have since been implemented.
+
+---
+
 ## SECTION 0 — Where We Actually Are (state audit, 2026-08-07)
 
 Read this before planning anything. A large amount of GCP/Azure work is **already written but not merged**, and the biggest gaps are not where the team thinks they are.

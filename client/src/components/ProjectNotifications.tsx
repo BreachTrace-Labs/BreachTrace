@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useState, type FormEvent } from 'react'
 import { realClient } from '@/api/client'
 import { Button } from '@/components/ui/button'
+import { SlideOver } from '@/components/ui/overlay'
+import './project-management.css'
 
 type Config = {
   id: string
@@ -20,6 +22,7 @@ const errorMessage = (error: unknown) => {
 }
 
 export default function ProjectNotifications({ projectId, projectName }: { projectId: string; projectName: string }) {
+  const [open, setOpen] = useState(false)
   const [items, setItems] = useState<Config[]>([])
   const [deliveries, setDeliveries] = useState<Delivery[]>([])
   const [smtpReady, setSmtpReady] = useState(false)
@@ -38,8 +41,8 @@ export default function ProjectNotifications({ projectId, projectName }: { proje
       setSmtpReady(data.smtp_configured)
       const history = await realClient.get<Delivery[]>(`/projects/${projectId}/notification-deliveries`)
       setDeliveries(history.data)
-      setError('')
-    } catch (err) { setError(errorMessage(err)) }
+      setError(previous => previous === 'Could not load notification settings.' ? '' : previous)
+    } catch { setError(previous => previous || 'Could not load notification settings.') }
   }, [projectId])
 
   useEffect(() => { void load() }, [load])
@@ -56,15 +59,14 @@ export default function ProjectNotifications({ projectId, projectName }: { proje
     event.preventDefault()
     await save(async () => {
       await realClient.post(`/projects/${projectId}/notifications`, { channel, target, min_severity: severity })
-      setTarget('')
+      setTarget(''); setOpen(false)
     }, 'Notification destination added.')
   }
 
   return <section className="rounded-lg border bg-card p-5 space-y-4" aria-label={`Notifications for ${projectName}`}>
-    <div><h2 className="font-semibold">Notifications · {projectName}</h2>
-      <p className="text-sm text-muted-foreground">Send alerts when a new incident is processed. Severity filters use the forensic score.</p></div>
+    <div className="pm-heading"><div><h2>Notifications · {projectName}</h2><p>Send alerts when a new incident is processed. Severity filters use the forensic score.</p></div><Button onClick={() => { setError(''); setOpen(true) }}>Add notification</Button></div>
     {!smtpReady && <p className="text-sm border rounded p-3">SMTP is not configured on the backend. Email notifications and welcome emails will not be delivered until SMTP_HOST and SMTP_FROM are set.</p>}
-    {error && <p role="alert" className="text-red-500 text-sm">{error}</p>}{notice && <p role="status" className="text-sm">{notice}</p>}
+    {error && !open && <p role="alert" className="text-red-500 text-sm">{error}</p>}{notice && <p role="status" className="text-sm">{notice}</p>}
     {items.length === 0 ? <p className="text-sm text-muted-foreground">No notification destinations configured.</p> : <div className="space-y-2">
       {items.map(item => <div key={item.id} className="border rounded p-3 flex flex-wrap gap-3 items-center justify-between">
         <div className="min-w-0"><strong className="capitalize">{item.channel}</strong><p className="text-sm break-all">{item.target_display}</p></div>
@@ -83,19 +85,21 @@ export default function ProjectNotifications({ projectId, projectName }: { proje
         <Button size="sm" variant="outline" disabled={busy} onClick={() => { if (window.confirm(`Remove this ${item.channel} notification destination?`)) void save(() => realClient.delete(`/projects/${projectId}/notifications/${item.id}`), 'Notification destination removed.') }}>Remove</Button>
       </div>)}
     </div>}
-    <form className="grid sm:grid-cols-2 gap-2" onSubmit={add}>
-      <select className={input} aria-label="Notification channel" value={channel} onChange={e => { setChannel(e.target.value as 'email' | 'slack'); setTarget('') }}>
+    <SlideOver open={open} title="Add notification" onClose={() => { setOpen(false); setTarget(''); setError('') }} preventClose={busy} footer={<><Button type="button" variant="ghost" disabled={busy} onClick={() => { setOpen(false); setTarget(''); setError('') }}>Cancel</Button><Button type="submit" form="notification-form" loading={busy}>Add destination</Button></>}>
+    <form id="notification-form" className="grid gap-3" onSubmit={add}>
+      <label htmlFor="notification-channel" className="text-sm font-medium">Channel</label>
+      <select id="notification-channel" className={input} aria-label="Notification channel" value={channel} onChange={e => { setChannel(e.target.value as 'email' | 'slack'); setTarget('') }}>
         <option value="email">Email</option><option value="slack">Slack incoming webhook</option>
       </select>
-      <select className={input} aria-label="New notification minimum severity" value={severity} onChange={e => setSeverity(e.target.value)}>
+      <label htmlFor="notification-severity" className="text-sm font-medium">Minimum severity</label><select id="notification-severity" className={input} aria-label="New notification minimum severity" value={severity} onChange={e => setSeverity(e.target.value)}>
         {levels.map(level => <option key={level} value={level}>Minimum: {level}</option>)}
       </select>
-      <input className={`${input} sm:col-span-2`} required aria-label={channel === 'email' ? 'Notification email address' : 'Slack incoming webhook URL'}
+      <label htmlFor="notification-target" className="text-sm font-medium">{channel === 'email' ? 'Email address' : 'Slack incoming webhook URL'}</label><input id="notification-target" className={input} required aria-label={channel === 'email' ? 'Notification email address' : 'Slack incoming webhook URL'}
         type={channel === 'email' ? 'email' : 'url'} autoComplete="off"
         placeholder={channel === 'email' ? 'security@example.com' : 'https://hooks.slack.com/services/…'} value={target} onChange={e => setTarget(e.target.value)} />
       <p className="sm:col-span-2 text-xs text-muted-foreground">Slack webhook URLs are encrypted and cannot be viewed after saving. Incidents without a severity score notify only destinations set to “low” and are labeled “not assessed.”</p>
-      <Button className="sm:col-span-2" type="submit" disabled={busy || !target}>Add notification destination</Button>
-    </form>
+      {error && <p role="alert" className="pm-error">{error}</p>}
+    </form></SlideOver>
     <div className="space-y-2"><h3 className="font-medium">Recent deliveries</h3>
       {deliveries.length === 0 ? <p className="text-sm text-muted-foreground">No deliveries yet.</p> : deliveries.map(delivery => <div className="border rounded p-3 text-sm" key={delivery.id}>
         <div className="flex flex-wrap items-center justify-between gap-2"><span>{delivery.channel} · {delivery.type === 'incident_assigned' ? 'Assignment' : 'New incident'} · {delivery.status === 'complete' ? delivery.outcome ?? 'complete' : delivery.status} · Attempt {delivery.attempts}/{delivery.max_attempts}</span>
