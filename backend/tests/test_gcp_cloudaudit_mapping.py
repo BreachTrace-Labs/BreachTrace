@@ -131,7 +131,8 @@ def test_error_code_set_on_failure():
 
 def test_raw_data_is_payload():
     event = _make_collector()._map_entry(_make_entry(_FULL_PAYLOAD))
-    assert event.raw_data == _FULL_PAYLOAD
+    assert {key: value for key, value in event.raw_data.items() if key != '_gcp_log_entry'} == _FULL_PAYLOAD
+    assert event.raw_data['_gcp_log_entry']['timestamp_precise'] == '2026-05-09T12:00:00.000000000Z'
 
 
 # ---------------------------------------------------------------------------
@@ -149,3 +150,50 @@ def test_missing_optional_fields_do_not_raise():
     assert event.principal_id is None
     assert event.success is True
     assert event.error_code is None
+
+
+@pytest.mark.parametrize('status,success,code', [(None, True, None), ({}, True, None), ({'code': 0}, True, None), ({'code': 5}, False, '5'), ({'code': '7'}, False, '7')])
+def test_gcp_status_codes_are_interpreted_without_assuming_all_failures_are_denials(status, success, code):
+    event = _make_collector()._map_entry(_make_entry({'status': status}))
+    assert event.success is success and event.error_code == code
+
+
+@pytest.mark.parametrize('status', [{'message': 'missing code'}, {'code': 'bad'}, {'code': True}, {'code': 99}, 'invalid'])
+def test_malformed_nonempty_status_fails_closed(status):
+    with pytest.raises(ValueError, match='invalid status'):
+        _make_collector()._map_entry(_make_entry({'status': status}))
+
+
+def test_gcp_evidence_preserves_identity_and_log_metadata_without_request_bodies():
+    entry = _make_entry({
+        'methodName': 'storage.objects.get',
+        'authenticationInfo': {'principalEmail': 'svc@demo.iam.gserviceaccount.com',
+                               'serviceAccountKeyName': '//iam.googleapis.com/projects/demo/serviceAccounts/svc@demo.iam.gserviceaccount.com/keys/' + 'a' * 40,
+                               'serviceAccountDelegationInfo': [{'firstPartyPrincipal': {'principalEmail': 'user@example.com'}}]},
+        'authorizationInfo': [{'permission': 'storage.objects.get', 'granted': True}],
+        'request': {'arbitrary': 'sensitive-request-body'}, 'response': {'arbitrary': 'sensitive-response-body'},
+        'requestMetadata': {'callerIp': '192.0.2.1', 'callerSuppliedUserAgent': 'agent', 'extra': 'private'},
+    })
+    entry.insert_id = 'insert-123'
+    entry.log_name = 'projects/demo/logs/cloudaudit.googleapis.com%2Fdata_access'
+    entry.operation = {'id': 'operation-1', 'first': True, 'unknown': 'sensitive'}
+    entry.received_timestamp = datetime(2026, 5, 9, 12, 1, tzinfo=timezone.utc)
+    raw = _make_collector()._map_entry(entry).raw_data
+    assert raw['authenticationInfo']['serviceAccountDelegationInfo'][0]['firstPartyPrincipal']['principalEmail'] == 'user@example.com'
+    assert raw['authorizationInfo'][0]['granted'] is True
+    assert raw['_gcp_log_entry']['insert_id'] == 'insert-123'
+    assert raw['_gcp_log_entry']['operation'] == {'id': 'operation-1', 'first': True}
+    assert 'sensitive-request-body' not in str(raw) and 'sensitive-response-body' not in str(raw)
+    assert raw['requestMetadata'] == {'callerIp': '192.0.2.1', 'callerSuppliedUserAgent': 'agent'}
+
+
+def test_only_permission_denied_is_stored_as_denied(sqlite_factory):
+    from db.crud import create_incident, save_forensic_events
+    from db.models import ForensicEvent
+    with sqlite_factory() as db:
+        incident = create_incident(db, credential_type='gcp_service_account', credential_hint='svc...',
+                                   repo_url='https://github.com/example/repo', commit_hash='a'*40,
+                                   exposure_start=datetime.now(timezone.utc))
+        events = [_make_collector()._map_entry(_make_entry({'status': {'code': code}})) for code in (5, 7)]
+        save_forensic_events(db, incident.incident_id, events)
+        assert [row.is_denied for row in db.query(ForensicEvent).order_by(ForensicEvent.error_code).all()] == [False, True]

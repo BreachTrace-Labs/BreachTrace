@@ -1,8 +1,8 @@
 """Redact credential material from provider-supplied evidence."""
 import re
 
-_SENSITIVE_NAME = re.compile(r"(?:secret|password|authorization|private.?key|access.?token|api.?key|auth.?token|credential)", re.I)
-_CREDENTIAL = re.compile(r"\b(?:AKIA|ABIA|ACCA|ASIA)[A-Z0-9]{16}\b|\b(?:sk|rk)_(?:live|test)_[A-Za-z0-9]+\b|\bgh[pousr]_[A-Za-z0-9_]+\b|\bgithub_pat_[A-Za-z0-9_]+\b|-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----")
+_SENSITIVE_NAME = re.compile(r"(?:secret|password|authorization(?!info\b)|private.?key|access.?token|api.?key|auth.?token|credential)", re.I)
+_CREDENTIAL = re.compile(r"\b(?:AKIA|ABIA|ACCA|ASIA)[A-Z0-9]{16}\b|(?<![A-Za-z0-9_-])AIza[0-9A-Za-z_-]{35}(?![A-Za-z0-9_-])|\b(?:sk|rk)_(?:live|test)_[A-Za-z0-9]+\b|\bgh[pousr]_[A-Za-z0-9_]+\b|\bgithub_pat_[A-Za-z0-9_]+\b|-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----")
 
 
 def redact(value):

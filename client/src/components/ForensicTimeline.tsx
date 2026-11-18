@@ -116,6 +116,7 @@ const ForensicTimeline: React.FC<Props> = ({ events, exposureStart }) => {
   }, [data])
 
   const isMultiPlatform = platformsPresent.length > 1
+  const hasData = data.length > 0
 
   /* Grouped by calendar date for the list view */
   const grouped = useMemo(() => {
@@ -149,7 +150,7 @@ const ForensicTimeline: React.FC<Props> = ({ events, exposureStart }) => {
     observer.observe(el)
     setChartWidth(el.clientWidth)
     return () => observer.disconnect()
-  }, [])
+  }, [hasData])
 
   /* Create tooltip div once on mount */
   useEffect(() => {
@@ -173,7 +174,7 @@ const ForensicTimeline: React.FC<Props> = ({ events, exposureStart }) => {
     wrapperRef.current.appendChild(div)
     tooltipRef.current = div
     return () => { div.remove(); tooltipRef.current = null }
-  }, [])
+  }, [hasData])
 
   /* D3 scatter chart */
   useEffect(() => {
@@ -328,7 +329,7 @@ const ForensicTimeline: React.FC<Props> = ({ events, exposureStart }) => {
       // independent so severity is still readable within a single platform.
       .attr('d', (d) => d3.symbol().type(PLATFORM_SYMBOL[d.plat] ?? d3.symbolCross).size(120)())
       .attr('transform', (d) => `translate(${x(d.ts)}, ${(y(d.row) ?? 0) + y.bandwidth() / 2})`)
-      .attr('fill', (d) => SEV_COLOR[d.severity_weight || 1] || 'var(--color-muted-foreground)')
+      .attr('fill', (d) => d.severity_weight ? SEV_COLOR[d.severity_weight] || 'var(--color-muted-foreground)' : 'var(--color-muted-foreground)')
       .attr('stroke', 'var(--color-background)')
       .attr('stroke-width', 1.5)
       .style('cursor', 'pointer')
@@ -369,7 +370,7 @@ const ForensicTimeline: React.FC<Props> = ({ events, exposureStart }) => {
         l4.style.color = 'var(--color-muted-foreground)'
         l4.style.marginTop = '4px'
         l4.style.fontSize = '10px'
-        l4.textContent = `Mapped to ${d.impact_category ?? 'unclassified'} because action = ${d.api_action}`
+        l4.textContent = d.impact_category ? `Mapped to ${d.plat === 'gcp' && d.impact_category === 'resource_abuse' ? 'resource change' : d.impact_category} for ${d.api_action}` : 'No classification rule matched this action'
 
         node.append(plat, b, l2, l3, l4)
         const [mx, my] = d3.pointer(event, wrapperRef.current)
@@ -519,9 +520,9 @@ const ForensicTimeline: React.FC<Props> = ({ events, exposureStart }) => {
 
                   {/* Event rows */}
                   {group.events.map((e, ei) => {
-                    const sevColor = SEV_COLOR[e.severity_weight || 1] ?? 'var(--color-muted-foreground)'
+                    const sevColor = e.severity_weight ? SEV_COLOR[e.severity_weight] ?? 'var(--color-muted-foreground)' : 'var(--color-muted-foreground)'
                     const catColor = CAT_COLOR[e.impact_category ?? ''] ?? 'var(--color-muted-foreground)'
-                    const catLabel = e.impact_category ? (CAT_LABEL[e.impact_category] ?? e.impact_category) : null
+                    const catLabel = e.impact_category ? (e.plat === 'gcp' && e.impact_category === 'resource_abuse' ? 'Resource change' : (CAT_LABEL[e.impact_category] ?? e.impact_category)) : 'Unclassified'
                     const isLast   = ei === group.events.length - 1
 
                     return (
@@ -590,7 +591,7 @@ const ForensicTimeline: React.FC<Props> = ({ events, exposureStart }) => {
                                   color: 'var(--color-muted-foreground)',
                                 }}
                               >
-                                Denied
+                                {e.is_denied ? 'Denied' : 'Failed'}
                               </span>
                             )}
                           </div>

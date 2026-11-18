@@ -102,8 +102,10 @@ def resolve_match(match: object) -> ResolvedMatch:
             credential=match.client_email,
             access_key_id=None,
             principal_id=match.client_email,
-            forensic_tier=TIER_FORENSIC,
-            unavailable_reason=None,
+            forensic_tier=TIER_FORENSIC if match.structured_key else TIER_DETECTION_ONLY,
+            unavailable_reason=None if match.structured_key else (
+                'A service-account identifier was found, but a complete private key was not established. '
+                'An identifier alone does not prove credential exposure; review the source before investigating.'),
         )
 
     if isinstance(match, AzureCredentialMatch):

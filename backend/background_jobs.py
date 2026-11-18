@@ -73,6 +73,7 @@ def process_one() -> bool:
     done = threading.Event()
     heartbeat = threading.Thread(target=_heartbeat, args=(job_id, token, done), daemon=True)
     heartbeat.start()
+    kind = None
     try:
         with SessionLocal() as db:
             job = db.get(BackgroundJob, job_id)
@@ -83,6 +84,16 @@ def process_one() -> bool:
         # Exceptions can contain URLs, credentials, or provider responses.
         logger.warning('Background job %s failed (%s)', job_id, type(exc).__name__)
         result, error = None, 'The operation failed. Check configuration and provider connectivity.'
+        if kind == 'gcp_historical':
+            from collection_credentials import ReaderConfigurationError
+            if isinstance(exc, ReaderConfigurationError):
+                error = str(exc)
+            elif isinstance(exc, ValueError) and str(exc).startswith(('GCP audit log collection limit', 'The GCP log reader', 'GCP collection window', 'GCP audit log contains an invalid status')):
+                error = str(exc)
+            elif type(exc).__name__ in ('Forbidden', 'PermissionDenied', 'Unauthenticated', 'DefaultCredentialsError', 'RefreshError'):
+                error = 'Google Cloud authentication or log access failed. Check the reader and Cloud Logging permissions.'
+            elif type(exc).__name__ in ('TooManyRequests', 'ResourceExhausted', 'ServiceUnavailable', 'DeadlineExceeded'):
+                error = 'Google Cloud Logging was unavailable, timed out or exceeded quota. Retry later.'
     finally:
         done.set()
     with SessionLocal() as db:
@@ -128,6 +139,10 @@ def dispatch(kind: str, payload: dict) -> dict:
                 return run(payload['models'], payload['cases'], payload['seed'], Path(directory) / 'results.json')
             except SystemExit as exc:
                 raise RuntimeError('Local model comparison unavailable') from exc
+    if kind == 'gcp_historical':
+        from research.gcp_historical import run
+        from fastapi.encoders import jsonable_encoder
+        return jsonable_encoder(run(payload))
     if kind == 'wallet_verify':
         from wallet_verify import verify_entry
         if not verify_entry(payload['entry_id'], payload['iv'], payload.get('actor_id')):

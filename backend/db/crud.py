@@ -142,11 +142,19 @@ def save_forensic_events(
     Returns the created ORM rows.
     """
     orm_events: list[ORMForensicEvent] = []
+    existing_sources = {row[0] for row in db.query(ORMForensicEvent.source_record_id)
+                        .filter(ORMForensicEvent.incident_id == incident_id,
+                                ORMForensicEvent.source_record_id.isnot(None)).all()}
     for event in events:
+        source_record_id = event.source_record_id if event.platform == 'gcp' else None
+        if source_record_id and source_record_id in existing_sources:
+            continue
+        if source_record_id:
+            existing_sources.add(source_record_id)
         error_code = event.error_code
         is_denied = (
             error_code is not None
-            and "AccessDenied" in error_code
+            and ("AccessDenied" in error_code or (event.platform == 'gcp' and error_code == '7'))
         )
         # Extract principal ARN from raw CloudTrail data when available.
         principal_arn = None
@@ -156,6 +164,7 @@ def save_forensic_events(
 
         orm_event = ORMForensicEvent(
             event_id=event.event_id,
+            source_record_id=source_record_id,
             incident_id=incident_id,
             platform=event.platform,
             timestamp=event.timestamp,

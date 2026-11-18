@@ -1,4 +1,5 @@
 import re
+import json
 from dataclasses import dataclass, field
 from typing import Sequence
 
@@ -212,6 +213,8 @@ class GCPCredentialMatch:
     credential_hint: str        # first 8 chars of email + '...'
     raw_match: str
     line_number: int | None = None
+    structured_key: bool = False
+    project_id: str | None = None
 
 
 
@@ -235,8 +238,71 @@ def find_gcp_credentials(
     candidate_lines: set[int] | None = None,
 ) -> list[GCPCredentialMatch]:
     matches = []
-    seen: set[str] = set()
+    seen: set[str | tuple[str, str]] = set()
     lines = text.splitlines()
+
+    def add_structured(obj, eligible):
+        if not isinstance(obj, dict) or obj.get('type') != 'service_account':
+            return
+        email, project, key_id, private_key = (obj.get(k) for k in ('client_email', 'project_id', 'private_key_id', 'private_key'))
+        if not (isinstance(email, str) and GCP_CLIENT_EMAIL_PATTERN.fullmatch(email)
+                and isinstance(project, str) and re.fullmatch(r'[a-z][a-z0-9-]{4,28}[a-z0-9]', project)
+                and isinstance(key_id, str) and re.fullmatch(r'[a-f0-9]{40}', key_id)
+                and isinstance(private_key, str) and '-----BEGIN PRIVATE KEY-----' in private_key
+                and '-----END PRIVATE KEY-----' in private_key):
+            return
+        if eligible is None or (email, key_id) in seen:
+            return
+        seen.add((email, key_id))
+        matches.append(GCPCredentialMatch(
+            credential_type='firebase_service_account' if FIREBASE_SA_EMAIL_PATTERN.fullmatch(email) else 'gcp_service_account',
+            client_email=email, private_key_id=key_id, credential_hint=email[:8] + '...',
+            raw_match=f'{email} @ line {eligible + 1} (structured service account key)',
+            line_number=eligible + 1, structured_key=True, project_id=project))
+
+    # Parse complete JSON objects within each file/hunk. Pair identity and key
+    # ID only inside one object, never by proximity to another account.
+    decoder = json.JSONDecoder()
+    segments = text.split('\n\x00\n')
+    offset = 0
+    for segment in segments:
+        if '"service_account"' not in segment:
+            offset += segment.count('\n') + 2
+            continue
+        for start_match in re.finditer(r'\{', segment):
+            try:
+                obj, end = decoder.raw_decode(segment, start_match.start())
+            except (ValueError, RecursionError):
+                continue
+            if not isinstance(obj, dict) or obj.get('type') != 'service_account':
+                continue
+            object_text = segment[start_match.start():end]
+            first_line = offset + segment.count('\n', 0, start_match.start())
+            object_lines = object_text.splitlines()
+            relevant = [first_line + i for i, line in enumerate(object_lines)
+                        if re.search(r'"(?:client_email|private_key|private_key_id)"\s*:', line)]
+            eligible = next((i for i in relevant if _is_eligible(i, candidate_lines)), None)
+            add_structured(obj, eligible)
+        offset += segment.count('\n') + 2
+
+    # A JSON-encoded string may contain an entire key document (for example a
+    # configuration value). Decode a bounded, single-line JSON literal only;
+    # never execute source code or combine strings from unrelated lines.
+    literal_pattern = re.compile(r'"(?:\\[^\r\n]|[^"\\\r\n])*"')
+    for index, line in enumerate(lines):
+        if not _is_eligible(index, candidate_lines) or len(line) > 65536 or 'service_account' not in line:
+            continue
+        for literal in literal_pattern.finditer(line):
+            if 'service_account' not in literal.group() or '\\"' not in literal.group():
+                continue
+            try:
+                decoded = json.loads(literal.group())
+                obj = json.loads(decoded) if isinstance(decoded, str) else None
+            except (ValueError, RecursionError):
+                continue
+            add_structured(obj, index)
+
+    structured_emails = {match.client_email for match in matches}
 
     for i, line in enumerate(lines):
         if not _is_eligible(i, candidate_lines):
@@ -245,7 +311,7 @@ def find_gcp_credentials(
             continue
         for m in GCP_CLIENT_EMAIL_PATTERN.finditer(line):
             email = m.group(0)
-            if email in seen:
+            if email in seen or email in structured_emails:
                 continue
 
             # Check surrounding lines for key-material evidence.
@@ -272,8 +338,7 @@ def find_gcp_credentials(
             seen.add(email)
 
             # Extract private_key_id from the same context window if present
-            key_id_match = GCP_PRIVATE_KEY_ID_PATTERN.search(context_block)
-            private_key_id = key_id_match.group(1) if key_id_match else None
+            private_key_id = None  # A nearby key ID is not proof it belongs to this identity.
 
             hint = email[:8] + "..."
             raw_match = f"{email} @ line {i + 1}"

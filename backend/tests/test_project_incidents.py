@@ -298,3 +298,177 @@ def test_repeated_azure_secret_creates_one_incident_with_distinct_commits(client
         assert db.query(AzureSecretOccurrence).filter_by(incident_id=row.incident_id).count()==2
     detail=client.get('/incidents/'+first['incident_ids'][0],headers=headers).json()
     assert len(detail['azure_secret_occurrences'])==2 and secret not in str(detail)
+
+
+@pytest.mark.parametrize('encoded', [False, True])
+def test_gcp_structured_key_metadata_reaches_simulation_and_signed_webhook(client_factory, monkeypatch, encoded):
+    from db.models import GCPKeyAssociation
+    from routers import webhook
+    client, factory = client_factory
+    client.post('/auth/register', json={'org_name':'Acme','slug':'acme','admin_email':'admin@example.com','admin_password':'admin password','admin_full_name':'Admin'})
+    headers = {'Authorization':'Bearer ' + client.post('/auth/token', data={'username':'admin@example.com','password':'admin password'}).json()['access_token']}
+    project = client.post('/projects', headers=headers, json={'name':'App','github_repo_url':'https://github.com/acme/app'}).json()['id']
+    client.put(f'/projects/{project}/github-connection', headers=headers, json={'token':'github_pat_synthetic_example_for_tests'})
+    signing = 'webhook-signing-secret-12345'
+    client.put(f'/webhook/projects/{project}/secret', headers=headers, json={'secret':signing})
+    private_key = '-----BEGIN PRIVATE KEY-----\nSYNTHETIC_PRIVATE_MATERIAL\n-----END PRIVATE KEY-----\n'
+    key_id = 'd' * 40
+    document = {'type':'service_account', 'project_id':'demo-project', 'private_key_id':key_id,
+                'client_email':'worker@demo-project.iam.gserviceaccount.com', 'private_key':private_key}
+    diff = ('+const credentials = ' + json.dumps(json.dumps(document)) if encoded else
+            '\n'.join('+' + line for line in json.dumps(document, indent=2).splitlines()))
+    sim = client.post('/test/simulate', headers=headers, json={'project_id':project, 'diff_text':diff})
+    assert sim.status_code == 202, sim.text
+    sim_id = sim.json()['incident_id']
+    monkeypatch.setattr(webhook, '_fetch_diff', lambda *_: diff)
+    body = json.dumps({'repository':{'full_name':'acme/app'}, 'commits':[{'id':'a'*40, 'timestamp':'2026-01-01T00:00:00Z'}]}).encode()
+    signature = 'sha256=' + hmac.new(signing.encode(), body, hashlib.sha256).hexdigest()
+    response = client.post('/webhook/github', content=body, headers={'X-GitHub-Event':'push','X-Hub-Signature-256':signature})
+    assert response.status_code == 202, response.text
+    push_id = response.json()['incident_ids'][0]
+    from datetime import datetime, timezone
+    from db.crud import save_forensic_events
+    from normalizer.schema import ForensicEvent
+    email = document['client_email']
+    with factory() as db:
+        events = [ForensicEvent(platform='gcp', timestamp=datetime.now(timezone.utc), api_action='test',
+                                raw_data={'authenticationInfo': {'principalEmail': email, 'serviceAccountKeyName':
+                                          f'//iam.googleapis.com/projects/demo-project/serviceAccounts/{email}/keys/{value}'}})
+                  for value in (key_id, 'c' * 40)]
+        save_forensic_events(db, push_id, events)
+    for incident_id, source in ((sim_id, 'detected_in_simulation'), (push_id, 'detected_in_commit')):
+        detail = client.get('/incidents/' + incident_id, headers=headers)
+        assert detail.status_code == 200, detail.text
+        assert detail.json()['gcp_project_id'] == 'demo-project'
+        assert detail.json()['gcp_key_association']['verification'] == source
+        if incident_id == push_id:
+            assert [event['gcp_key_attribution'] for event in detail.json()['events']] == ['matched', 'different_key']
+        assert 'SYNTHETIC_PRIVATE_MATERIAL' not in detail.text
+        assert key_id not in str(detail.json()['gcp_key_association'])
+        with factory() as db:
+            association = db.get(GCPKeyAssociation, incident_id)
+            assert association.source == source and association.recorded_by is None
+            assert association.key_digest != key_id
+    override = client.post(f'/incidents/{push_id}/gcp-key-association', headers=headers,
+                           json={'key_id':'b'*40, 'confirms_incident_key':True})
+    assert override.status_code == 200
+    assert client.get('/incidents/' + push_id, headers=headers).json()['gcp_key_association']['verification'] == 'operator_reported'
+
+
+def test_gcp_historical_research_uses_project_reader_without_creating_incident(client_factory, monkeypatch):
+    from datetime import datetime, timezone
+    from crypto import encrypt_blob
+    from db.models import BackgroundJob, CredentialWalletEntry
+    from normalizer.schema import ForensicEvent
+    from research import gcp_historical
+    import background_jobs
+    client, factory = client_factory
+    client.post('/auth/register', json={'org_name':'Acme','slug':'acme','admin_email':'admin@example.com','admin_password':'admin password','admin_full_name':'Admin'})
+    headers = {'Authorization': 'Bearer ' + client.post('/auth/token', data={'username':'admin@example.com','password':'admin password'}).json()['access_token']}
+    project = client.post('/projects', headers=headers, json={'name':'App','github_repo_url':'https://github.com/acme/app'}).json()['id']
+    body = {'project_id': project, 'gcp_project_id': 'demo-project', 'principal_email':'svc@demo-project.iam.gserviceaccount.com',
+            'scenario_id':'GCP-DATA-01', 'start_utc':'2026-01-01T00:00:00Z', 'end_utc':'2026-01-01T01:00:00Z'}
+    assert client.post('/research/gcp-historical', headers=headers, json=body).status_code == 422
+    ciphertext, iv = encrypt_blob({'auth_mode':'impersonation', 'project_id':'demo-project', 'reader_service_account':'reader@demo-project.iam.gserviceaccount.com'})
+    admin_id = client.get('/auth/me', headers=headers).json()['id']
+    with factory() as db:
+        db.add(CredentialWalletEntry(project_id=project, provider='gcp', encrypted_blob=ciphertext, iv=iv,
+                                     created_by=admin_id, verification_status='ok'))
+        db.commit()
+    wrong = {**body, 'gcp_project_id':'other-project'}
+    assert client.post('/research/gcp-historical', headers=headers, json=wrong).status_code == 422
+    naive = {**body, 'start_utc':'2026-01-01T00:00:00'}
+    assert client.post('/research/gcp-historical', headers=headers, json=naive).status_code == 422
+    assert client.post('/research/gcp-historical', json=body).status_code == 401
+    response = client.post('/research/gcp-historical', headers=headers, json=body)
+    assert response.status_code == 202, response.text
+    job_id = response.json()['id']
+    assert client.post('/research/gcp-historical', headers=headers, json=body).status_code == 409
+    calls = []
+    class Collector:
+        def __init__(self, reader, max_events):
+            calls.append((reader, max_events))
+            self._client = type('Client', (), {'close': lambda self: calls.append('closed')})()
+        def collect(self, credential, start_time, end_time):
+            calls.append((credential, start_time, end_time))
+            return [ForensicEvent(platform='gcp', timestamp=datetime(2026, 1, 1, 0, 1, tzinfo=timezone.utc),
+                                  api_action='storage.objects.get', success=True, principal_id=credential)]
+    monkeypatch.setattr(gcp_historical, 'SessionLocal', factory)
+    monkeypatch.setattr(gcp_historical, 'GCPAuditLogCollector', Collector)
+    monkeypatch.setattr(background_jobs, 'SessionLocal', factory)
+    assert background_jobs.process_one()
+    with factory() as db:
+        job = db.get(BackgroundJob, job_id)
+        assert job.status == 'complete'
+        result = dict(job.result)
+    assert result['mode'] == 'research_forensic_evaluation' and result['record_count'] == 1
+    assert result['categories'] == {'data_access': 1} and calls[0][1] == 2000
+    assert calls[1][0] == body['principal_email'] and calls[-1] == 'closed'
+    with factory() as db:
+        assert db.query(IncidentRecord).count() == 0
+    latest = client.get('/research/gcp-historical/latest', headers=headers, params={'project_id':project})
+    assert latest.status_code == 200 and latest.json()['result']['record_count'] == 1
+    detail = client.get(f'/research/gcp-historical/{job_id}', headers=headers)
+    assert detail.status_code == 200 and detail.json()['result']['mode'] == 'research_forensic_evaluation'
+    client.post('/org/users/invite', headers=headers, json={'email':'dev@example.com','full_name':'Dev',
+                'role':'developer','temporary_password':'developer password'})
+    dev = {'Authorization':'Bearer ' + client.post('/auth/token', data={'username':'dev@example.com','password':'developer password'}).json()['access_token']}
+    client.post('/auth/change-password', headers=dev, json={'current_password':'developer password','new_password':'new developer password'})
+    assert client.get(f'/research/gcp-historical/{job_id}', headers=dev).status_code == 403
+    assert client.post('/research/gcp-historical', headers=dev, json=body).status_code == 403
+
+
+def test_historical_gcp_json_import_is_project_scoped_idempotent_and_offline(client_factory, monkeypatch):
+    from db.models import BackgroundJob
+    from tests.test_gcp_import import row
+    from research import gcp_historical
+    client, factory = client_factory
+    client.post('/auth/register', json={'org_name':'Acme','slug':'acme','admin_email':'admin@example.com','admin_password':'admin password','admin_full_name':'Admin'})
+    headers = {'Authorization':'Bearer ' + client.post('/auth/token', data={'username':'admin@example.com','password':'admin password'}).json()['access_token']}
+    project = client.post('/projects', headers=headers, json={'name':'App','github_repo_url':'https://github.com/acme/app'}).json()['id']
+    form = {'project_id':project, 'gcp_project_id':'demo-project', 'principal_email':'svc@demo-project.iam.gserviceaccount.com',
+            'scenario_id':'GCP-DATA-01', 'start_utc':'2026-01-01T00:00:00Z', 'end_utc':'2026-01-01T01:00:00Z'}
+    source = json.dumps([row(), row()]).encode()
+    monkeypatch.setattr(gcp_historical, 'GCPAuditLogCollector', lambda **_: (_ for _ in ()).throw(AssertionError('no cloud calls')))
+    def upload(data, authorization=headers):
+        return client.post('/research/gcp-historical/import', headers=authorization, data=form,
+                           files={'evidence':('synthetic.json', data, 'application/json')})
+    assert upload(source, {}).status_code == 401
+    response = upload(source)
+    assert response.status_code == 201, response.text
+    data = response.json()
+    assert data['result']['evidence_source'] == 'imported_json'
+    assert data['result']['record_count'] == 1 and data['result']['duplicate_record_count'] == 1
+    assert 'SENSITIVE_UPLOAD_CONTENT' not in response.text
+    repeated = upload(source)
+    assert repeated.status_code == 200 and repeated.json()['id'] == data['id']
+    assert client.get(f"/research/gcp-historical/{data['id']}", headers=headers).status_code == 200
+    path = f"/research/gcp-historical/{data['id']}/evaluate"
+    ground_truth = b'log_ref,category,outcome\nrecord-1,data_access,success\nmissing,data_access,success\n'
+    labels = {'unit':'audit_records', 'record_id_column':'log_ref', 'category_column':'category', 'outcome_column':'outcome'}
+    def compare(auth=headers):
+        return client.post(path, headers=auth, data=labels, files={'ground_truth':('labels.csv', ground_truth, 'text/csv')})
+    assert compare({}).status_code == 401
+    evaluated = compare()
+    assert evaluated.status_code == 201, evaluated.text
+    comparison = evaluated.json()['result']
+    assert comparison['matched_record_count'] == 1 and comparison['missing_record_count'] == 1
+    assert comparison['classification']['accuracy'] == 1.0 and comparison['evidence_job_id'] == data['id']
+    replay = compare()
+    assert replay.status_code == 200 and replay.json()['id'] == evaluated.json()['id']
+    latest = client.get(f"/research/gcp-historical/{data['id']}/evaluation/latest", headers=headers)
+    assert latest.status_code == 200 and latest.json()['id'] == evaluated.json()['id']
+    client.post('/org/users/invite', headers=headers, json={'email':'dev@example.com','full_name':'Dev',
+                'role':'developer','temporary_password':'developer password'})
+    dev = {'Authorization':'Bearer ' + client.post('/auth/token', data={'username':'dev@example.com','password':'developer password'}).json()['access_token']}
+    client.post('/auth/change-password', headers=dev, json={'current_password':'developer password','new_password':'new developer password'})
+    assert upload(source, dev).status_code == 403
+    assert compare(dev).status_code == 403
+    assert client.get(f"/research/gcp-historical/{data['id']}/evaluation/latest", headers=dev).status_code == 403
+    with factory() as db:
+        assert db.query(IncidentRecord).count() == 0
+        jobs = db.query(BackgroundJob).filter_by(kind='gcp_historical', project_id=project).all()
+        assert len(jobs) == 1 and 'SENSITIVE_UPLOAD_CONTENT' not in str(jobs[0].payload)
+        assert 'SENSITIVE_UPLOAD_CONTENT' not in str(jobs[0].result)
+        evaluation = db.query(BackgroundJob).filter_by(kind='gcp_ground_truth', project_id=project).one()
+        assert 'record-1' not in str(evaluation.payload) and 'record-1' not in str(evaluation.result)

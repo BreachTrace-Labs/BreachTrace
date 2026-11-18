@@ -20,10 +20,9 @@ def _check(provider: str, credentials: dict) -> None:
                      config=Config(connect_timeout=5, read_timeout=10, retries={'max_attempts': 1})).get_caller_identity()
     elif provider == 'gcp':
         from google.cloud import logging_v2
-        from google.oauth2 import service_account
-        info = json.loads(credentials['service_account_json'])
-        auth = service_account.Credentials.from_service_account_info(info)
-        client = logging_v2.Client(project=info['project_id'], credentials=auth)
+        from gcp_reader import reader_credentials
+        project_id, auth = reader_credentials(credentials)
+        client = logging_v2.Client(project=project_id, credentials=auth)
         try:
             next(iter(client.list_entries(page_size=1, max_results=1, filter_='logName:"cloudaudit.googleapis.com"')), None)
         finally:
@@ -82,7 +81,15 @@ def verify_entry(entry_id: str, expected_iv: str, actor_id: str | None = None) -
         except Exception as exc:
             # Provider exceptions may contain secrets or response bodies: do not log them.
             status = 'error'
-            if provider == 'azure' and type(exc).__name__ == 'ClientAuthenticationError':
+            if provider == 'gcp' and type(exc).__name__ == 'DefaultCredentialsError':
+                error = 'Backend Google Application Default Credentials are unavailable. Configure ADC on the backend host, or provide an authorized source service-account JSON in the wallet.'
+            elif provider == 'gcp' and type(exc).__name__ in ('Forbidden', 'PermissionDenied'):
+                error = 'Google Cloud denied impersonation or log access. Check Token Creator on the reader, reader log permissions, and enabled APIs.'
+            elif provider == 'gcp' and type(exc).__name__ in ('RefreshError', 'Unauthenticated'):
+                error = 'Google Cloud authentication failed. Check the source credentials, reader identity, and permission to impersonate it.'
+            elif provider == 'gcp' and type(exc).__name__ in ('DeadlineExceeded', 'ServiceUnavailable', 'TooManyRequests', 'ResourceExhausted'):
+                error = 'Google Cloud Logging is unavailable, timed out, or exceeded quota. Check connectivity and retry.'
+            elif provider == 'azure' and type(exc).__name__ == 'ClientAuthenticationError':
                 error = 'Azure authentication failed. Use the application (client) ID and its matching client secret; check the tenant ID.'
             elif provider == 'azure' and getattr(exc, 'status_code', None) == 403:
                 error = 'Azure denied Activity Log access. Check the subscription ID and the reader’s permissions.'

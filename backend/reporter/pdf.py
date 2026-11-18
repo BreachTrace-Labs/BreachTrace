@@ -70,6 +70,8 @@ def build_incident_pdf(inc) -> bytes:
 
     if inc.report_text:
         s.append(Paragraph("Forensic analysis", h2))
+        if (inc.platform or '').lower() == 'gcp':
+            s.append(Paragraph("Older reports may contain unsupported GCP cost estimates. Refresh logs to regenerate the report; Cloud Audit Logs do not establish billing charges or loss.", body))
         for line in inc.report_text.splitlines():
             line = line.strip()
             if not line:

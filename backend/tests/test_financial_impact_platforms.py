@@ -1,16 +1,14 @@
 """
 Multi-platform financial impact tests (S3-S2).
 
-Before this change compute_financial_impact() matched AWS action names only, so
-every GCP, Azure, Stripe and Twilio incident reported "No financial impact
-detected" regardless of what the attacker actually did. These tests pin the
-per-platform behaviour and, critically, that AWS output is unchanged.
+These tests cover per-platform behaviour and preserve the distinction between
+GCP audit activity and evidence of billing charges.
 """
 
 import pytest
 
 from normalizer.schema import ForensicEvent
-from scorer.severity import compute_financial_impact
+from scorer.severity import compute_financial_impact, compute_financial_impact_lines, GCP_FINANCIAL_UNAVAILABLE
 
 from datetime import datetime, timezone
 
@@ -55,46 +53,15 @@ def test_events_without_platform_are_treated_as_aws():
 # GCP
 # ==========================================================================
 
-def test_gcp_compute_instance_creation_has_cost():
-    """The regression this task exists to fix: GCP used to always report zero."""
-    result = compute_financial_impact([_event("compute.instances.insert", platform="gcp")])
-    assert "Compute Engine" in result
-    assert "e2-micro" in result
-    assert result != "No financial impact detected"
-
-
-def test_gcp_counts_multiple_instances():
-    events = [_event("compute.instances.insert", platform="gcp")] * 3
-    assert "3x e2-micro" in compute_financial_impact(events)
-
-
-def test_gcp_bulk_storage_read_has_egress_cost():
-    events = [
-        _event("storage.objects.get", platform="gcp", resource="prod-backup-archive.tar.gz")
-    ]
-    assert "Cloud Storage egress" in compute_financial_impact(events)
-
-
-def test_gcp_small_object_read_has_no_egress_cost():
-    events = [_event("storage.objects.get", platform="gcp", resource="config.json")]
-    assert compute_financial_impact(events) == "No financial impact detected"
-
-
-def test_gcp_gke_cluster_creation():
-    assert "GKE" in compute_financial_impact(
-        [_event("container.clusters.create", platform="gcp")]
-    )
-
-
-def test_gcp_cloudsql_creation():
-    assert "Cloud SQL" in compute_financial_impact(
-        [_event("cloudsql.instances.create", platform="gcp")]
-    )
-
-
-def test_gcp_reconnaissance_alone_costs_nothing():
-    events = [_event("storage.buckets.list", platform="gcp")]
-    assert compute_financial_impact(events) == "No financial impact detected"
+@pytest.mark.parametrize('action,resource', [
+    ('compute.instances.insert', None), ('storage.objects.get', 'prod-backup-archive.tar.gz'),
+    ('storage.objects.list', 'backup'), ('container.clusters.create', None),
+    ('cloudsql.instances.create', None), ('storage.buckets.list', None),
+])
+def test_gcp_audit_activity_does_not_establish_billing_amounts(action, resource):
+    events = [_event(action, platform='gcp', resource=resource)]
+    assert compute_financial_impact_lines(events) == []
+    assert compute_financial_impact(events) == GCP_FINANCIAL_UNAVAILABLE
 
 
 # ==========================================================================
@@ -221,7 +188,7 @@ def test_multi_platform_incident_reports_every_platform():
     ]
     result = compute_financial_impact(events)
     assert "EC2" in result
-    assert "Compute Engine" in result
+    assert "Compute Engine" not in result
     assert "500.00 USD charged" in result
 
 

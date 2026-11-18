@@ -12,6 +12,7 @@ export interface ForensicEvent {
   resource_type: string | null
   success: boolean
   error_code: string | null
+  is_denied?: boolean
   gcp_key_attribution?: 'matched' | 'different_key' | 'unavailable' | null
   raw_data: Record<string, unknown>
   impact_category: string | null
@@ -95,6 +96,8 @@ export interface IncidentRecord {
   azure_repeat_count?: number
   azure_secret_occurrences?: { commit_hash: string; observed_at: string }[]
   gcp_key_association?: { key_hint: string; recorded_by: string | null; recorded_at: string; verification: string } | null
+  gcp_record_correlation?: { raw_record_count: number; group_count: number; grouped_record_count: number; ungrouped_record_count: number; groups: { kind: 'provider_operation' | 'client_invocation'; confidence: 'high' | 'medium'; record_count: number; successful_count: number; failed_count: number; first_seen: string; last_seen: string; actions: { action: string; count: number }[]; event_ids: string[] }[] } | null
+  gcp_classification_coverage?: { record_count: number; classified_count: number; unclassified_count: number } | null
   dynamic_blast_radius?: DynamicBlastRadius | null
   remediation_steps: string[]
   gdpr_flag: boolean

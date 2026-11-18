@@ -63,6 +63,66 @@ def test_wallet_lifecycle_and_role_boundaries(wallet_client):
     assert client.get(path, headers=admin).json() == []
 
 
+def test_gcp_impersonation_source_is_write_only_and_used_for_verification(wallet_client):
+    import json
+    import wallet_verify
+    from crypto import decrypt_blob
+    client, factory, checks = wallet_client
+    assert client.post('/auth/register', json={'org_name':'Acme','slug':'acme','admin_email':'admin@example.com',
+                       'admin_password':'admin password','admin_full_name':'Admin'}).status_code == 201
+    token = client.post('/auth/token', data={'username':'admin@example.com','password':'admin password'}).json()['access_token']
+    headers = {'Authorization':'Bearer ' + token}
+    project = client.post('/projects', headers=headers, json={'name':'App','github_repo_url':'https://github.com/acme/app'}).json()['id']
+    source = json.dumps({'type':'service_account', 'project_id':'source-project', 'private_key':'sensitive-test-value',
+                         'client_email':'source@source-project.iam.gserviceaccount.com',
+                         'token_uri':'https://oauth2.googleapis.com/token'})
+    values = {'auth_mode':'impersonation', 'project_id':'example-project',
+              'reader_service_account':'reader@example-project.iam.gserviceaccount.com', 'source_service_account_json':source}
+    path = f'/projects/{project}/wallet'
+    response = client.post(path, headers=headers, json={'provider':'gcp', 'credentials':values})
+    assert response.status_code == 202
+    assert 'sensitive-test-value' not in response.text and 'sensitive-test-value' not in client.get(path, headers=headers).text
+    with factory() as db:
+        entry = db.query(CredentialWalletEntry).one()
+        assert 'sensitive-test-value' not in entry.encrypted_blob
+        assert decrypt_blob(entry.encrypted_blob, entry.iv) == values
+        entry_id, iv = entry.id, entry.iv
+    assert wallet_verify.verify_entry(entry_id, iv)
+    assert checks == [('gcp', values)]
+    assert client.get(path, headers=headers).json()[0]['verification_status'] == 'ok'
+
+
+@pytest.mark.parametrize('exception_name,expected', [
+    ('DefaultCredentialsError', 'Application Default Credentials are unavailable'),
+    ('Forbidden', 'denied impersonation or log access'),
+    ('RefreshError', 'authentication failed'),
+    ('DeadlineExceeded', 'timed out'),
+])
+def test_gcp_verification_errors_are_actionable_and_redacted(sqlite_factory, monkeypatch, exception_name, expected):
+    import wallet_verify
+    from crypto import encrypt_blob
+    monkeypatch.setenv('WALLET_ENCRYPTION_KEY', '12' * 32)
+    monkeypatch.setattr(wallet_verify, 'SessionLocal', sqlite_factory)
+    ciphertext, iv = encrypt_blob({'auth_mode':'impersonation', 'project_id':'demo-project',
+                                   'reader_service_account':'reader@demo-project.iam.gserviceaccount.com'})
+    with sqlite_factory() as db:
+        entry = CredentialWalletEntry(project_id='project-a', provider='gcp', encrypted_blob=ciphertext,
+                                      iv=iv, created_by='admin', verification_status='pending')
+        db.add(entry)
+        db.commit()
+        entry_id = entry.id
+    exception = type(exception_name, (Exception,), {})
+    def fail(*_):
+        raise exception('sensitive provider details')
+    monkeypatch.setattr(wallet_verify, '_check', fail)
+    assert not wallet_verify.verify_entry(entry_id, iv)
+    with sqlite_factory() as db:
+        entry = db.get(CredentialWalletEntry, entry_id)
+        assert entry.verification_status == 'error'
+        assert expected in entry.verification_error
+        assert 'sensitive provider details' not in entry.verification_error
+
+
 def test_verification_does_not_overwrite_newer_credentials(wallet_client, monkeypatch):
     client, factory, _ = wallet_client
     import wallet_verify

@@ -2,6 +2,7 @@
 from alembic import op
 import sqlalchemy as sa
 from sqlalchemy.dialects.postgresql import JSONB
+from migrations.schema_reconcile import ensure_index, ensure_table
 
 revision = '7a1f43d9c208'
 down_revision = '9ce72a4b631d'
@@ -10,7 +11,7 @@ depends_on = None
 
 
 def upgrade():
-    op.create_table(
+    ensure_table(
         'background_jobs',
         sa.Column('id', sa.String(36), primary_key=True),
         sa.Column('kind', sa.String(40), nullable=False),
@@ -29,8 +30,8 @@ def upgrade():
         sa.Column('updated_at', sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
         sa.CheckConstraint("status IN ('queued','running','complete','failed')", name='ck_background_job_status'),
     )
-    op.create_index('ix_background_jobs_project_id', 'background_jobs', ['project_id'])
-    op.create_index('ix_background_jobs_due', 'background_jobs', ['status', 'available_at'])
+    ensure_index('ix_background_jobs_project_id', 'background_jobs', ['project_id'])
+    ensure_index('ix_background_jobs_due', 'background_jobs', ['status', 'available_at'])
 
 
 def downgrade():

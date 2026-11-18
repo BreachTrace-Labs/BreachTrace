@@ -37,6 +37,10 @@ def validate_credentials(provider: str, values: dict[str, str]) -> dict[str, str
         'stripe': {'api_key'},
         'twilio': {'account_sid', 'auth_token'},
     }[provider]
+    if provider == 'gcp' and values.get('auth_mode') == 'impersonation':
+        required = {'auth_mode', 'project_id', 'reader_service_account'}
+        if 'source_service_account_json' in values:
+            required.add('source_service_account_json')
     if provider == 'twilio' and set(values) == {'account_sid', 'api_key_sid', 'api_key_secret'}:
         required = {'account_sid', 'api_key_sid', 'api_key_secret'}
     if set(values) != required or any(not v.strip() or len(v) > 50000 for v in values.values()):
@@ -57,17 +61,27 @@ def validate_credentials(provider: str, values: dict[str, str]) -> dict[str, str
                 uuid.UUID(values[key])
         except ValueError:
             raise HTTPException(422, 'Azure tenant, client, and subscription IDs must be UUIDs')
-    if provider == 'gcp':
-        try:
-            info = json.loads(values['service_account_json'])
-            if not isinstance(info, dict) or info.get('type') != 'service_account' or not all(info.get(k) for k in ('project_id', 'private_key', 'client_email', 'token_uri')):
-                raise ValueError()
-            # Service account token URLs must target Google's OAuth service.
-            if info['token_uri'] != 'https://oauth2.googleapis.com/token':
-                raise ValueError()
-        except (ValueError, TypeError):
-            raise HTTPException(422, 'Provide a valid Google service account JSON with a project ID')
+    if provider == 'gcp' and values.get('auth_mode') == 'impersonation':
+        if (not re.fullmatch(r'[a-z][a-z0-9-]{4,28}[a-z0-9]', values['project_id']) or
+                not re.fullmatch(r'[a-z0-9][a-z0-9-]{4,28}[a-z0-9]@[a-z][a-z0-9-]{4,28}[a-z0-9]\.iam\.gserviceaccount\.com', values['reader_service_account'])):
+            raise HTTPException(422, 'Enter a valid GCP project ID and reader service-account email')
+        if 'source_service_account_json' in values:
+            _validate_gcp_service_account(values['source_service_account_json'])
+    elif provider == 'gcp':
+        _validate_gcp_service_account(values['service_account_json'])
     return values
+
+
+def _validate_gcp_service_account(value: str) -> None:
+    try:
+        info = json.loads(value)
+        if not isinstance(info, dict) or info.get('type') != 'service_account' or not all(isinstance(info.get(k), str) and info[k].strip() for k in ('project_id', 'private_key', 'client_email', 'token_uri')):
+            raise ValueError()
+        # Do not allow uploaded credential files to redirect authentication requests.
+        if info['token_uri'] != 'https://oauth2.googleapis.com/token':
+            raise ValueError()
+    except (ValueError, TypeError):
+        raise HTTPException(422, 'Provide a valid Google service account JSON with a project ID') from None
 
 
 def public(entry: CredentialWalletEntry):
@@ -94,6 +108,8 @@ def save_entry(project_id: str, body: WalletInput, request: Request,
                user: User = Depends(get_active_user), db: Session = Depends(get_db)):
     assert_project_access(project_id, user, db)
     values = validate_credentials(body.provider, body.credentials)
+    if body.provider == 'gcp' and values.get('auth_mode') == 'impersonation' and user.role == 'developer':
+        raise HTTPException(403, 'Only administrators and security leads can configure GCP impersonation')
     try:
         ciphertext, iv = encrypt_blob(values)
     except Exception:

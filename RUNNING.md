@@ -100,7 +100,7 @@ docker compose --project-name breachtrace-local-test --env-file .env.testing.loc
 
 Bootstrap is restricted to the isolated local database. It creates missing tables and a clearly labelled synthetic fixture. It does not create an administrator account, configure real cloud providers, or apply Alembic migrations.
 
-**For an older local database:** `create_all` does not add new columns to existing tables. Do not assume rerunning bootstrap upgrades it. The current configured Mac has received the new local schema additions. For another older ORM-created local database, back it up and assess its schema before upgrading; do not stamp it as migrated or delete its volume to bypass the problem.
+**For an older local database:** `create_all` does not add new columns to existing tables. Do not assume rerunning bootstrap upgrades it. The local database on this Mac was backed up and migrated to `d52a0f18b721` on 18 November 2026. For another older database, back it up and assess its migration history and schema before upgrading; do not stamp it as migrated or delete its volume to bypass the problem. The relevant migrations verify compatible pre-existing bootstrap tables and stop on conflicts.
 
 Start the backend and frontend using section 1. On a new installation, visit <http://127.0.0.1:5173/setup> and create the organization and administrator. Setup is closed once an organization exists; use **Sign in** on subsequent starts.
 

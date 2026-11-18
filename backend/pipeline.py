@@ -176,7 +176,7 @@ def run_collection_pipeline(
     pipeline_start = time.monotonic()
     try:
         if refresh_existing:
-            incident = reset_incident_for_refresh(db, incident_id)
+            incident = db.get(IncidentRecord, incident_id)
             if incident is None:
                 logger.warning("Refresh requested for missing incident %s", incident_id)
                 return
@@ -217,6 +217,7 @@ def run_collection_pipeline(
             return
 
         t0 = time.monotonic()
+        collector = None
         try:
             incident = db.get(IncidentRecord, incident_id)
             if incident is None:
@@ -268,6 +269,16 @@ def run_collection_pipeline(
                 else:
                     error_message = "Stripe event collection failed. Check provider access and backend logs."
                 logger.warning("Stripe collection failed for incident %s (%s)", incident_id, type(exc).__name__)
+            elif platform == "gcp":
+                if type(exc).__name__ in ('Forbidden', 'PermissionDenied', 'Unauthenticated', 'DefaultCredentialsError', 'RefreshError'):
+                    error_message = 'Google Cloud authentication or log access failed. Check the reader credentials and Cloud Logging permissions, then refresh.'
+                elif type(exc).__name__ in ('TooManyRequests', 'ResourceExhausted', 'ServiceUnavailable', 'DeadlineExceeded'):
+                    error_message = 'Google Cloud Logging was unavailable, timed out or exceeded quota. Retry collection later.'
+                elif isinstance(exc, ValueError) and str(exc).startswith(('GCP audit log collection limit', 'GCP audit log contains an invalid status', 'GCP collection window', 'GCP collection end', 'The GCP log reader', 'The GCP impersonation source', 'A valid GCP service-account')):
+                    error_message = str(exc)
+                else:
+                    error_message = 'Google Cloud audit log collection failed. Check provider access and backend logs.'
+                logger.warning('GCP collection failed for incident %s (%s)', incident_id, type(exc).__name__)
             elif platform == "azure":
                 status_code = getattr(exc, 'status_code', None)
                 if status_code in (401, 403) or type(exc).__name__ in ('ClientAuthenticationError', 'CredentialUnavailableError'):
@@ -291,6 +302,15 @@ def run_collection_pipeline(
             )
             update_status(db, incident_id, "error")
             return
+        finally:
+            if platform == 'gcp' and collector is not None:
+                close = getattr(collector, 'close', None)
+                if close:
+                    try:
+                        close()
+                    except Exception as exc:
+                        # Provider exceptions can contain credentials or request data.
+                        logger.warning('GCP collector cleanup failed for incident %s (%s)', incident_id, type(exc).__name__)
 
         logger.info(
             "Stage 1 (collect): %d events in %.1fs",
@@ -299,6 +319,10 @@ def run_collection_pipeline(
         )
 
         # ── STAGE 2: Persist events ────────────────────────────────────────
+        # Deletion and insertion share a transaction: an unsuccessful query or
+        # database write must not erase the prior investigation evidence.
+        if refresh_existing:
+            reset_incident_for_refresh(db, incident_id, commit=False)
         if events:
             save_forensic_events(db, incident_id, events)
             save_collection_status(
@@ -309,6 +333,8 @@ def run_collection_pipeline(
                 event_count=len(events),
             )
         else:
+            if refresh_existing:
+                db.commit()
             save_collection_status(
                 db,
                 incident_id=incident_id,
@@ -343,13 +369,17 @@ def run_collection_pipeline(
         t0 = time.monotonic()
         try:
             overall_severity = score_incident(exposure_events)
+            if (platform == 'gcp' and exposure_events and not any(
+                    event.success is True and event.impact_category and event.severity_weight is not None
+                    for event in exposure_events)):
+                overall_severity = 'Unknown'
             financial_impact = compute_financial_impact(exposure_events)
             # The GDPR indicator is distinct from payment-related indicators.
             gdpr_flag = check_gdpr_flag(exposure_events)
 
             incident_record: IncidentRecord | None = db.get(IncidentRecord, incident_id)
             if incident_record is not None:
-                incident_record.overall_severity = _SEVERITY_TO_INT.get(overall_severity, 1)
+                incident_record.overall_severity = _SEVERITY_TO_INT.get(overall_severity)
                 incident_record.financial_impact = financial_impact
                 incident_record.gdpr_flag = gdpr_flag
                 db.commit()
@@ -439,6 +469,7 @@ def run_collection_pipeline(
             _index_incident_safely(db, incident_id)
 
     except Exception:
+        db.rollback()
         logger.exception("Unexpected error in pipeline for %s", incident_id)
         try:
             update_status(db, incident_id, "error")

@@ -273,6 +273,8 @@ async def github_webhook(
                 project_id=project.id,
                 commit=False,
             )
+            from gcp_attribution import record_detected_key
+            record_detected_key(db, incident, match)
             if fingerprint:
                 incident.azure_secret_fingerprint = fingerprint
                 db.add(AzureSecretOccurrence(incident_id=incident.incident_id, commit_hash=sha, observed_at=exposure_start))
@@ -309,7 +311,7 @@ async def github_webhook(
                         platform="aws",
                     )
                 )
-            elif match_platform == "gcp" and credential == config.GCP_EXPERIMENT_CLIENT_EMAIL:
+            elif match_platform == "gcp" and resolved.is_collectable and credential == config.GCP_EXPERIMENT_CLIENT_EMAIL:
                 asyncio.create_task(
                     _monitor_revocation(
                         incident.incident_id,

@@ -78,12 +78,13 @@ CREDENTIAL_TYPE_TO_PLATFORM.update({f"{p}_api_key": p for p in AI_PROVIDERS})
 # 1. incident_records
 # ---------------------------------------------------------------------------
 class GCPKeyAssociation(Base):
-    """Operator-reported GCP key ID fingerprint, never a private key."""
+    """GCP key ID association, with its detection or operator provenance."""
     __tablename__ = 'gcp_key_associations'
     incident_id = Column(String(36), ForeignKey('incident_records.incident_id', ondelete='CASCADE'), primary_key=True)
     key_digest = Column(String(64), nullable=False)
     key_hint = Column(String(20), nullable=False)
-    recorded_by = Column(String(36), ForeignKey('users.id'), nullable=False)
+    recorded_by = Column(String(36), ForeignKey('users.id'), nullable=True)
+    source = Column(String(30), nullable=False, default='operator_reported', server_default='operator_reported')
     recorded_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
 
 
@@ -315,6 +316,8 @@ class ForensicEvent(Base):
 
     __tablename__ = "forensic_events"
 
+    source_record_id = Column(String(64), nullable=True)
+
     event_id = Column(
         String(36),
         primary_key=True,
@@ -432,6 +435,7 @@ class ForensicEvent(Base):
         Index("ix_forensic_events_incident_id", "incident_id"),
         Index("ix_forensic_events_timestamp", "timestamp"),
         Index("ix_forensic_events_impact_category", "impact_category"),
+        Index("uq_forensic_event_source_per_incident", "incident_id", "source_record_id", unique=True),
     )
 
     def __repr__(self) -> str:

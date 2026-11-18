@@ -28,7 +28,7 @@ from sqlalchemy.orm import Session
 from access import accessible_project_ids, assert_project_access, incident_access
 from auth import get_active_user, require_admin_or_lead, require_single_organisation, require_single_organisation_database
 from audit import public as audit_public, record
-from db.crud import get_incident, list_incidents, reset_incident_for_refresh
+from db.crud import get_incident, list_incidents
 from db.database import get_db
 from db.models import AuditLog, AzureSecretOccurrence, ExposureObservation, GCPKeyAssociation, CREDENTIAL_TYPE_TO_PLATFORM, ExperimentRun, IncidentRecord, ProjectMember, User, ForensicEvent as StoredEvent
 from normalizer.time_window import after_exposure, within_exposure
@@ -193,6 +193,8 @@ class IncidentDetailOut(IncidentSummaryOut):
     dynamic_blast_radius: dict | None = None
     azure_secret_occurrences: list[dict] = []
     gcp_key_association: dict | None = None
+    gcp_record_correlation: dict | None = None
+    gcp_classification_coverage: dict | None = None
 
     @field_validator("report_text", "remediation_steps", mode="before")
     @classmethod
@@ -315,6 +317,7 @@ def associate_gcp_key(body: GCPKeyAssociationIn, request: Request,
     row.key_digest = key_digest(body.key_id)
     row.key_hint = body.key_id[:4] + '…' + body.key_id[-4:]
     row.recorded_by = user.id
+    row.source = 'operator_reported'
     row.recorded_at = datetime.now(timezone.utc)
     record(db, user, 'incident.gcp_key_associated', request, project_id=incident.project_id,
            incident_id=incident.incident_id, detail={'key_hint': row.key_hint})
@@ -511,15 +514,28 @@ def get_incident_detail(
         raise HTTPException(status_code=404, detail="Incident not found")
 
     out = IncidentDetailOut.model_validate(incident)
+    if incident.platform == 'gcp':
+        # Legacy persisted estimates inferred prices and sizes from action names.
+        out.estimated_financial_impact = None
+        from gcp_correlation import correlate_gcp_records
+        out.gcp_record_correlation = redact(correlate_gcp_records(incident.events))
+        records = [event for event in incident.events if event.platform == 'gcp']
+        unknown = sum(not event.impact_category for event in records)
+        out.gcp_classification_coverage = {'record_count': len(records), 'classified_count': len(records) - unknown,
+                                           'unclassified_count': unknown}
+    # Older GCP rows predate recognition of canonical PERMISSION_DENIED.
+    for event in out.events:
+        if event.platform == 'gcp' and event.error_code == '7':
+            event.is_denied = True
     occurrences = db.query(AzureSecretOccurrence).filter_by(incident_id=incident.incident_id).order_by(AzureSecretOccurrence.observed_at).all()
     out.azure_secret_occurrences = [{'commit_hash': item.commit_hash, 'observed_at': item.observed_at} for item in occurrences]
     out.azure_repeat_count = max(0, len(occurrences) - 1)
     association = db.get(GCPKeyAssociation, incident.incident_id)
     if association is not None:
         from gcp_attribution import event_attribution
-        actor = db.get(User, association.recorded_by)
+        actor = db.get(User, association.recorded_by) if association.recorded_by else None
         out.gcp_key_association = {'key_hint': association.key_hint, 'recorded_by': actor.full_name if actor else None,
-                                   'recorded_at': association.recorded_at, 'verification': 'operator_reported'}
+                                   'recorded_at': association.recorded_at, 'verification': association.source}
         for source, event in zip(incident.events, out.events):
             event.gcp_key_attribution = event_attribution(source, incident, association)
     if incident.collection_statuses and incident.status not in ("collecting", "classifying", "scoring", "reporting"):
@@ -748,7 +764,8 @@ def _queue_incident_refresh(
     if user is not None and request is not None:
         record(db, user, 'incident.refreshed', request, project_id=incident.project_id, incident_id=incident.incident_id)
     from background_jobs import enqueue
-    reset_incident_for_refresh(db, incident_id, commit=False)
+    # Keep the previous evidence visible until a replacement collection succeeds.
+    incident.status = 'collecting'
     enqueue(db, 'incident_collect', {'incident_id': incident.incident_id, 'notify': False}, project_id=incident.project_id)
     db.commit()
 

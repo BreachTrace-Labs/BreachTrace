@@ -150,6 +150,8 @@ async def simulate(
             project_id=project.id,
             commit=False,
         )
+        from gcp_attribution import record_detected_key
+        record_detected_key(db, incident, match, simulated=True)
         logger.info(
             "Simulated incident created: %s (platform=%s tier=%s)",
             incident.incident_id,

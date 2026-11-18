@@ -165,7 +165,7 @@ const EventAnalytics: React.FC<Props> = ({ events }) => {
   /* ── key metrics ── */
   const uniqueIPs       = new Set(events.filter(e => e.source_ip).map(e => e.source_ip!)).size
   const uniqueResources = new Set(events.filter(e => e.affected_resource).map(e => e.affected_resource!)).size
-  const denied          = events.filter(e => !e.success).length
+  const failed          = events.filter(e => !e.success).length
   const successRate     = Math.round((events.filter(e => e.success).length / total) * 100)
 
   return (
@@ -254,7 +254,7 @@ const EventAnalytics: React.FC<Props> = ({ events }) => {
             <StatTile label="Total Events"  value={total} />
             <StatTile label="Unique IPs"    value={uniqueIPs} />
             <StatTile label="Resources"     value={uniqueResources} />
-            <StatTile label="Denied"        value={denied}       accent={denied > 0} />
+            <StatTile label="Failed"        value={failed}       accent={failed > 0} />
             <StatTile label="Success Rate"  value={`${successRate}%`} accent={successRate < 50} />
             <StatTile
               label="Unclassified"
@@ -262,8 +262,8 @@ const EventAnalytics: React.FC<Props> = ({ events }) => {
             />
           </div>
 
-          {/* Access denied mini bar */}
-          {denied > 0 && (
+          {/* Failure rate */}
+          {failed > 0 && (
             <div className="mt-4 pt-3 border-t" style={{ borderColor: 'var(--color-border)' }}>
               <p
                 className="text-[10px] uppercase tracking-wider font-semibold mb-2"
@@ -294,7 +294,7 @@ const EventAnalytics: React.FC<Props> = ({ events }) => {
                   {successRate}% allowed
                 </span>
                 <span className="text-[10px] font-mono" style={{ color: 'var(--color-sev-critical)' }}>
-                  {100 - successRate}% denied
+                  {100 - successRate}% failed
                 </span>
               </div>
             </div>

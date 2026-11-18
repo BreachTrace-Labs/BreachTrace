@@ -91,9 +91,9 @@ const RemediationChecklist: React.FC<Props> = ({ steps }) => {
                 const done = checked.has(i)
                 return (
                   <li key={i}>
-                    <label className="flex items-start gap-3 cursor-pointer">
+                    <label className="flex min-w-0 items-start gap-3 cursor-pointer">
                       <input type="checkbox" checked={done} onChange={() => toggle(i)} className="mt-0.5 shrink-0" />
-                      <span className={done ? 'text-sm leading-snug text-muted-foreground line-through' : 'text-sm leading-snug text-foreground'}>{renderInline(text)}</span>
+                      <span className={`min-w-0 flex-1 [overflow-wrap:anywhere] text-sm leading-snug ${done ? 'text-muted-foreground line-through' : 'text-foreground'}`}>{renderInline(text)}</span>
                     </label>
                   </li>
                 )

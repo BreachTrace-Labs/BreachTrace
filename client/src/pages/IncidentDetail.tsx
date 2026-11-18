@@ -21,6 +21,7 @@ import client, { USE_MOCK } from '@/api/client'
 import { useAuth } from '@/context/AuthContext'
 import IncidentActions from '@/components/IncidentActions'
 import type { IncidentRecord, ReportSource, SearchResult } from '@/types'
+import GCPRecordCorrelation from '@/components/GCPRecordCorrelation'
 import SearchResults from '@/components/SearchResults'
 import { derivePlatform, isForensicTier, PLATFORM_META, platformIdentity } from '@/lib/platform'
 import { completeLabel, exposureDuration, exposureLabel, isSyntheticIncident, repositoryLink } from '@/lib/incidentPresentation'
@@ -575,6 +576,7 @@ const IncidentDetail: React.FC = () => {
                 Incident Report
                 <ReportSourceBadge source={incident.report_source} />
               </h2>
+              {platform === 'gcp' && <p className="mb-4 text-sm text-muted-foreground">Older reports may contain unsupported cost estimates. Refresh logs to regenerate the report; Cloud Audit Logs do not establish billing charges or loss.</p>}
               <div className="prose prose-sm xl:prose-base dark:prose-invert max-w-none prose-p:leading-relaxed prose-headings:font-semibold">
                 <MarkdownReport text={incident.report_text} />
               </div>
@@ -598,12 +600,14 @@ const IncidentDetail: React.FC = () => {
               <p className="mb-4 text-sm text-muted-foreground">Shows up to 30 days of available provider history. Events before detected exposure are context and are excluded from incident severity, impact and report calculations. Refresh logs to retrieve recent history.</p>
               {platform === 'aws' && <p className="mb-4 text-sm text-muted-foreground">CloudTrail is queried by access key ID. Available records depend on logging and retention; related temporary credentials may use different key IDs.</p>}
               {platform === 'gcp' && <p className="mb-4 text-sm text-muted-foreground">Cloud Audit Logs are matched to the service account, not necessarily the individual leaked key. Results depend on enabled logs and permissions.</p>}
+              {platform === 'gcp' && incident.gcp_classification_coverage && <p className="mb-4 text-sm text-muted-foreground">Classification coverage across stored history: {incident.gcp_classification_coverage.classified_count} classified · {incident.gcp_classification_coverage.unclassified_count} unclassified. This does not measure whether all provider logs were collected.</p>}
               {platform === 'twilio' && <p className="mb-4 text-sm text-muted-foreground">Messages, calls and Monitor Events describe account activity. The current collector cannot attribute these records to a particular API key.</p>}
               {incident.credential_type === 'stripe_secret_key' && <div className="mb-4 space-y-2 text-sm text-muted-foreground">
                 <p>BreachTrace queries Stripe Events directly through the backend, using up to the Events API’s 30-day retention window. These records show account-level state changes, not every API request, and do not identify which key caused them. Read-only requests are not included.</p>
               </div>}
               {(incident.credential_type === 'azure_service_principal' || incident.credential_type === 'azure_client_secret') && <p className="mb-4 text-sm text-muted-foreground">Azure Activity Log events are matched to the application identity. They do not identify which client secret was used, and Activity Log does not include every data-plane action.</p>}
               {incident.status === 'error' && <p role="alert" className="mb-4 text-sm text-destructive">{incident.collection_error || 'Forensic collection failed. Check your provider access and refresh the logs.'}</p>}
+              {platform === 'gcp' && <GCPRecordCorrelation incident={incident} />}
               <ForensicTimeline events={incident.events} exposureStart={incident.exposure_start} />
             </div>
           ) : (

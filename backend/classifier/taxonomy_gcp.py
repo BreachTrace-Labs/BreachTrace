@@ -24,11 +24,11 @@ GCP_API_TAXONOMY: dict[str, dict] = {
     "storage.objects.get": {
         "category": "data_access",
         "severity": 2,
-        "label": "Download Object",
+        "label": "Get Object",
     },
     "storage.objects.create": {
-        "category": "exfiltration",
-        "severity": 3,
+        "category": "resource_abuse",
+        "severity": 2,
         "label": "Upload / Overwrite Object",
     },
     "storage.objects.delete": {
@@ -42,13 +42,13 @@ GCP_API_TAXONOMY: dict[str, dict] = {
         "label": "List Objects",
     },
     "storage.objects.update": {
-        "category": "data_access",
+        "category": "resource_abuse",
         "severity": 2,
         "label": "Update Object Metadata",
     },
     "storage.objects.copy": {
-        "category": "exfiltration",
-        "severity": 3,
+        "category": "resource_abuse",
+        "severity": 2,
         "label": "Copy Object",
     },
     "storage.buckets.create": {
@@ -70,6 +70,11 @@ GCP_API_TAXONOMY: dict[str, dict] = {
         "category": "reconnaissance",
         "severity": 1,
         "label": "Get Bucket Metadata",
+    },
+    "storage.buckets.getStorageLayout": {
+        "category": "reconnaissance",
+        "severity": 1,
+        "label": "Get Bucket Storage Layout",
     },
     "storage.buckets.update": {
         "category": "resource_abuse",
@@ -230,8 +235,8 @@ GCP_API_TAXONOMY: dict[str, dict] = {
         "label": "Delete Disk",
     },
     "compute.snapshots.insert": {
-        "category": "exfiltration",
-        "severity": 3,
+        "category": "resource_abuse",
+        "severity": 2,
         "label": "Create Disk Snapshot",
     },
     "compute.snapshots.delete": {
@@ -284,8 +289,8 @@ GCP_API_TAXONOMY: dict[str, dict] = {
         "label": "Delete Table",
     },
     "bigquery.tables.export": {
-        "category": "exfiltration",
-        "severity": 4,
+        "category": "data_access",
+        "severity": 3,
         "label": "Export Table to GCS",
     },
     "bigquery.tables.list": {
@@ -443,18 +448,18 @@ GCP_API_TAXONOMY: dict[str, dict] = {
     # Billing / Financial                                                  #
     # ------------------------------------------------------------------ #
     "billing.accounts.close": {
-        "category": "financial_abuse",
-        "severity": 4,
+        "category": "resource_abuse",
+        "severity": 3,
         "label": "Close Billing Account",
     },
     "billing.budgets.create": {
-        "category": "financial_abuse",
-        "severity": 3,
+        "category": "resource_abuse",
+        "severity": 2,
         "label": "Create Billing Budget",
     },
     "billing.budgets.update": {
-        "category": "financial_abuse",
-        "severity": 3,
+        "category": "resource_abuse",
+        "severity": 2,
         "label": "Update Billing Budget",
     },
 
@@ -491,12 +496,12 @@ GCP_API_TAXONOMY: dict[str, dict] = {
     # Logging / Monitoring                                                 #
     # ------------------------------------------------------------------ #
     "logging.sinks.create": {
-        "category": "exfiltration",
+        "category": "resource_abuse",
         "severity": 3,
-        "label": "Create Log Sink (exfil route)",
+        "label": "Create Log Sink",
     },
     "logging.sinks.update": {
-        "category": "exfiltration",
+        "category": "resource_abuse",
         "severity": 3,
         "label": "Update Log Sink",
     },
@@ -516,4 +521,21 @@ GCP_API_TAXONOMY: dict[str, dict] = {
         "label": "Delete Alert Policy",
     },
 }
+
+
+# Provider-documented audit method names whose wire format differs from the
+# existing short taxonomy keys. Service scoping avoids matching unrelated APIs.
+_GCP_SERVICE_ALIASES = {
+    ('secretmanager.googleapis.com', 'google.cloud.secretmanager.v1.SecretManagerService.AccessSecretVersion'): 'secretmanager.versions.access',
+    ('cloudkms.googleapis.com', 'Decrypt'): 'cloudkms.cryptoKeyVersions.useToDecrypt',
+    ('iam.googleapis.com', 'google.iam.admin.v1.CreateServiceAccountKey'): 'iam.serviceAccountKeys.create',
+    ('iam.googleapis.com', 'google.iam.admin.v1.CreateServiceAccount'): 'iam.serviceAccounts.create',
+}
+
+
+def gcp_taxonomy_entry(action: str, service: str | None = None) -> dict | None:
+    alias = _GCP_SERVICE_ALIASES.get((service, action))
+    if service == 'compute.googleapis.com' and action.startswith(('v1.compute.', 'beta.compute.')):
+        alias = action.split('.', 1)[1]
+    return GCP_API_TAXONOMY.get(alias or action)
 

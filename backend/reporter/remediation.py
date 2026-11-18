@@ -30,7 +30,7 @@ _CATEGORY_STEPS: dict[tuple[str, str], str] = {
     ("aws", "resource_abuse"):
         "Terminate or delete resources created during the exposure window{resources}",
     ("gcp", "resource_abuse"):
-        "Delete Compute Engine instances and other resources created during the exposure window{resources}",
+        "Review resource changes during the exposure window{resources} and revert changes confirmed to be unauthorized",
     ("azure", "resource_abuse"):
         "Delete virtual machines and other resources created during the exposure window{resources}",
     ("stripe", "resource_abuse"):

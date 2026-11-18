@@ -96,6 +96,12 @@ _SOC2_TRIGGER_CATEGORIES = frozenset({
 CRITICAL_CATEGORIES = {"privilege_escalation", "exfiltration", "code_compromise"}
 
 
+def impact_evidence(events):
+    """Failed GCP operations are attempts, not evidence of completed impact."""
+    return [event for event in events
+            if getattr(event, 'platform', None) != 'gcp' or getattr(event, 'success', None) is True]
+
+
 def score_incident(events: list[ForensicEvent]) -> str:
     """
     Aggregate per-event severity weights into an overall incident severity label.
@@ -114,6 +120,7 @@ def score_incident(events: list[ForensicEvent]) -> str:
     Returns:
         str: One of 'Low', 'Medium', 'High', or 'Critical'
     """
+    events = impact_evidence(events)
     if not events:
         return "Low"
 
@@ -139,6 +146,7 @@ def score_incident(events: list[ForensicEvent]) -> str:
 
 
 NO_FINANCIAL_IMPACT = "No financial impact detected"
+GCP_FINANCIAL_UNAVAILABLE = "GCP billing data is not available from Cloud Audit Logs; charges and loss cannot be determined."
 
 
 @dataclass(frozen=True)
@@ -183,6 +191,8 @@ def compute_financial_impact_lines(
     by_platform: dict[str, list[ForensicEvent]] = {}
     for event in events:
         platform = (getattr(event, "platform", None) or "aws").lower()
+        if platform == 'gcp' and getattr(event, 'success', None) is not True:
+            continue
         by_platform.setdefault(platform, []).append(event)
 
     handlers = {
@@ -216,6 +226,8 @@ def compute_financial_impact(events: list[ForensicEvent]) -> str:
     """
     lines = compute_financial_impact_lines(events)
     if not lines:
+        if any(getattr(event, 'platform', None) == 'gcp' for event in events):
+            return GCP_FINANCIAL_UNAVAILABLE
         return NO_FINANCIAL_IMPACT
 
     return ". ".join(line.text for line in lines)
@@ -301,11 +313,6 @@ def _aws_impacts(events: list[ForensicEvent]) -> list[FinancialImpactLine]:
 # amounts and real per-message rates.
 # ---------------------------------------------------------------------------
 
-_GCP_E2_MICRO_HOURLY = 0.0084
-_GCP_EGRESS_PER_GB = 0.12
-_GCP_GKE_CLUSTER_HOURLY = 0.10
-_GCP_CLOUDSQL_DAILY = 1.50
-
 _AZURE_B1S_HOURLY = 0.0104
 _AZURE_EGRESS_PER_GB = 0.087
 _AZURE_AKS_CLUSTER_HOURLY = 0.10
@@ -324,54 +331,8 @@ def _count(events: list[ForensicEvent], *actions: str) -> int:
 
 
 def _gcp_impacts(events: list[ForensicEvent]) -> list[FinancialImpactLine]:
-    """GCP Cloud Audit Log method names are dot-separated: 'compute.instances.insert'."""
-    impacts: list[FinancialImpactLine] = []
-
-    vm_creates = _count(events, "compute.instances.insert", "v1.compute.instances.insert")
-    bulk_reads = sum(
-        1
-        for e in events
-        if e.api_action in ("storage.objects.get", "storage.objects.list")
-        and e.affected_resource
-        and _is_large_object(e.affected_resource)
-    )
-    gke_creates = _count(events, "container.clusters.create")
-    sql_creates = _count(events, "cloudsql.instances.create", "sqladmin.instances.create")
-
-    if vm_creates > 0:
-        cost = vm_creates * _GCP_E2_MICRO_HOURLY
-        impacts.append(FinancialImpactLine(
-            platform="gcp", kind="compute", label="Compute Engine",
-            text=f"Compute Engine: {vm_creates}x e2-micro at ${cost:.2f}/hr",
-            amount=cost, currency="USD", unit="hour",
-            quantity=vm_creates, actual=False,
-        ))
-    if bulk_reads > 0:
-        cost = bulk_reads * _ASSUMED_OBJECT_GB * _GCP_EGRESS_PER_GB
-        impacts.append(FinancialImpactLine(
-            platform="gcp", kind="egress", label="Cloud Storage egress",
-            text=f"Cloud Storage egress: estimated ${cost:.2f}",
-            amount=cost, currency="USD", unit=None,
-            quantity=bulk_reads, actual=False,
-        ))
-    if gke_creates > 0:
-        cost = gke_creates * _GCP_GKE_CLUSTER_HOURLY
-        impacts.append(FinancialImpactLine(
-            platform="gcp", kind="cluster", label="GKE",
-            text=f"GKE: {gke_creates} cluster(s) at ${cost:.2f}/hr",
-            amount=cost, currency="USD", unit="hour",
-            quantity=gke_creates, actual=False,
-        ))
-    if sql_creates > 0:
-        cost = sql_creates * _GCP_CLOUDSQL_DAILY
-        impacts.append(FinancialImpactLine(
-            platform="gcp", kind="database", label="Cloud SQL",
-            text=f"Cloud SQL: {sql_creates} instance(s) at ${cost:.2f}/day",
-            amount=cost, currency="USD", unit="day",
-            quantity=sql_creates, actual=False,
-        ))
-
-    return impacts
+    """Audit methods alone cannot establish machine sizes, transfer or bills."""
+    return []
 
 
 def _azure_impacts(events: list[ForensicEvent]) -> list[FinancialImpactLine]:
@@ -643,7 +604,7 @@ def check_gdpr_flag(events: list[ForensicEvent]) -> bool:
     """
     sensitive_categories = {"data_access", "exfiltration"}
 
-    for event in events:
+    for event in impact_evidence(events):
         if (
             event.impact_category in sensitive_categories
             and event.affected_resource
@@ -669,7 +630,7 @@ def check_pcidss_flag(events: list[ForensicEvent]) -> bool:
     Returns:
         bool: True if a PCI-DSS reportable event was detected.
     """
-    for event in events:
+    for event in impact_evidence(events):
         if event.impact_category == "financial_abuse":
             return True
         if (
@@ -697,7 +658,7 @@ def check_soc2_flag(events: list[ForensicEvent]) -> bool:
     """
     return any(
         event.impact_category in _SOC2_TRIGGER_CATEGORIES
-        for event in events
+        for event in impact_evidence(events)
         if event.impact_category
     )
 
@@ -714,6 +675,7 @@ def build_compliance_reasons(
     Returns a list of strings, one per applicable regulation, describing the
     specific obligation and the triggering condition observed.
     """
+    events = impact_evidence(events)
     reasons: list[str] = []
 
     if gdpr:

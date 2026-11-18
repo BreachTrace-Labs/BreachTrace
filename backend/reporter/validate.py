@@ -134,6 +134,20 @@ def validate_sections(sections: dict, facts: dict) -> list[str]:
     known = _fact_strings(facts)
     numbers = _fact_numbers(facts)
 
+    if facts.get('platform') == 'gcp' and facts.get('financial_limit'):
+        impact = sections.get('business_impact', '')
+        if not (re.search(r'\b(?:billing|charges|cost|financial|loss)\b', impact, re.I)
+                and re.search(r'\b(?:not|cannot|unavailable|unknown|uncertain)\b', impact, re.I)):
+            violations.append('business impact must state that GCP billing or loss is not established')
+
+    if (facts.get('platform') == 'gcp' and facts.get('event_count', 0) > 0
+            and facts.get('failed_count') == facts.get('event_count')):
+        outcome_terms = r'\b(?:failed|denied|unsuccessful)\b'
+        if not re.search(outcome_terms, sections.get('executive_summary', ''), re.I):
+            violations.append('summary must state that all GCP operations failed')
+        if not re.search(outcome_terms, ' '.join(sections.get('narrative', [])), re.I):
+            violations.append('narrative must state that the GCP operations failed')
+
     def unknown(token: str) -> bool:
         return token.lower().strip(".,:;") not in known
 

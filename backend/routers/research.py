@@ -6,13 +6,17 @@ POST /research/record     — persist one completed experiment run
 from __future__ import annotations
 
 import uuid
-from datetime import datetime
-from typing import Optional
+import hashlib
+import json
+from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
+from typing import Literal, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Request
-from pydantic import AliasChoices, BaseModel, Field, field_validator
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
+from pydantic import AliasChoices, BaseModel, Field, ValidationError, field_validator, model_validator
 from sqlalchemy.orm import Session
 
+from auth import require_admin_or_lead
 from db.crud import get_incident
 from db.database import get_db
 from db.models import VALID_PLATFORMS, ExperimentRun, BackgroundJob, User
@@ -20,6 +24,225 @@ from redaction import mask_identifier
 from research.analysis import compare_platforms, latency_by_platform
 
 router = APIRouter(prefix="/research", tags=["research"])
+
+
+class GCPHistoricalRequest(BaseModel):
+    project_id: str = Field(min_length=1, max_length=36)
+    gcp_project_id: str = Field(pattern=r'^[a-z][a-z0-9-]{4,28}[a-z0-9]$')
+    principal_email: str = Field(max_length=254)
+    scenario_id: str = Field(pattern=r'^GCP-[A-Z0-9-]{2,72}$')
+    start_utc: datetime
+    end_utc: datetime
+
+    @field_validator('principal_email')
+    @classmethod
+    def valid_principal(cls, value):
+        from detector.patterns import GCP_CLIENT_EMAIL_PATTERN
+        if not GCP_CLIENT_EMAIL_PATTERN.fullmatch(value.lower()):
+            raise ValueError('Enter a GCP service-account email')
+        return value
+
+    @model_validator(mode='after')
+    def valid_window(self):
+        if self.start_utc.utcoffset() is None or self.end_utc.utcoffset() is None:
+            raise ValueError('Start and end require an explicit UTC offset')
+        self.start_utc = self.start_utc.astimezone(timezone.utc)
+        self.end_utc = self.end_utc.astimezone(timezone.utc)
+        if self.end_utc < self.start_utc or self.end_utc - self.start_utc > timedelta(days=90):
+            raise ValueError('Choose an ordered range no longer than 90 days')
+        if self.end_utc > datetime.now(timezone.utc):
+            raise ValueError('The research window cannot end in the future')
+        return self
+
+
+def _gcp_historical_job(job):
+    if job is None:
+        return None
+    return {'id': job.id, 'status': job.status, 'created_at': job.created_at,
+            'scenario_id': job.payload.get('scenario_id'), 'error': job.last_error, 'result': job.result}
+
+
+@router.post('/gcp-historical', status_code=202)
+def start_gcp_historical(body: GCPHistoricalRequest, request: Request,
+                         db: Session = Depends(get_db), user: User = Depends(require_admin_or_lead)):
+    from access import assert_project_access
+    from audit import record
+    from background_jobs import enqueue
+    from collection_credentials import ReaderConfigurationError, project_reader
+    from db.models import Project
+    from gcp_reader import reader_project_id
+    assert_project_access(body.project_id, user, db)
+    try:
+        reader = project_reader(db, SimpleNamespace(project_id=body.project_id), 'gcp')
+        if reader_project_id(reader) != body.gcp_project_id:
+            raise ReaderConfigurationError('The configured GCP reader belongs to a different project.')
+    except (ReaderConfigurationError, KeyError, ValueError) as exc:
+        message = str(exc) if isinstance(exc, ReaderConfigurationError) else 'The GCP reader configuration is invalid.'
+        raise HTTPException(422, message) from None
+    db.query(Project).filter_by(id=body.project_id).with_for_update().one()
+    active = db.query(BackgroundJob).filter(BackgroundJob.kind == 'gcp_historical',
+                                             BackgroundJob.project_id == body.project_id,
+                                             BackgroundJob.status.in_(['queued', 'running'])).first()
+    if active:
+        raise HTTPException(409, 'A historical GCP query is already running for this project.')
+    payload = body.model_dump(mode='json')
+    job = enqueue(db, 'gcp_historical', payload, project_id=body.project_id, max_attempts=1)
+    record(db, user, 'research.gcp_historical_started', request, project_id=body.project_id,
+           detail={'scenario_id': body.scenario_id, 'start_utc': body.start_utc.isoformat(), 'end_utc': body.end_utc.isoformat()})
+    db.commit()
+    return _gcp_historical_job(job)
+
+
+@router.post('/gcp-historical/import', status_code=201)
+async def import_gcp_historical(request: Request, project_id: str = Form(...), gcp_project_id: str = Form(...),
+                                principal_email: str = Form(...), scenario_id: str = Form(...),
+                                start_utc: str = Form(...), end_utc: str = Form(...), evidence: UploadFile = File(...),
+                                db: Session = Depends(get_db), user: User = Depends(require_admin_or_lead)):
+    from access import assert_project_access
+    from audit import record
+    from db.models import Project
+    from fastapi.encoders import jsonable_encoder
+    from research.gcp_import import ImportErrorSafe, MAX_FILE_BYTES, import_export
+    assert_project_access(project_id, user, db)
+    try:
+        body = GCPHistoricalRequest(project_id=project_id, gcp_project_id=gcp_project_id,
+                                    principal_email=principal_email, scenario_id=scenario_id,
+                                    start_utc=start_utc, end_utc=end_utc)
+    except ValidationError:
+        raise HTTPException(422, 'Check the project, principal, scenario identifier and UTC range.') from None
+    try:
+        contents = await evidence.read(MAX_FILE_BYTES + 1)
+    finally:
+        await evidence.close()
+    payload = body.model_dump(mode='json')
+    try:
+        result = import_export(contents, payload)
+    except ImportErrorSafe as exc:
+        raise HTTPException(422, str(exc)) from None
+    payload['evidence_source'] = 'imported_json'
+    payload['source_sha256'] = result['source_sha256']
+    key_material = json.dumps(payload, sort_keys=True, separators=(',', ':')).encode()
+    dedupe_key = 'gcp-import:' + hashlib.sha256(key_material).hexdigest()
+    # Serialize imports for this project before checking the unique key.
+    db.query(Project).filter_by(id=project_id).with_for_update().one()
+    existing = db.query(BackgroundJob).filter_by(dedupe_key=dedupe_key).first()
+    if existing:
+        from fastapi.responses import JSONResponse
+        return JSONResponse(status_code=200, content=jsonable_encoder(_gcp_historical_job(existing)))
+    job = BackgroundJob(id=str(uuid.uuid4()), kind='gcp_historical', project_id=project_id,
+                        payload=payload, result=jsonable_encoder(result), status='complete',
+                        max_attempts=1, dedupe_key=dedupe_key)
+    db.add(job)
+    record(db, user, 'research.gcp_historical_imported', request, project_id=project_id,
+           detail={'scenario_id': scenario_id, 'source_sha256': result['source_sha256'], 'record_count': result['record_count']})
+    db.commit()
+    return _gcp_historical_job(job)
+
+
+@router.get('/gcp-historical/latest')
+def latest_gcp_historical(project_id: str, db: Session = Depends(get_db),
+                          user: User = Depends(require_admin_or_lead)):
+    from access import assert_project_access
+    assert_project_access(project_id, user, db)
+    job = db.query(BackgroundJob).filter_by(kind='gcp_historical', project_id=project_id).order_by(BackgroundJob.created_at.desc(), BackgroundJob.id.desc()).first()
+    return _gcp_historical_job(job)
+
+
+@router.get('/gcp-historical/{job_id}')
+def get_gcp_historical(job_id: str, db: Session = Depends(get_db),
+                       user: User = Depends(require_admin_or_lead)):
+    from access import assert_project_access
+    job = db.query(BackgroundJob).filter_by(id=job_id, kind='gcp_historical').first()
+    if not job or not job.project_id:
+        raise HTTPException(404, 'Historical GCP query not found.')
+    assert_project_access(job.project_id, user, db)
+    return _gcp_historical_job(job)
+
+
+class GCPGroundTruthMapping(BaseModel):
+    unit: Literal['commands', 'audit_records']
+    command_column: str | None = Field(default=None, max_length=80, pattern=r'^[\w .-]+$')
+    record_id_column: str | None = Field(default=None, max_length=80, pattern=r'^[\w .-]+$')
+    category_column: str | None = Field(default=None, max_length=80, pattern=r'^[\w .-]+$')
+    outcome_column: str | None = Field(default=None, max_length=80, pattern=r'^[\w .-]+$')
+
+    @model_validator(mode='after')
+    def complete_mapping(self):
+        if self.unit == 'commands' and (not self.command_column or self.record_id_column or self.category_column or self.outcome_column):
+            raise ValueError('Choose the command column only')
+        if self.unit == 'audit_records' and (self.command_column or not self.record_id_column or not (self.category_column or self.outcome_column)):
+            raise ValueError('Choose the insert ID and at least one label column')
+        used = [x for x in (self.command_column, self.record_id_column, self.category_column, self.outcome_column) if x]
+        if len(set(used)) != len(used):
+            raise ValueError('Choose different columns for each field')
+        return self
+
+
+def _historical_evidence(job_id: str, db: Session, user: User):
+    from access import assert_project_access
+    job = db.query(BackgroundJob).filter_by(id=job_id, kind='gcp_historical', status='complete').first()
+    if not job or not job.project_id:
+        raise HTTPException(404, 'Completed historical GCP evidence not found.')
+    assert_project_access(job.project_id, user, db)
+    if not isinstance(job.result, dict) or job.result.get('mode') != 'research_forensic_evaluation' or not isinstance(job.result.get('events'), list):
+        raise HTTPException(422, 'Historical evidence is not available for evaluation.')
+    return job
+
+
+@router.post('/gcp-historical/{job_id}/evaluate', status_code=201)
+async def evaluate_gcp_historical(job_id: str, request: Request, unit: str = Form(...),
+                                  command_column: str | None = Form(None), record_id_column: str | None = Form(None),
+                                  category_column: str | None = Form(None), outcome_column: str | None = Form(None),
+                                  ground_truth: UploadFile = File(...), db: Session = Depends(get_db),
+                                  user: User = Depends(require_admin_or_lead)):
+    from audit import record
+    from db.models import Project
+    from fastapi.encoders import jsonable_encoder
+    from research.gcp_ground_truth import GroundTruthError, MAX_CSV_BYTES, evaluate
+    evidence_job = _historical_evidence(job_id, db, user)
+    try:
+        mapping = GCPGroundTruthMapping(unit=unit, command_column=command_column or None,
+                                        record_id_column=record_id_column or None,
+                                        category_column=category_column or None, outcome_column=outcome_column or None)
+    except ValidationError:
+        raise HTTPException(422, 'Choose valid, distinct CSV column names for the selected row type.') from None
+    try:
+        contents = await ground_truth.read(MAX_CSV_BYTES + 1)
+    finally:
+        await ground_truth.close()
+    try:
+        result = evaluate(contents, evidence_job.result, mapping.model_dump())
+    except GroundTruthError as exc:
+        raise HTTPException(422, str(exc)) from None
+    result.update({'mode': 'research_ground_truth_comparison', 'evidence_job_id': job_id,
+                   'scenario_id': evidence_job.payload.get('scenario_id'),
+                   'evidence_source': evidence_job.result.get('evidence_source'),
+                   'evidence_sha256': evidence_job.result.get('source_sha256')})
+    payload = {'evidence_job_id': job_id, 'source_sha256': result['source_sha256'], 'mapping': mapping.model_dump()}
+    digest = hashlib.sha256(json.dumps(payload, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
+    key = 'gcp-eval:' + digest
+    db.query(Project).filter_by(id=evidence_job.project_id).with_for_update().one()
+    existing = db.query(BackgroundJob).filter_by(dedupe_key=key).first()
+    if existing:
+        from fastapi.responses import JSONResponse
+        return JSONResponse(status_code=200, content=jsonable_encoder({'id': existing.id, 'result': existing.result}))
+    evaluation = BackgroundJob(id=str(uuid.uuid4()), kind='gcp_ground_truth', project_id=evidence_job.project_id,
+                               payload=payload, result=jsonable_encoder(result), status='complete', max_attempts=1, dedupe_key=key)
+    db.add(evaluation)
+    record(db, user, 'research.gcp_ground_truth_compared', request, project_id=evidence_job.project_id,
+           detail={'evidence_job_id': job_id, 'source_sha256': result['source_sha256'], 'unit': mapping.unit, 'rows': result['csv_row_count']})
+    db.commit()
+    return {'id': evaluation.id, 'result': evaluation.result}
+
+
+@router.get('/gcp-historical/{job_id}/evaluation/latest')
+def latest_gcp_evaluation(job_id: str, db: Session = Depends(get_db), user: User = Depends(require_admin_or_lead)):
+    evidence_job = _historical_evidence(job_id, db, user)
+    job = (db.query(BackgroundJob)
+           .filter_by(kind='gcp_ground_truth', project_id=evidence_job.project_id, status='complete')
+           .filter(BackgroundJob.payload['evidence_job_id'].as_string() == job_id)
+           .order_by(BackgroundJob.created_at.desc(), BackgroundJob.id.desc()).first())
+    return {'id': job.id, 'result': job.result} if job else None
 
 
 class BenchmarkRequest(BaseModel):

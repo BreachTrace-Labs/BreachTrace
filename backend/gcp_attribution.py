@@ -10,6 +10,18 @@ def key_digest(key_id: str) -> str:
     return hashlib.sha256(key_id.lower().encode('ascii')).hexdigest()
 
 
+def record_detected_key(db, incident, match, *, simulated=False):
+    """Associate metadata from one structured document in the incident transaction."""
+    if not getattr(match, 'structured_key', False):
+        return
+    from db.models import GCPKeyAssociation
+    incident.gcp_project_id = match.project_id
+    db.add(GCPKeyAssociation(incident_id=incident.incident_id,
+                             key_digest=key_digest(match.private_key_id),
+                             key_hint=match.private_key_id[:4] + '…' + match.private_key_id[-4:],
+                             source='detected_in_simulation' if simulated else 'detected_in_commit'))
+
+
 def event_attribution(event, incident, association):
     if event.platform not in ('gcp', 'firebase') or association is None:
         return None

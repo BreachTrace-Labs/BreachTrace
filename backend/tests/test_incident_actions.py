@@ -62,6 +62,40 @@ def test_dismiss_assignment_and_audit_permissions(environment):
         assert db.query(AuditLog).filter_by(incident_id=b,action='incident.dismissed').count()==0
 
 
+def test_queued_refresh_keeps_previous_evidence_and_report(environment):
+    from crypto import encrypt_blob
+    from db.crud import save_forensic_events
+    from db.models import BackgroundJob, CredentialWalletEntry, ForensicEvent as StoredEvent, IncidentRecord
+    from normalizer.schema import ForensicEvent
+    client, factory = environment
+    client.post('/auth/register', json={'org_name':'Acme', 'slug':'acme', 'admin_email':'admin@example.com',
+                'admin_password':'admin password', 'admin_full_name':'Admin'})
+    token = client.post('/auth/token', data={'username':'admin@example.com', 'password':'admin password'}).json()['access_token']
+    headers = {'Authorization':'Bearer ' + token}
+    project = client.post('/projects', headers=headers, json={'name':'App', 'github_repo_url':'https://github.com/acme/app'}).json()['id']
+    ciphertext, iv = encrypt_blob({'auth_mode':'impersonation', 'project_id':'demo-project',
+                                   'reader_service_account':'reader@demo-project.iam.gserviceaccount.com'})
+    with factory() as db:
+        db.add(CredentialWalletEntry(project_id=project, provider='gcp', encrypted_blob=ciphertext, iv=iv,
+                                     created_by=client.get('/auth/me', headers=headers).json()['id'], verification_status='ok'))
+        incident = create_incident(db, credential_type='gcp_service_account', credential_hint='worker...',
+                                   principal_id='worker@demo-project.iam.gserviceaccount.com',
+                                   repo_url='https://github.com/acme/app', commit_hash='a' * 40,
+                                   exposure_start=datetime.now(timezone.utc), project_id=project)
+        incident.status, incident.report_text = 'complete', 'Previous report'
+        db.commit()
+        save_forensic_events(db, incident.incident_id, [ForensicEvent(event_id='old-event', platform='gcp',
+                             timestamp=datetime.now(timezone.utc), api_action='storage.objects.get', success=True)])
+        incident_id = incident.incident_id
+    assert client.post(f'/incidents/{incident_id}/refresh', headers=headers).status_code == 202
+    with factory() as db:
+        assert db.get(IncidentRecord, incident_id).status == 'collecting'
+        assert db.get(IncidentRecord, incident_id).report_text == 'Previous report'
+        assert db.query(StoredEvent).filter_by(incident_id=incident_id).one().event_id == 'old-event'
+        job = db.query(BackgroundJob).filter_by(kind='incident_collect').one()
+        assert job.payload['incident_id'] == incident_id and job.status == 'queued'
+
+
 def test_refresh_and_snapshot_start_are_audited(environment, monkeypatch, tmp_path):
     client, factory = environment
     from routers import incidents, repositories
