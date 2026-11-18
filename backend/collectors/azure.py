@@ -46,17 +46,19 @@ class AzureActivityLogCollector(BaseCollector):
 
     platform = "azure"
 
-    def __init__(self) -> None:
+    def __init__(self, reader: dict | None = None) -> None:
         import config
         from azure.identity import ClientSecretCredential
         from azure.mgmt.monitor import MonitorManagementClient
 
+        reader = reader if reader is not None else {
+            'tenant_id': config.AZURE_TENANT_ID, 'client_id': config.AZURE_CLIENT_ID,
+            'client_secret': config.AZURE_CLIENT_SECRET, 'subscription_id': config.AZURE_SUBSCRIPTION_ID,
+        }
         credential = ClientSecretCredential(
-            tenant_id=config.AZURE_TENANT_ID,
-            client_id=config.AZURE_CLIENT_ID,
-            client_secret=config.AZURE_CLIENT_SECRET,
+            tenant_id=reader['tenant_id'], client_id=reader['client_id'], client_secret=reader['client_secret'],
         )
-        self._client = MonitorManagementClient(credential, config.AZURE_SUBSCRIPTION_ID)
+        self._client = MonitorManagementClient(credential, reader['subscription_id'])
 
     def collect(
         self,

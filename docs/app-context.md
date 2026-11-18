@@ -61,13 +61,17 @@ The UI can use mock preview data when configured for that mode. For a live local
 
 The app is currently intended for a local operator and research workflow. It does not implement hardened multi-tenant authentication. Some operational settings and scan endpoints enforce loopback access; this should not be read as a complete production security boundary.
 
+Each installation is explicitly limited to one organisation, enforced by the database. Administrators and security leads have organisation-wide search, research and repository snapshot access, including legacy unassigned records; the selected project does not filter these features. Developers can access their assigned projects but cannot use these organisation-wide endpoints. Existing databases containing more than one organisation must be resolved before applying the migration; no data is removed automatically.
+
 ### 2. Scan the codebase that already exists
+
+**Scope decision:** repository URL scans are current-snapshot reviews. They do not create Monitor incidents or initiate provider collection. Historical Git scanning, inferred first exposure and creating incidents from snapshot findings are separate future capabilities, not automatic consequences of this flow. Users who want monitoring for subsequent pushes can register the project webhook.
 
 On **Connect**, the user pastes a root GitHub URL such as `https://github.com/owner/repo` and chooses **Scan repository**. The backend validates the URL, resolves the default branch to a commit SHA, downloads a bounded archive, and scans regular UTF-8 text files without executing repository code. A private repository needs backend GitHub access through `GITHUB_TOKEN`.
 
-The scan is queued in the backend process. The UI polls for queued, scanning, complete, or failed status. On completion it shows the pinned branch and revision, candidate type, masked hint, file and line, detection method, confidence, and any partial-scan/exclusion information. A failed job shows an error; a large repository can hit documented download, file, text, finding, or time limits.
+The scan is queued in the database. The UI polls for queued, scanning, complete, or failed status and restores the most recent scan ID on the same browser. On completion it shows the pinned branch and revision, candidate type, masked hint, file and line, detection method, confidence, and any partial-scan/exclusion information. A failed job shows an error; a large repository can hit documented download, file, text, finding, or time limits.
 
-The result is explicitly **snapshot only**: it has no exposure start, no incident ID, and no provider collection. The user can use it to find code that currently contains a suspicious string, but it cannot answer when that string entered Git history. The job metadata is process-local; completed result files are persisted under `data/repository-scans/`. A backend restart can lose the in-memory lookup for a previously returned scan ID.
+The result is explicitly **snapshot only**: it has no exposure start, no incident ID, and no provider collection. The user can use it to find code that currently contains a suspicious string, but it cannot answer when that string entered Git history. New job metadata and masked results are stored in the database, and interrupted jobs are eligible for recovery when their lease expires. Earlier scans written only to `data/repository-scans/` are not automatically imported.
 
 Snapshot logic is in [backend/repository_snapshot.py](../backend/repository_snapshot.py), [backend/detector/repository.py](../backend/detector/repository.py), and [backend/routers/repositories.py](../backend/routers/repositories.py). The UI is [client/src/components/RepositoryScan.tsx](../client/src/components/RepositoryScan.tsx).
 
@@ -75,7 +79,7 @@ Snapshot logic is in [backend/repository_snapshot.py](../backend/repository_snap
 
 The Connect page can register a GitHub push webhook using `GITHUB_TOKEN`, or the user can create one manually in GitHub repository settings. Registration needs token permission to administer that repository's webhooks. The GitHub Payload URL must be publicly reachable; `localhost` is not reachable from GitHub. For local development, an HTTPS tunnel can forward to the backend's `/webhook/github` route. The configured webhook secret must match `GITHUB_WEBHOOK_SECRET` on the backend, and GitHub should send JSON with SSL verification enabled.
 
-The Connect form can also request a snapshot scan after registration. That scan and the future-push monitor are independent flows. Registering a webhook does not backfill old commits. The webhook registration and delivery routes are in [backend/routers/webhook.py](../backend/routers/webhook.py); the form is [client/src/pages/Connect.tsx](../client/src/pages/Connect.tsx).
+The Connect form can also request a snapshot scan after registration; it scans the selected project's repository even if the standalone scan URL was edited. That scan and the future-push monitor are independent flows. Registering a webhook does not backfill old commits. The webhook registration and delivery routes are in [backend/routers/webhook.py](../backend/routers/webhook.py); the form is [client/src/pages/Connect.tsx](../client/src/pages/Connect.tsx).
 
 ### 4. A new push becomes an incident
 
@@ -91,9 +95,9 @@ The **Monitor** dashboard loads `/incidents` and refreshes it every three second
 
 The detail page shows the detected credential family and masked hint, repository and commit, exposure time, processing state, severity, report, forensic timeline, source IPs and resources when known, financial/compliance assessments, remediation checklist, and PDF export. A detection-only incident explains why no live forensics ran. A collector failure is shown through collection status and its sanitized error, not as proof of no activity. The UI is [client/src/pages/Dashboard.tsx](../client/src/pages/Dashboard.tsx) and [client/src/pages/IncidentDetail.tsx](../client/src/pages/IncidentDetail.tsx); responses are assembled in [backend/routers/incidents.py](../backend/routers/incidents.py).
 
-For supported incidents, **Refresh logs** can rerun the collector. Refresh uses configured provider access because full leaked secrets are not kept as reusable incident credentials. Stripe refresh requires a configured `STRIPE_API_KEY` reader in the same account and test/live mode; the UI asks the operator to confirm this relationship. A Twilio detection-only API key can be associated with an owning Account SID beginning `AC` when the configured Twilio reader matches that account. Refresh cannot manufacture missing provider history or prove which credential performed an account-wide action.
+For supported incidents, **Refresh logs** can rerun the collector. Project incidents use their project's verified wallet reader; unassigned legacy incidents use backend environment configuration. Missing, pending, failed or unreadable project wallet entries stop collection without falling back to global credentials. Stripe requires a reader in the same account and test/live mode; the UI asks the operator to confirm the account relationship. A Twilio detection-only API key can be associated with an owning Account SID beginning `AC` when the reader matches that account. Refresh cannot manufacture missing provider history or prove which credential performed an account-wide action.
 
-An Azure client secret detected without an application ID is initially detection-only. An administrator or security lead can explicitly associate the owning application (client) ID on the incident and start collection using the configured backend Azure reader. This records the operator's association, not independent proof of ownership. Azure Activity Log events are matched to the application identity, and do not identify which particular client secret was used.
+An Azure client secret detected without an application ID is initially detection-only. An administrator or security lead can explicitly associate the owning application (client) ID on the incident and start collection using the project's Azure wallet reader. This records the operator's association, not independent proof of ownership. Azure Activity Log events are matched to the application identity, and do not identify which particular client secret was used.
 
 ### 6. Search, configure reports, and export research data
 
@@ -121,6 +125,8 @@ The repository scanner has bounded work: currently 10 MiB per file, 1 GiB total 
 The pipeline moves a collectable incident through collection, normalization/persistence, classification, severity and impact scoring, report creation, and search indexing. It saves provider events as normalized forensic rows and records a collection status. The report starts with deterministic prose; a configured model may later improve the prose without changing the underlying events. Collector failure moves the incident to an error state with a visible reason. The implementation is [backend/pipeline.py](../backend/pipeline.py), the schema is [backend/db/models.py](../backend/db/models.py), and report facts/composition live in [backend/reporter/](../backend/reporter/).
 
 **The collection window covers up to 30 days before collection.** Provider access, logging, retention and collection limits determine what is available. Earlier events appear as context and do not create an incident before the exposure trigger. Severity, impact and reports use events at or after detected exposure. A refresh reruns collection without changing the original exposure timestamp.
+
+The exposure start is an estimate from the commit timestamp; repository visibility and first exposure are not independently confirmed. Ordinary incidents do not automatically track revocation. A recorded closure timestamp does not currently carry independent provider verification. See [exposure and attribution scope](exposure-attribution.md) for the decisions, possible provider-specific improvements, and current limits.
 
 | Provider or family | Collection source and current meaning | Important boundary |
 | --- | --- | --- |
@@ -155,7 +161,7 @@ An incident stores its credential family, masked hint, repository, commit hash, 
 | `GET /research/export`, `GET /research/platforms`, `POST /research/record` | Research data and experiment records. |
 | `POST /test/simulate` | Deliberate test-only incident creation from a supplied diff. |
 
-The local snapshot queue, webhook background tasks, and report-upgrade work run in the application process; they are not a durable external job queue. Restarting a backend during work can interrupt it. Search indexing also runs locally and may lag an incident briefly. Provider API permissions, retention, rate/size limits, and backend connectivity can each affect how much forensic evidence appears. The presence of a report should always be read alongside the collection status, time window, and tier.
+Snapshot scans, wallet verification, project incident collection, indexing and notification deliveries are queued in the database and processed by backend worker threads. Expired leases are recovered after a restart; retries are bounded, and notification delivery can be duplicated if a process stops after an external service accepts a message but before the result is saved. Optional model upgrades run as part of collection. Experiment-only revocation monitors and startup knowledge-base warming still run in process. Provider access and logging determine available evidence.
 
 ## How to interpret common outcomes
 
@@ -166,7 +172,7 @@ The local snapshot queue, webhook background tasks, and report-upgrade work run 
 | Webhook registration says the token cannot access the resource | The GitHub token lacks rights to manage hooks on that repository; manual registration or a suitably authorized token is needed. |
 | Incident exists but no forensic timeline | Check tier, collection status/error, provider permissions and retention, account identity, and the exposure-based time window. Zero events is not a universal assertion of zero account activity. |
 | Stripe POST request is absent from the timeline | The Events API returns state-change events, not every POST call. A POST appears only when Stripe emits an Event for the operation; read-only requests are not included. |
-| Stripe rejects refresh | The configured reader may be inactive, lack Events permission, use the wrong mode, or belong to a different account. Refresh cannot use a full leaked key that was intentionally not persisted. |
+| Stripe rejects refresh | The project's wallet reader may be inactive, lack Events permission, use the wrong mode, or belong to a different account. Refresh cannot use a full leaked key that was intentionally not persisted. |
 | Twilio `SK` key is detected without events | An owning `AC` Account SID and authorized account reader are needed; account activity cannot identify the exact API key that caused it. |
 | Incident says complete | Processing finished. Confirm remediation separately; complete does not assert the credential is safe or rotated. |
 

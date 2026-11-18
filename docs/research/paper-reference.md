@@ -49,13 +49,15 @@ Current repository-snapshot defaults documented for this branch are 10 MiB per f
 
 The live workflow records a commit-derived start estimate. Current provider collection requests up to 30 days of history ending at collection time, subject to provider retention, reader permission, API caps, pagination, and configured logs. Events before the commit-derived start can be retained and shown as historical context. Severity, impact calculations and the incident report use events at or after that estimated start.
 
-The codebase contains a legacy exposure-window/revocation utility, but the current webhook-to-pipeline path does not start it. It must not be described as automatic commit-to-rotation measurement. In normal live incidents, `exposure_end` is not automatically established by polling a leaked key until rotation. Some revocation-specific helpers exist, but their presence is not evidence that this lifecycle is active in the production workflow. Therefore, the current system cannot reliably compute the full interval from first exposure to confirmed revocation.
+In normal live incidents, `exposure_end` is not automatically established by polling a leaked key until rotation. The webhook has a short experimental revocation monitor for explicitly configured experiment identities, and the codebase also contains a separate legacy monitoring utility. These special paths do not establish automatic lifecycle tracking for ordinary incidents, and recorded closure does not include independent provider-side provenance. Therefore, the current system cannot reliably compute the full interval from first exposure to confirmed revocation.
 
 The current interval is best named a **collection interval** or **analysis interval**. It is not equivalent to the credential’s actual exposure window. It may include records from before the detected commit, and it may not extend to rotation. This distinction is central to the proposed temporal research.
 
+The implementation decision and provider-specific evidence limits are recorded in [exposure and attribution scope](../exposure-attribution.md). In particular, future work may add provider-confirmed revocation observations with provenance, or credential-specific sign-in and audit records when a provider supplies a reliable key identifier. Until then, closure is not claimed as verified and app/account-level activity is not labelled as key-level use.
+
 ### 2.3 Forensic pipeline
 
-For a supported and sufficiently identified credential, the backend routes to a provider collector, normalizes returned records, stores event rows, classifies operations, computes deterministic severity and impact, creates a report, and indexes evidence for search. A manual refresh reruns collection using configured reader access. The selected project’s encrypted wallet is not yet wired into the collectors; collectors still use backend environment configuration.
+For a supported and sufficiently identified credential, the backend routes to a provider collector, normalizes returned records, stores event rows, classifies operations, computes deterministic severity and impact, creates a report, and indexes evidence for search. A manual refresh reruns collection using configured reader access. Project incidents use a verified reader from their project's encrypted wallet; legacy incidents without a project use backend environment configuration. This paragraph records the later wallet integration and supersedes the implementation snapshot's wallet limitation.
 
 The common event representation records available fields such as timestamp, provider, operation, principal/caller, resource, source address, success/error and sanitized evidence metadata. Provider schemas are not equivalent. Normalization makes them queryable in a shared UI, but it does not make the underlying logs equally complete or equally attributable.
 
@@ -118,7 +120,7 @@ The following list summarizes the work accumulated from the research seed commit
 |---|---|---|
 | Account and project foundation | Initial setup/authentication, organization and project records, memberships/roles, project-aware incident access | Allows role-separated investigations; deployment hardening and full tenant isolation remain incomplete |
 | Webhook and incident routing | Project-specific repository webhook configuration, encrypted webhook secrets, repository-to-project routing, incident authorization | Enables a more realistic team workflow. Webhook stays unauthenticated by JWT and verifies HMAC; do not add blanket JWT middleware to that route |
-| Credential wallet | Encrypted per-project provider connection metadata, provider verification flows, protected secret display behavior | Verification proves limited reader access, not exposed-key ownership. Collector/pipeline integration is not complete, so wallet contents do not yet drive forensic collection |
+| Credential wallet | Encrypted per-project provider connection metadata, provider verification flows, protected secret display behavior | Verification proves limited reader access, not exposed-key ownership. Since the documented snapshot, collection has been connected to verified project readers |
 | Incident response operations | Assignment, dismissal, refresh/access audit records, PDF report, organization and incident audit views | Provides traceability for a human workflow; does not make the product a durable enterprise case-management system |
 | Notifications | Project SMTP and Slack destinations and threshold-based best-effort notices | Useful for operational routing; no retry queue or durable delivery receipts |
 | Azure collection | Time-bounded Activity Log paging with exact app/caller matching and local identity-claim filtering; Azure key-pattern context and taxonomy improvements | Improves app-level collection and classification. Does not establish per-client-secret attribution or comprehensive data-plane coverage |
@@ -366,7 +368,7 @@ If a paper reports test results, freeze the exact commit, test command, dependen
 ### External validity
 
 - Five collector families do not represent all cloud/SaaS providers, key types, tenants or logging plans.
-- The current system is a research prototype; its auth/project features do not establish hardened production multi-tenancy. Search, research and repository-scan features are not fully project-scoped, and the wallet does not yet supply collector credentials.
+- The current system is a research prototype using one organisation per installation; its auth/project features do not establish hardened production multi-tenancy. Search, research and repository scans are organisation-wide for admins and security leads rather than project-scoped.
 - Local runs, synthetic actions and one organization cannot establish behavior in production-scale enterprises.
 - Public repository stress tests use a narrow set of current snapshots, not a random representative sample.
 

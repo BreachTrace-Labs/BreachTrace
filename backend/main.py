@@ -88,6 +88,14 @@ async def validation_error(request, error):
 @app.on_event("startup")
 def _warm_search_index() -> None:
     assistant.warm_index_in_background()
+    from background_jobs import start_workers
+    start_workers()
+
+
+@app.on_event("shutdown")
+def _stop_background_workers() -> None:
+    from background_jobs import stop_workers
+    stop_workers()
 
 
 # ---------------------------------------------------------------------------

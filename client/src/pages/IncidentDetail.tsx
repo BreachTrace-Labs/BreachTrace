@@ -280,7 +280,7 @@ const IncidentDetail: React.FC = () => {
 
   const handleRefreshForensics = async () => {
     if (!id || refreshing) return
-    if (incident?.credential_type === 'stripe_secret_key' && !window.confirm('Confirm that the Stripe reader key configured on the backend belongs to the same account as this exposed key. Continue?')) return
+    if (incident?.credential_type === 'stripe_secret_key' && !window.confirm('Confirm that this project’s Stripe wallet reader belongs to the same account and mode as this exposed key. Continue?')) return
     setRefreshing(true)
     setRefreshNotice(null)
     try {
@@ -307,8 +307,9 @@ const IncidentDetail: React.FC = () => {
       setRefreshNotice('Twilio account associated. Collection started.')
       const detail = await client.get<IncidentRecord>(`/incidents/${id}`)
       setIncident(detail.data)
-    } catch {
-      setRefreshNotice('Could not start collection. Check that the Account SID matches the configured Twilio reader account.')
+    } catch (error) {
+      const detail = (error as { response?: { data?: { detail?: unknown } } }).response?.data?.detail
+      setRefreshNotice(typeof detail === 'string' ? detail : 'Could not start collection. Check that the Account SID matches the configured Twilio reader account.')
     } finally {
       setRefreshing(false)
     }
@@ -493,8 +494,9 @@ const IncidentDetail: React.FC = () => {
                     </div>
                   </div>
                   <div className="mt-5 border-t pt-4">
-                    <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Confirmed window</p>
+                    <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Time between recorded timestamps</p>
                     <p className="mt-1 font-mono text-2xl font-bold tracking-tight text-foreground">{dur}</p>
+                    {!synthetic && <p className="mt-2 text-xs text-muted-foreground">The start is estimated from the detected commit. A recorded end does not independently confirm rotation.</p>}
                   </div>
                 </div>
               </div>
@@ -503,7 +505,7 @@ const IncidentDetail: React.FC = () => {
             {/* Stats Grid */}
             <div className="border-t bg-muted/20 p-4 sm:p-6">
               <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
-                <SummaryTile icon={Clock3} label={synthetic ? "Sample exposure start" : "Exposure start"}>
+                <SummaryTile icon={Clock3} label={synthetic ? "Sample exposure start" : "Estimated exposure start"}>
                   {fmtTime(incident.exposure_start)}
                 </SummaryTile>
                 <SummaryTile icon={Timer} label="Window closure">
@@ -623,6 +625,9 @@ const IncidentDetail: React.FC = () => {
                 Forensic Timeline
               </h2>
               <p className="mb-4 text-sm text-muted-foreground">Shows up to 30 days of available provider history. Events before detected exposure are context and are excluded from incident severity, impact and report calculations. Refresh logs to retrieve recent history.</p>
+              {platform === 'aws' && <p className="mb-4 text-sm text-muted-foreground">CloudTrail is queried by access key ID. Available records depend on logging and retention; related temporary credentials may use different key IDs.</p>}
+              {platform === 'gcp' && <p className="mb-4 text-sm text-muted-foreground">Cloud Audit Logs are matched to the service account, not necessarily the individual leaked key. Results depend on enabled logs and permissions.</p>}
+              {platform === 'twilio' && <p className="mb-4 text-sm text-muted-foreground">Messages, calls and Monitor Events describe account activity. The current collector cannot attribute these records to a particular API key.</p>}
               {incident.credential_type === 'stripe_secret_key' && <div className="mb-4 space-y-2 text-sm text-muted-foreground">
                 <p>BreachTrace queries Stripe Events directly through the backend, using up to the Events API’s 30-day retention window. These records show account-level state changes, not every API request, and do not identify which key caused them. Read-only requests are not included.</p>
               </div>}
@@ -648,7 +653,7 @@ const IncidentDetail: React.FC = () => {
               {canManage && !USE_MOCK && incident.credential_type === 'twilio_api_key' && <form
                 className="border rounded-sm p-5 space-y-3"
                 onSubmit={e => { e.preventDefault(); void handleTwilioAccount() }}>
-                <p className="text-sm">Confirm the owning Twilio Account SID to collect account activity. It must match the reader account configured on the backend.</p>
+                <p className="text-sm">Confirm the owning Twilio Account SID to collect account activity. It must match this project’s Twilio wallet connection.</p>
                 <label className="block text-sm">Twilio Account SID
                   <input className="block mt-1 w-full border rounded p-2 bg-transparent font-mono" value={twilioAccount}
                     onChange={e => setTwilioAccount(e.target.value)} pattern="AC[0-9a-fA-F]{32}" required placeholder="AC…" />

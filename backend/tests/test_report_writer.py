@@ -62,6 +62,22 @@ def _sections(summary, narrative=("Step one.",), impact="Impact."):
     return {"executive_summary": summary, "narrative": list(narrative), "business_impact": impact}
 
 
+@pytest.mark.parametrize('platform', ['aws', 'gcp', 'azure', 'stripe', 'twilio'])
+def test_template_does_not_infer_public_exposure_or_confirm_rotation(platform):
+    facts = _facts(platform, [])
+    report = render_report(facts, deterministic_sections(facts))
+    assert 'estimated exposure start' in report
+    assert 'rotation is not confirmed' in report
+    assert 'public repository' not in report
+    assert 'was exposed in' not in report
+
+
+def test_model_prompt_excludes_unverified_exposure_claims(aws_facts):
+    system_prompt = build_messages(aws_facts)[0]['content']
+    assert 'do not claim the repository was public' in system_prompt
+    assert 'account-level or application-level activity' in system_prompt
+
+
 # ==========================================================================
 # Fact sheet
 # ==========================================================================

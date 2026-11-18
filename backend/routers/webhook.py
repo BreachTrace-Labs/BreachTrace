@@ -36,6 +36,7 @@ from notifications import notify_incident_created_by_id
 from rag.index import index_incident_in_background
 from window.calculator import is_key_revoked, record_exposure_start
 from audit import record
+from background_jobs import enqueue
 
 logger = logging.getLogger(__name__)
 
@@ -183,6 +184,9 @@ async def github_webhook(
         logger.error("[WEBHOOK FAIL] Signature mismatch")
         raise HTTPException(status_code=401, detail="Invalid webhook signature")
 
+    from auth import ensure_single_organisation
+    ensure_single_organisation(db)
+
     # 2. Only process push events
     if event_type != "push":
         logger.info(f"[WEBHOOK] Ignored non-push event: {event_type}")
@@ -242,6 +246,7 @@ async def github_webhook(
                 forensic_tier=resolved.forensic_tier,
                 unavailable_reason=resolved.unavailable_reason,
                 project_id=project.id,
+                commit=False,
             )
             created_incidents.append(incident.incident_id)
             logger.info(
@@ -254,21 +259,16 @@ async def github_webhook(
             )
 
             if resolved.is_collectable:
-                background_tasks.add_task(
-                    _run_initial_pipeline_and_notify,
-                    incident.incident_id,
-                    credential,
-                    exposure_start,
-                    platform=match_platform,
-                )
+                enqueue(db, 'incident_collect', {'incident_id': incident.incident_id, 'notify': True}, project_id=project.id)
+                db.commit()
             else:
                 # Tier 2: nothing to query. Finalise now with the reason recorded
                 # rather than leaving the incident stuck in 'collecting' forever.
+                enqueue(db, 'incident_index', {'incident_id': incident.incident_id}, project_id=project.id)
+                enqueue(db, 'incident_notify', {'incident_id': incident.incident_id}, project_id=project.id)
                 finalize_non_forensic_incident(
                     db, incident.incident_id, resolved.unavailable_reason
                 )
-                background_tasks.add_task(index_incident_in_background, incident.incident_id)
-                background_tasks.add_task(notify_incident_created_by_id, incident.incident_id)
 
             # Launch revocation monitor for known experiment credentials only.
             if match_platform == "aws" and credential == config.EXPERIMENT_AWS_ACCESS_KEY_ID:

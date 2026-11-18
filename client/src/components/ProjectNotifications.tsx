@@ -10,6 +10,7 @@ type Config = {
   enabled: boolean
   min_severity: string
 }
+type Delivery = { id: string; type: string; channel: string; incident_id: string | null; status: string; outcome: string | null; attempts: number; max_attempts: number; last_error: string | null; created_at: string }
 
 const levels = ['low', 'medium', 'high', 'critical']
 const input = 'min-w-0 w-full rounded-md border bg-transparent p-2 text-sm'
@@ -20,6 +21,7 @@ const errorMessage = (error: unknown) => {
 
 export default function ProjectNotifications({ projectId, projectName }: { projectId: string; projectName: string }) {
   const [items, setItems] = useState<Config[]>([])
+  const [deliveries, setDeliveries] = useState<Delivery[]>([])
   const [smtpReady, setSmtpReady] = useState(false)
   const [channel, setChannel] = useState<'email' | 'slack'>('email')
   const [target, setTarget] = useState('')
@@ -34,11 +36,14 @@ export default function ProjectNotifications({ projectId, projectName }: { proje
       const { data } = await realClient.get<{ items: Config[]; smtp_configured: boolean }>(`/projects/${projectId}/notifications`)
       setItems(data.items)
       setSmtpReady(data.smtp_configured)
+      const history = await realClient.get<Delivery[]>(`/projects/${projectId}/notification-deliveries`)
+      setDeliveries(history.data)
       setError('')
     } catch (err) { setError(errorMessage(err)) }
   }, [projectId])
 
   useEffect(() => { void load() }, [load])
+  useEffect(() => { const timer = window.setInterval(() => { void load() }, 5000); return () => window.clearInterval(timer) }, [load])
 
   async function save(action: () => Promise<unknown>, message: string) {
     setBusy(true); setError(''); setNotice('')
@@ -91,5 +96,13 @@ export default function ProjectNotifications({ projectId, projectName }: { proje
       <p className="sm:col-span-2 text-xs text-muted-foreground">Slack webhook URLs are encrypted and cannot be viewed after saving. Incidents without a severity score notify only destinations set to “low” and are labeled “not assessed.”</p>
       <Button className="sm:col-span-2" type="submit" disabled={busy || !target}>Add notification destination</Button>
     </form>
+    <div className="space-y-2"><h3 className="font-medium">Recent deliveries</h3>
+      {deliveries.length === 0 ? <p className="text-sm text-muted-foreground">No deliveries yet.</p> : deliveries.map(delivery => <div className="border rounded p-3 text-sm" key={delivery.id}>
+        <div className="flex flex-wrap items-center justify-between gap-2"><span>{delivery.channel} · {delivery.type === 'incident_assigned' ? 'Assignment' : 'New incident'} · {delivery.status === 'complete' ? delivery.outcome ?? 'complete' : delivery.status} · Attempt {delivery.attempts}/{delivery.max_attempts}</span>
+          {delivery.status === 'failed' && <Button size="sm" variant="outline" disabled={busy} onClick={() => void save(() => realClient.post(`/projects/${projectId}/notification-deliveries/${delivery.id}/retry`), 'Delivery queued for retry.')}>Retry</Button>}</div>
+        {delivery.incident_id && <p className="text-xs text-muted-foreground">Incident: {delivery.incident_id}</p>}
+        {delivery.last_error && <p className="text-xs text-muted-foreground">{delivery.last_error}</p>}
+      </div>)}
+    </div>
   </section>
 }

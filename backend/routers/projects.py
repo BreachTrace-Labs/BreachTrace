@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 from access import assert_project_access
 from auth import get_active_user, require_admin, require_admin_or_lead, require_single_organisation
 from db.database import get_db
-from db.models import IncidentRecord, NotificationConfig, Project, ProjectMember, User
+from db.models import BackgroundJob, IncidentRecord, NotificationConfig, Project, ProjectMember, User
 from repository_snapshot import repository_name
 from audit import record
 from routers.org import user_data
@@ -139,6 +139,34 @@ def list_notifications(project_id: str, user: User = Depends(require_admin_or_le
     from notifications import smtp_configured
     rows = db.query(NotificationConfig).filter_by(project_id=project.id).order_by(NotificationConfig.created_at).all()
     return {"items": [_notification_data(item) for item in rows], "smtp_configured": smtp_configured()}
+
+
+@router.get('/{project_id}/notification-deliveries')
+def notification_deliveries(project_id: str, user: User = Depends(require_admin_or_lead), db: Session = Depends(get_db)):
+    assert_project_access(project_id, user, db)
+    jobs = (db.query(BackgroundJob).filter_by(project_id=project_id, kind='notification')
+            .order_by(BackgroundJob.created_at.desc()).limit(100).all())
+    return [{'id': job.id, 'type': job.payload.get('type'), 'channel': job.payload.get('channel'),
+             'incident_id': job.payload.get('incident_id'), 'status': job.status, 'attempts': job.attempts,
+             'max_attempts': job.max_attempts, 'last_error': job.last_error, 'outcome': (job.result or {}).get('outcome'), 'created_at': job.created_at,
+             'updated_at': job.updated_at} for job in jobs]
+
+
+@router.post('/{project_id}/notification-deliveries/{job_id}/retry', status_code=202)
+def retry_notification_delivery(project_id: str, job_id: str, request: Request,
+                                user: User = Depends(require_admin_or_lead), db: Session = Depends(get_db)):
+    from datetime import datetime, timezone
+    assert_project_access(project_id, user, db)
+    job = db.query(BackgroundJob).filter_by(id=job_id, project_id=project_id, kind='notification').with_for_update().first()
+    if job is None:
+        raise HTTPException(404, 'Delivery not found')
+    if job.status != 'failed':
+        raise HTTPException(409, 'Only failed deliveries can be retried')
+    job.status, job.attempts, job.last_error = 'queued', 0, None
+    job.available_at = datetime.now(timezone.utc)
+    record(db, user, 'notification.retry_requested', request, project_id=project_id, detail={'delivery_id': job.id})
+    db.commit()
+    return {'status': 'queued'}
 
 
 @router.post("/{project_id}/notifications", status_code=201)

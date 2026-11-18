@@ -6,7 +6,7 @@ import re
 import uuid
 from typing import Literal
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -17,7 +17,7 @@ from crypto import encrypt_blob
 from db.database import get_db
 from db.models import CredentialWalletEntry, User
 from audit import record
-from wallet_verify import verify_entry
+from background_jobs import enqueue
 
 router = APIRouter(prefix='/projects/{project_id}/wallet', tags=['credential wallet'])
 Provider = Literal['aws', 'gcp', 'azure', 'stripe', 'twilio']
@@ -90,7 +90,7 @@ def list_entries(project_id: str, user: User = Depends(require_admin_or_lead), d
 
 
 @router.post('', status_code=202)
-def save_entry(project_id: str, body: WalletInput, request: Request, tasks: BackgroundTasks,
+def save_entry(project_id: str, body: WalletInput, request: Request,
                user: User = Depends(require_admin_or_lead), db: Session = Depends(get_db)):
     assert_project_access(project_id, user, db)
     values = validate_credentials(body.provider, body.credentials)
@@ -111,25 +111,25 @@ def save_entry(project_id: str, body: WalletInput, request: Request, tasks: Back
     entry.last_verified_at = None
     try:
         db.flush()
+        enqueue(db, 'wallet_verify', {'entry_id': entry.id, 'iv': iv, 'actor_id': user.id}, project_id=project_id)
         record(db, user, 'wallet.created', request, project_id=project_id, detail={'provider': body.provider})
         db.commit()
     except IntegrityError:
         db.rollback()
         raise HTTPException(409, 'Connection was modified concurrently; try again')
-    tasks.add_task(verify_entry, entry.id, iv, user.id)
     return public(entry)
 
 
 @router.post('/{entry_id}/verify', status_code=202)
-def reverify(project_id: str, entry_id: str, request: Request, tasks: BackgroundTasks,
+def reverify(project_id: str, entry_id: str, request: Request,
              user: User = Depends(require_admin_or_lead), db: Session = Depends(get_db)):
     assert_project_access(project_id, user, db)
     entry = get_entry(db, project_id, entry_id)
     entry.verification_status = 'pending'
     entry.verification_error = None
+    enqueue(db, 'wallet_verify', {'entry_id': entry.id, 'iv': entry.iv, 'actor_id': user.id}, project_id=project_id)
     record(db, user, 'wallet.verification_requested', request, project_id=project_id, detail={'provider': entry.provider})
     db.commit()
-    tasks.add_task(verify_entry, entry.id, entry.iv, user.id)
     return {'status': 'pending'}
 
 

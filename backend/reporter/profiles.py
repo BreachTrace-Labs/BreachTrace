@@ -57,7 +57,7 @@ PLATFORM_PROFILES: dict[str, _PlatformProfile] = {
         name="Google Cloud",
         audit_log="Cloud Audit Logs",
         blind_spot=(
-            "Admin Activity logs are always on, but Data Access logs — which cover object reads — must be explicitly enabled per service and are off by default."
+            "Activity is matched to a service account, not necessarily a particular key. Data Access logs depend on the service and logging configuration."
         ),
         identity_term="service account email",
         vocabulary=(
@@ -75,7 +75,7 @@ PLATFORM_PROFILES: dict[str, _PlatformProfile] = {
         name="Microsoft Azure",
         audit_log="Activity Log",
         blind_spot=(
-            "The Azure Activity Log records control-plane operations only. Data-plane reads, such as downloading a blob, do not appear unless diagnostic settings were configured in advance."
+            "Azure Activity Log records are matched to an application identity, not a particular client secret. Activity Log covers control-plane operations only; data-plane records require separate logging."
         ),
         identity_term="client ID (app registration)",
         vocabulary=(
@@ -85,7 +85,7 @@ PLATFORM_PROFILES: dict[str, _PlatformProfile] = {
             "buckets or service account keys."
         ),
         revoke_command="az ad app credential delete --id <CLIENT_ID> --key-id <KEY_ID>",
-        review_command="az monitor activity-log list --caller <CLIENT_ID>",
+        review_command="az monitor activity-log list (review caller and application identity claims)",
     ),
     # Without these two, a Stripe or Twilio incident fell back to the AWS
     # profile and told the developer to run `aws iam delete-access-key`.

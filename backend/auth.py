@@ -54,6 +54,7 @@ def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(
     user = db.get(User, user_id)
     if user is None or not user.is_active:
         raise HTTPException(status_code=401, detail="Invalid or expired token", headers={"WWW-Authenticate": "Bearer"})
+    ensure_single_organisation(db)
     return user
 
 
@@ -63,11 +64,19 @@ def get_active_user(user: User = Depends(get_current_user)) -> User:
     return user
 
 
-def require_single_organisation(user: User = Depends(get_active_user), db: Session = Depends(get_db)) -> User:
-    # Legacy research, search and scan data have no organisation ownership yet.
+def ensure_single_organisation(db: Session) -> None:
+    """Fail closed on databases that predate the single-organisation constraint."""
     from db.models import Organisation
     if db.query(Organisation.id).count() != 1:
-        raise HTTPException(status_code=403, detail="This feature requires a single-organisation deployment")
+        raise HTTPException(status_code=503, detail="BreachTrace requires exactly one organisation. Check the installation database.")
+
+
+def require_single_organisation_database(db: Session = Depends(get_db)) -> None:
+    ensure_single_organisation(db)
+
+
+def require_single_organisation(user: User = Depends(get_active_user)) -> User:
+    return user
     return user
 
 

@@ -46,12 +46,11 @@ def _what(facts: dict) -> str:
 def deterministic_sections(facts: dict) -> dict:
     """Template prose built purely from facts — always grounded, never fluent."""
     audit_log = facts["audit_log"]
-    duration = facts["exposure_duration"]
     severity = facts["severity"]
 
     if facts["event_count"] == 0:
         summary = (
-            f"{_what(facts)} was exposed in a public repository for {duration}. "
+            f"{_what(facts)} was detected in repository content. The commit timestamp is an estimated exposure start; rotation is not confirmed by this report. "
             f"No activity was recorded in {audit_log} after the detected exposure in the collected window. "
             "This does not prove the credential went unused, so treat it as compromised."
         )
@@ -66,7 +65,7 @@ def deterministic_sections(facts: dict) -> dict:
 
     worst = next(iter(facts["categories"]), None)
     summary = (
-        f"{_what(facts)} was exposed in a public repository for {duration}. "
+        f"{_what(facts)} was detected in repository content. The commit timestamp is an estimated exposure start; rotation is not confirmed by this report. "
         f"{audit_log} recorded {facts['event_count']} event(s) between "
         f"{facts['first_event']} and {facts['last_event']}"
         + (f", the most serious being {CATEGORY_LABELS.get(worst, worst)}" if worst else "")

@@ -14,6 +14,7 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
     VARCHAR,
+    text,
 )
 from sqlalchemy import String
 from sqlalchemy.dialects.postgresql import JSONB
@@ -630,6 +631,7 @@ class Organisation(Base):
     name = Column(String(120), nullable=False)
     slug = Column(String(60), nullable=False, unique=True)
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    __table_args__ = (Index("uq_organisation_singleton", text("(1)"), unique=True),)
 
 
 class User(Base):
@@ -705,6 +707,30 @@ class NotificationConfig(Base):
     __table_args__ = (
         CheckConstraint("channel IN ('email','slack')", name="ck_notification_channel"),
         CheckConstraint("min_severity IN ('low','medium','high','critical')", name="ck_notification_severity"),
+    )
+
+
+class BackgroundJob(Base):
+    """Durable work item. Payloads contain references, never provider secrets."""
+    __tablename__ = "background_jobs"
+    id = Column(String(36), primary_key=True, default=_new_id)
+    kind = Column(String(40), nullable=False)
+    project_id = Column(String(36), ForeignKey("projects.id"), nullable=True, index=True)
+    payload = Column(JSONB, nullable=False)
+    result = Column(JSONB, nullable=True)
+    status = Column(String(20), nullable=False, default="queued", server_default="queued")
+    attempts = Column(Integer, nullable=False, default=0, server_default="0")
+    max_attempts = Column(Integer, nullable=False, default=3, server_default="3")
+    available_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    lease_until = Column(DateTime(timezone=True), nullable=True)
+    lease_token = Column(String(36), nullable=True)
+    last_error = Column(String(300), nullable=True)
+    dedupe_key = Column(String(160), nullable=True, unique=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    __table_args__ = (
+        CheckConstraint("status IN ('queued','running','complete','failed')", name="ck_background_job_status"),
+        Index("ix_background_jobs_due", "status", "available_at"),
     )
 
 

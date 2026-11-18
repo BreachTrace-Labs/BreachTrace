@@ -8,7 +8,7 @@ from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from auth import create_access_token, get_current_user, hash_password, verify_password
+from auth import create_access_token, ensure_single_organisation, get_current_user, hash_password, verify_password
 from db.database import get_db
 from db.models import Organisation, User
 from audit import record
@@ -54,11 +54,11 @@ def register(body: Registration, db: Session = Depends(get_db)):
         raise HTTPException(status_code=422, detail=str(exc))
     org = Organisation(name=body.org_name.strip(), slug=body.slug)
     db.add(org)
-    db.flush()
-    user = User(organisation_id=org.id, email=body.admin_email.lower(), full_name=body.admin_full_name.strip(),
-                role="org_admin", hashed_password=password)
-    db.add(user)
     try:
+        db.flush()
+        user = User(organisation_id=org.id, email=body.admin_email.lower(), full_name=body.admin_full_name.strip(),
+                    role="org_admin", hashed_password=password)
+        db.add(user)
         db.commit()
     except IntegrityError:
         db.rollback()
@@ -72,6 +72,7 @@ def token(request: Request, form: OAuth2PasswordRequestForm = Depends(), db: Ses
     user = db.query(User).filter(User.email == form.username.strip().lower()).first()
     if not user or not user.is_active or not verify_password(form.password, user.hashed_password):
         raise HTTPException(status_code=401, detail="Invalid credentials", headers={"WWW-Authenticate": "Bearer"})
+    ensure_single_organisation(db)
     access_token = create_access_token(user.id)
     user.last_login_at = datetime.now(timezone.utc)
     record(db, user, "auth.login", request)

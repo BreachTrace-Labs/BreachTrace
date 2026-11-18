@@ -54,6 +54,20 @@ def load_profile():
     load_dotenv(PROFILE, override=True)
 
 
+def ensure_local_organisation_index(engine):
+    """Upgrade ORM-bootstrapped local databases without stamping migrations."""
+    from sqlalchemy import inspect, text
+    inspector = inspect(engine)
+    if 'uq_organisation_singleton' in {item['name'] for item in inspector.get_indexes('organisations')}:
+        return
+    if inspector.has_table('alembic_version'):
+        raise SystemExit('This database uses Alembic. Apply migrations before local bootstrap.')
+    with engine.begin() as connection:
+        if connection.execute(text('SELECT COUNT(*) FROM organisations')).scalar_one() > 1:
+            raise SystemExit('This database contains multiple organisations. Back it up and resolve them before local bootstrap.')
+        connection.execute(text('CREATE UNIQUE INDEX IF NOT EXISTS uq_organisation_singleton ON organisations ((1))'))
+
+
 def bootstrap():
     load_profile()
     from sqlalchemy.engine import make_url
@@ -73,6 +87,7 @@ def bootstrap():
 
     # Fresh, dedicated test DB only. Do not stamp or modify the migration chain.
     Base.metadata.create_all(engine)
+    ensure_local_organisation_index(engine)
     with SessionLocal() as db:
         existing = db.query(IncidentRecord).filter(IncidentRecord.commit_hash == "synthetic-local-test-v1").first()
         if existing is None:

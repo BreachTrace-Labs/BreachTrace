@@ -1,4 +1,4 @@
-"""Best-effort SMTP and Slack delivery for project notifications.
+"""SMTP and Slack notification rendering and durable delivery.
 
 Webhook delivery and incident processing must not depend on third-party
 notification services. All transport errors are deliberately logged without
@@ -211,20 +211,80 @@ def notify_incident_created(incident: IncidentRecord, project: Project, db: Sess
             logger.warning("Project notification failed (%s)", type(exc).__name__)
 
 
+def queue_incident_created(db: Session, incident: IncidentRecord) -> None:
+    """Queue one independently retryable delivery for each eligible destination."""
+    from background_jobs import enqueue
+    if not incident.project_id:
+        return
+    severity = _severity(incident)
+    rank = _RANK.get(severity)
+    for item in db.query(NotificationConfig).filter_by(project_id=incident.project_id, enabled=True).all():
+        threshold = _RANK.get(item.min_severity, 1)
+        if (rank is not None and rank < threshold) or (rank is None and item.min_severity != 'low'):
+            continue
+        from db.models import BackgroundJob
+        dedupe_key = f'incident:{incident.incident_id}:config:{item.id}'
+        if db.query(BackgroundJob.id).filter_by(dedupe_key=dedupe_key).first():
+            continue
+        enqueue(db, 'notification', {'type': 'incident_created', 'incident_id': incident.incident_id,
+                                    'config_id': item.id, 'channel': item.channel},
+                project_id=incident.project_id, dedupe_key=dedupe_key)
+
+
 def notify_incident_created_by_id(incident_id: str) -> None:
-    """Reload notification data in its own session for background task use."""
-    db = SessionLocal()
-    try:
+    """Persist delivery jobs after collection; no provider call occurs here."""
+    with SessionLocal() as db:
         incident = db.get(IncidentRecord, incident_id)
-        if incident is None or incident.project_id is None:
-            return
-        project = db.get(Project, incident.project_id)
-        if project is not None:
-            notify_incident_created(incident, project, db)
-    except Exception as exc:
-        logger.warning("Incident notification processing failed (%s)", type(exc).__name__)
-    finally:
-        db.close()
+        if incident is not None:
+            queue_incident_created(db, incident)
+            db.commit()
+
+
+def deliver_job(payload: dict) -> str:
+    """Deliver one job; provider failures are retried by the job worker."""
+    with SessionLocal() as db:
+        if payload['type'] == 'welcome':
+            from db.models import Organisation
+            user = db.get(User, payload['user_id'])
+            if user is None or not user.is_active or not user.must_change_password:
+                return 'skipped'
+            org = db.get(Organisation, user.organisation_id)
+            password = decrypt_blob(payload['ciphertext'], payload['iv'])['temporary_password']
+            if not send_welcome_email(user, password, org.name if org else 'your organisation'):
+                raise RuntimeError('Email delivery failed')
+            return 'sent'
+        incident = db.get(IncidentRecord, payload.get('incident_id'))
+        if payload['type'] == 'incident_assigned':
+            user = db.get(User, payload['user_id'])
+            if incident is None or user is None or not user.is_active:
+                return 'skipped'
+            if not notify_incident_assigned(incident, user):
+                raise RuntimeError('Email delivery failed')
+            return 'sent'
+        if payload['type'] != 'incident_created':
+            raise ValueError('Unknown notification type')
+        item = db.get(NotificationConfig, payload['config_id'])
+        if incident is None or item is None or not item.enabled or incident.project_id != item.project_id:
+            return 'skipped'
+        project = db.get(Project, item.project_id)
+        if project is None or project.is_deleted:
+            return 'skipped'
+        severity, repo, link = _incident_summary(incident, project)
+        if item.channel == 'email':
+            safe_project = re.sub(r'[\r\n]+', ' ', project.name)[:120]
+            subject = f'[BreachTrace] New {severity} incident in {safe_project}'
+            plain = (f'Severity: {severity.title()}\nProject: {project.name}\n'
+                     f'Credential family: {incident.credential_type}\nRepository: {repo}\n'
+                     f'Commit: {incident.commit_hash or "Unavailable"}\nIncident: {link}')
+            sent = send_email(item.target, subject, _incident_html(incident, project, severity, repo, link), plain)
+        elif item.channel == 'slack':
+            iv, ciphertext = item.target.split('.', 1)
+            sent = send_slack(decrypt_blob(ciphertext, iv)['url'], _slack_payload(incident, project, severity, repo, link))
+        else:
+            raise ValueError('Unknown notification channel')
+        if not sent:
+            raise RuntimeError('Notification delivery failed')
+        return 'sent'
 
 
 def notify_incident_assigned(incident: IncidentRecord, assigned_user: User) -> bool:

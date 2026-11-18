@@ -30,18 +30,18 @@ class GCPAuditLogCollector(BaseCollector):
 
     platform = "gcp"
 
-    def __init__(self) -> None:
+    def __init__(self, reader: dict | None = None) -> None:
         import config
         from google.cloud import logging as gcp_logging
         from google.oauth2 import service_account
 
-        creds_info: dict[str, Any] = json.loads(config.GCP_SERVICE_ACCOUNT_JSON)
+        creds_info: dict[str, Any] = json.loads(reader['service_account_json'] if reader is not None else config.GCP_SERVICE_ACCOUNT_JSON)
         credentials = service_account.Credentials.from_service_account_info(
             creds_info,
             scopes=["https://www.googleapis.com/auth/logging.read"],
         )
         self._client = gcp_logging.Client(
-            project=config.GCP_PROJECT_ID,
+            project=creds_info['project_id'] if reader is not None else config.GCP_PROJECT_ID,
             credentials=credentials,
         )
 

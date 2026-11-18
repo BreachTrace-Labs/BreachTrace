@@ -10,8 +10,7 @@ from sqlalchemy.orm import Session
 from auth import get_active_user, hash_password, require_admin
 from audit import public as audit_public, record
 from db.database import get_db
-from db.models import AuditLog, Organisation, User
-from notifications import send_welcome_email
+from db.models import AuditLog, BackgroundJob, Organisation, User
 
 router = APIRouter(prefix="/org", tags=["organisation"])
 
@@ -95,15 +94,48 @@ def invite(body: Invite, request: Request, user: User = Depends(require_admin), 
     db.add(target)
     try:
         db.flush()
+        from background_jobs import enqueue
+        from crypto import encrypt_blob
+        try:
+            ciphertext, iv = encrypt_blob({'temporary_password': body.temporary_password})
+        except Exception:
+            raise HTTPException(503, 'Configure wallet encryption before inviting users') from None
+        enqueue(db, 'notification', {'type':'welcome', 'channel':'email', 'user_id':target.id,
+                                     'ciphertext':ciphertext, 'iv':iv})
         record(db, user, "user.invited", request, detail={"user_id": target.id, "role": target.role})
         db.commit()
     except IntegrityError:
         db.rollback()
         raise HTTPException(409, "Email is already registered")
-    org = db.get(Organisation, user.organisation_id)
-    email_sent = send_welcome_email(target, body.temporary_password, org.name if org else "your organisation")
-    message = "User created and welcome email sent" if email_sent else "User created; email could not be sent, share the temporary password securely"
-    return {"user_id": target.id, "welcome_email_sent": email_sent, "message": message}
+    return {"user_id": target.id, "welcome_email_sent": False, "welcome_email_queued": True,
+            "message": "User created; welcome email queued."}
+
+
+@router.get('/notification-deliveries')
+def welcome_deliveries(user: User = Depends(require_admin), db: Session = Depends(get_db)):
+    rows = (db.query(BackgroundJob).filter_by(kind='notification', project_id=None)
+            .order_by(BackgroundJob.created_at.desc()).limit(100).all())
+    return [{'id': row.id, 'type': row.payload.get('type'), 'user_id': row.payload.get('user_id'), 'status': row.status,
+             'outcome': (row.result or {}).get('outcome'), 'attempts': row.attempts,
+             'max_attempts': row.max_attempts, 'last_error': row.last_error,
+             'can_retry': row.status == 'failed' and 'ciphertext' in row.payload,
+             'created_at': row.created_at} for row in rows if row.payload.get('type') == 'welcome']
+
+
+@router.post('/notification-deliveries/{job_id}/retry', status_code=202)
+def retry_welcome_delivery(job_id: str, request: Request, user: User = Depends(require_admin), db: Session = Depends(get_db)):
+    from datetime import datetime, timezone, timedelta
+    job = db.query(BackgroundJob).filter_by(id=job_id, kind='notification', project_id=None).with_for_update().first()
+    if not job or job.payload.get('type') != 'welcome':
+        raise HTTPException(404, 'Delivery not found')
+    created = job.created_at.replace(tzinfo=job.created_at.tzinfo or timezone.utc)
+    if job.status != 'failed' or 'ciphertext' not in job.payload or created < datetime.now(timezone.utc) - timedelta(hours=24):
+        raise HTTPException(409, 'This welcome email cannot be retried')
+    job.status, job.attempts, job.last_error = 'queued', 0, None
+    job.available_at = datetime.now(timezone.utc)
+    record(db, user, 'notification.retry_requested', request, detail={'delivery_id':job.id})
+    db.commit()
+    return {'status':'queued'}
 
 
 def find_target(db, actor, user_id):

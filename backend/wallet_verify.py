@@ -66,13 +66,13 @@ def _check(provider: str, credentials: dict) -> None:
         raise ValueError('Unsupported provider')
 
 
-def verify_entry(entry_id: str, expected_iv: str, actor_id: str | None = None) -> None:
+def verify_entry(entry_id: str, expected_iv: str, actor_id: str | None = None) -> bool:
     """Check one version of a wallet row; do not overwrite a newer credential."""
     db = SessionLocal()
     try:
         entry = db.get(CredentialWalletEntry, entry_id)
         if not entry or entry.iv != expected_iv:
-            return
+            return True
         provider = entry.provider
         try:
             _check(provider, decrypt_blob(entry.encrypted_blob, entry.iv))
@@ -98,7 +98,9 @@ def verify_entry(entry_id: str, expected_iv: str, actor_id: str | None = None) -
                 db.add(AuditLog(organisation_id=project.organisation_id, actor_user_id=actor_id,
                                 project_id=project.id, action='wallet.verified', detail={'provider': provider, 'status': status}))
         db.commit()
+        return status == 'ok'
     except Exception:
         db.rollback()
+        raise
     finally:
         db.close()

@@ -106,10 +106,10 @@ def test_operator_associates_only_configured_account_and_queues_collection(sqlit
     monkeypatch.setattr(config, 'TWILIO_ACCOUNT_SID', ACCOUNT)
     tasks = BackgroundTasks()
     with pytest.raises(HTTPException) as exc:
-        associate_twilio_account(incident.incident_id, TwilioAccountRequest(account_sid='AC' + '1' * 32), tasks, db)
+        associate_twilio_account(incident.incident_id, TwilioAccountRequest(account_sid='AC' + '1' * 32), tasks, None, db)
     assert exc.value.status_code == 400
     assert incident.forensic_tier == 2 and incident.principal_id is None and not tasks.tasks
-    result = associate_twilio_account(incident.incident_id, TwilioAccountRequest(account_sid=ACCOUNT), tasks, db)
+    result = associate_twilio_account(incident.incident_id, TwilioAccountRequest(account_sid=ACCOUNT), tasks, None, db)
     assert result.status == 'collecting' and incident.principal_id == ACCOUNT
     assert incident.forensic_tier == 1 and len(tasks.tasks) == 1
 

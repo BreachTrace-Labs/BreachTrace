@@ -9,7 +9,7 @@ def test_migrations_have_one_connected_head_and_no_missing_revisions():
     config = Config()
     config.set_main_option("script_location", str(Path(__file__).resolve().parents[1] / "migrations"))
     scripts = ScriptDirectory.from_config(config)
-    assert scripts.get_heads() == ["f2b31ad59101"]
+    assert scripts.get_heads() == ["7a1f43d9c208"]
     revisions = list(scripts.walk_revisions())
     assert revisions[-1].down_revision is None
     assert "37cd4df9188c" in {revision.revision for revision in revisions}

@@ -24,6 +24,7 @@ from datetime import datetime, timedelta, timezone
 from sqlalchemy.orm import Session
 
 from classifier.rules import classify_all_events
+from collection_credentials import ReaderConfigurationError, project_reader
 from collectors.aws import AWSCloudTrailCollector
 from collectors.azure import AzureActivityLogCollector
 from collectors.gcp import GCPAuditLogCollector
@@ -218,14 +219,29 @@ def run_collection_pipeline(
 
         t0 = time.monotonic()
         try:
-            collector = collector_cls()
+            incident = db.get(IncidentRecord, incident_id)
+            if incident is None:
+                logger.warning("Incident %s disappeared before collection", incident_id)
+                return
+            reader = project_reader(db, incident, platform)
+            if reader is None:
+                collector = collector_cls()
+            elif platform == 'stripe':
+                collector = collector_cls(api_key=reader['api_key'])
+                # A wallet reader must be used even if the detected key is still
+                # in memory. Preserve the mode prefix without passing the secret.
+                credential = incident.credential_hint or ''
+            else:
+                collector = collector_cls(reader=reader)
             events = collector.collect(
                 credential=credential,
                 start_time=collection_start,
                 end_time=exposure_end,
             )
         except Exception as exc:
-            if platform == "stripe":
+            if isinstance(exc, ReaderConfigurationError):
+                error_message = str(exc)
+            elif platform == "stripe":
                 # Provider exceptions can include request data or credentials.
                 if isinstance(exc, ModuleNotFoundError) and exc.name == "stripe":
                     error_message = "The Stripe SDK is not installed in the backend environment."
@@ -234,13 +250,13 @@ def run_collection_pipeline(
                     if "expired api key" in provider_message:
                         key_label = "configured Stripe reader key" if refresh_existing else "detected Stripe key"
                         error_message = (
-                            f"The {key_label} has expired. Set STRIPE_API_KEY to an active "
+                            f"The {key_label} has expired. Configure an active "
                             "Events reader for the same account and test/live mode, then refresh."
                         )
                     else:
                         error_message = (
                             "Stripe rejected authentication (HTTP 401). Check that the key is active "
-                            "and copied correctly. For refresh, set STRIPE_API_KEY to a valid reader "
+                            "and copied correctly. Configure a valid reader "
                             "for the same account and test/live mode."
                         )
                 elif type(exc).__name__ == "PermissionError":

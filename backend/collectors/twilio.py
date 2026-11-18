@@ -62,14 +62,14 @@ class TwilioUsageCollector(BaseCollector):
     """Collect bounded Messages, Calls and Monitor Events for one account."""
     platform = "twilio"
 
-    def __init__(self, account_sid: str | None = None, auth_token: str | None = None) -> None:
+    def __init__(self, account_sid: str | None = None, auth_token: str | None = None, *, reader: dict | None = None) -> None:
         from twilio.rest import Client
         import config
 
-        self.account_sid = account_sid or getattr(config, "TWILIO_ACCOUNT_SID", "")
-        token = auth_token if auth_token is not None else getattr(config, "TWILIO_AUTH_TOKEN", "")
-        key_sid = getattr(config, "TWILIO_API_KEY_SID", "") if auth_token is None else ""
-        key_secret = getattr(config, "TWILIO_API_KEY_SECRET", "") if auth_token is None else ""
+        self.account_sid = reader['account_sid'] if reader is not None else (account_sid or getattr(config, "TWILIO_ACCOUNT_SID", ""))
+        token = reader.get('auth_token', '') if reader is not None else (auth_token if auth_token is not None else getattr(config, "TWILIO_AUTH_TOKEN", ""))
+        key_sid = reader.get('api_key_sid', '') if reader is not None else (getattr(config, "TWILIO_API_KEY_SID", "") if auth_token is None else "")
+        key_secret = reader.get('api_key_secret', '') if reader is not None else (getattr(config, "TWILIO_API_KEY_SECRET", "") if auth_token is None else "")
         if not _ACCOUNT_SID_PATTERN.fullmatch(self.account_sid):
             raise ValueError("Twilio collection requires the owning Account SID (AC followed by 32 hex characters)")
         if key_sid or key_secret:

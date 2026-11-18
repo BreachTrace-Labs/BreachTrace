@@ -36,7 +36,10 @@ Start the backend and frontend in separate terminals:
 The initial profile was created with `.venv/bin/python scripts/local_dev.py prepare`.
 It preserves an existing profile. Bootstrap is restricted to the named isolated
 database and creates the current ORM schema, leaving the pre-existing migration
-chain unchanged. It preserves existing sample data instead of duplicating it.
+chain unchanged. It adds the single-organisation index to existing ORM-created
+local test databases after checking that at most one organisation exists. An
+Alembic-managed database must use migrations instead. It preserves existing sample
+data instead of duplicating it.
 
 ## Try the new features
 
@@ -54,7 +57,7 @@ Reseed them with `.venv/bin/python scripts/seed_ai_demos.py` when needed.
    Ollama must remain running. Cloud providers require your own keys entered
    in Settings; they are not needed for local testing.
 4. **Connect:** enter `https://github.com/fastapi/fastapi` in the repository URL
-   field and click **Scan current codebase**. No webhook or GitHub token is needed
+   field and click **Scan repository**. No webhook or GitHub token is needed
    for this public scan. Private repositories and webhook registration require
    a suitable GitHub token configured explicitly in the test profile and restart.
 5. **AI detection:** `/test/simulate` in API docs can accept a synthetic credential

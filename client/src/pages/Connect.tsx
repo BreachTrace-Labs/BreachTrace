@@ -141,7 +141,10 @@ const Connect: React.FC = () => {
       })
       setResult(data)
       await refresh()
-      if (data.success && scanOnConnect) setScanTrigger(value => value + 1)
+      if (data.success && scanOnConnect) {
+        setRepoUrl(selected.github_repo_url)
+        setScanTrigger(value => value + 1)
+      }
     } catch (err: unknown) {
       const msg =
         (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail ??
@@ -158,7 +161,7 @@ const Connect: React.FC = () => {
       <div>
         <h1 className="text-xl font-bold tracking-tight">Scan GitHub Repository</h1>
         <p className="mt-1 text-sm" style={{ color: 'var(--color-muted-foreground)' }}>
-          Check existing files for credential leaks. Optionally connect a webhook for future pushes.
+          Scan the current default branch for credential candidates, and optionally monitor future pushes.
         </p>
       </div>
 
@@ -169,7 +172,8 @@ const Connect: React.FC = () => {
 
       <details className="space-y-6">
         <summary className="cursor-pointer font-semibold">Monitor future commits (optional)</summary>
-        <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={scanOnConnect} onChange={e => setScanOnConnect(e.target.checked)} />Also scan the existing codebase after connecting</label>
+        <p className="text-sm text-muted-foreground">A signed push containing a qualifying credential can create an incident in Monitor. Connecting a webhook does not scan earlier commits.</p>
+        <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={scanOnConnect} onChange={e => setScanOnConnect(e.target.checked)} />Also scan the selected project's current default branch after connecting</label>
 
       {/* Step 1 — Expose the backend (ngrok) */}
       <Section step={1} title="Expose the backend for webhook delivery">

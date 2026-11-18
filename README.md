@@ -2,6 +2,8 @@
 
 BreachTrace is a research prototype for finding credential candidates in GitHub repositories and reviewing available incident evidence. It combines cloud/SaaS pattern detection, **49 AI credential families**, bounded static obfuscation recovery, optional authorized activity collection, deterministic reports, selectable report models and local evidence search.
 
+Each installation supports one organisation with multiple projects. Administrators and security leads have organisation-wide search, research and snapshot scan access; developers access their assigned projects and cannot use those organisation-wide features. The selected project does not filter organisation-wide results.
+
 A detected pattern is **not proof of a valid key or a breach**. Detection-only findings have no assessed activity or severity. Public repository scans never start provider collection automatically.
 
 - [Research paper reference: abstract, architecture, methodology and results](docs/research/paper-reference.md)
@@ -43,7 +45,7 @@ flowchart LR
     Q --> U
 ```
 
-Snapshot results are saved separately from incident/forensic records. An incident's `complete` status means processing finished; it does not confirm remediation or revocation.
+Snapshot scanning is a current-code review: candidates appear in Connect and do not create Monitor incidents or start provider collection. It does not scan Git history or establish when a credential was first exposed. Register a webhook separately to monitor future pushes. An incident's `complete` status means processing finished; it does not confirm remediation or revocation.
 
 ## Run the isolated local demo
 
@@ -105,7 +107,9 @@ Preview incidents and research metrics are synthetic. Repository scanning and mo
 
 Provider access, permissions, retention, latency, logging configuration and collector limits constrain every reconstruction. Collectors request up to 30 days of recent history through collection time. Events before detected exposure appear as context; severity, impact and report calculations use activity at or after detected exposure. Collection is not a guarantee that all actions or misuse can be identified.
 
-Stripe webhook detections query the detected key in memory. If the key cannot read Events or has been revoked, configure `STRIPE_API_KEY` with an authorized Events reader for the same Stripe account and live/test mode, restart the backend, open the incident, and choose **Refresh logs**. The optional `stripe-request-logs` Docker sidecar streams new sandbox API requests, including GETs, into an incident; it runs persistently alongside the backend and can be deployed on an always-on host. It cannot backfill old requests, stream live-mode logs, or identify which account key caused a request. See [Stripe request stream setup](docs/stripe-request-stream.md). Stripe event snapshots are reduced to identifiers and financial fields before storage. Existing codebase snapshot scans report candidates but do not start cloud forensics.
+The triggering commit time is an estimated exposure start. Ordinary incidents do not automatically confirm rotation, and records can be associated with an account or application rather than an individual key. See [exposure and attribution scope](docs/exposure-attribution.md).
+
+Project incidents use their project's verified provider wallet reader for collection and refresh. Configure a Stripe Events reader for the same account and live/test mode in the project's wallet; collection does not fall back to a global key if the connection is missing or unavailable. Legacy incidents without a project retain environment-based readers. The optional `stripe-request-logs` Docker sidecar streams new sandbox API requests, including GETs, into an incident; it runs persistently alongside the backend and can be deployed on an always-on host. It cannot backfill old requests, stream live-mode logs, or identify which account key caused a request. See [Stripe request stream setup](docs/stripe-request-stream.md). Stripe event snapshots are reduced to identifiers and financial fields before storage. Existing codebase snapshot scans report candidates but do not start cloud forensics.
 
 Repository scans cover the **current snapshot**, not Git history, submodule contents or binaries. Defaults: 10 MiB/file, 1 GiB scanned text, 200,000 files, 10,000 findings, a 2 GiB archive download limit and a 10-minute scan timeout. Downloading an archive is capped at 5 minutes. Exclusions and decoding limits are reported. See [coverage details](docs/ai-detection.md).
 
@@ -177,7 +181,7 @@ This is a local research application, not a hardened multi-tenant service. Setti
 
 ### Twilio collection
 
-Set `TWILIO_ACCOUNT_SID` to the owning account's `AC...` SID. Configure a separate reader either with `TWILIO_API_KEY_SID` (`SK...`) and `TWILIO_API_KEY_SECRET`, or with `TWILIO_AUTH_TOKEN`; do not put an API key SID in the account field. The reader must have access to Messages, Calls and Monitor Events for that same account. Restart the backend after changing the profile. If a detected API key has no unambiguous Account SID nearby, its incident stays detection-only until the operator supplies the owning account on its detail page.
+For project incidents, add the owning account's `AC...` SID and a reader API key or Auth Token to the project wallet and wait for verification. The reader needs access to Messages, Calls and Monitor Events for that account. Unassigned legacy incidents use `TWILIO_ACCOUNT_SID` and the corresponding API key or Auth Token in the backend environment. If a detected API key has no unambiguous Account SID nearby, its incident stays detection-only until the operator supplies the owning account on its detail page.
 
 The collector includes outbound messages and calls and supported Monitor Events inside the exposure window, excluding message bodies and Monitor event data. Event histories can include legitimate activity, do not establish key validity or attribution, and are limited by provider permissions, logging and retention. Missing timestamps, cross-account results, permission failures, and more than 5,000 resources of one type cause collection to fail rather than present a partial result as complete. Twilio-reported prices are grouped by currency; missing prices are marked pending. A repository snapshot only reports findings and does not start provider collection.
 

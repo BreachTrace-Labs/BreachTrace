@@ -25,7 +25,7 @@ from pydantic import BaseModel, Field, field_validator
 from sqlalchemy.orm import Session
 
 from access import accessible_project_ids, assert_project_access, incident_access
-from auth import get_active_user, require_admin_or_lead, require_single_organisation
+from auth import get_active_user, require_admin_or_lead, require_single_organisation, require_single_organisation_database
 from audit import public as audit_public, record
 from db.crud import get_incident, list_incidents, reset_incident_for_refresh
 from db.database import get_db
@@ -290,7 +290,7 @@ def _store_stripe_request_log(db: Session, incident, item: dict) -> str:
     return "added"
 
 
-@stream_router.post("/{incident_id}/stripe-request-logs", dependencies=[Depends(stripe_request_log_auth)])
+@stream_router.post("/{incident_id}/stripe-request-logs", dependencies=[Depends(stripe_request_log_auth), Depends(require_single_organisation_database)])
 def add_stripe_request_log(incident_id: str, body: StripeRequestLogIn, db: Session = Depends(get_db)):
     """Accept an explicitly associated sandbox CLI record, retaining metadata only."""
     incident = get_incident(db, incident_id)
@@ -478,11 +478,12 @@ def assign_incident(incident_id: str, body: AssignRequest, request: Request, bac
     if target is None:
         raise HTTPException(400, 'Assignee must be an active member of this project')
     incident.assigned_to = target.id
+    from background_jobs import enqueue
+    enqueue(db, 'notification', {'type': 'incident_assigned', 'incident_id': incident.incident_id,
+                                 'user_id': target.id, 'channel': 'email'}, project_id=incident.project_id)
     record(db, user, 'incident.assigned', request, project_id=incident.project_id,
            incident_id=incident.incident_id, detail={'assigned_to': target.id})
     db.commit()
-    from notifications import notify_incident_assigned_by_id
-    background_tasks.add_task(notify_incident_assigned_by_id, incident.incident_id, target.id)
     return get_incident_detail(incident_id, db)
 
 
@@ -526,12 +527,18 @@ def _queue_incident_refresh(
 
     platform = _derive_platform(incident)
 
+    from collection_credentials import ReaderConfigurationError, project_reader
+    try:
+        reader_values = project_reader(db, incident, platform)
+    except ReaderConfigurationError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from None
+
     if platform == "stripe":
         import config
         from collectors.stripe import _is_usable_key
-        reader = config.STRIPE_API_KEY
+        reader = reader_values['api_key'] if reader_values is not None else config.STRIPE_API_KEY
         if not _is_usable_key(reader):
-            raise HTTPException(status_code=422, detail="Configure STRIPE_API_KEY with a reader key for this Stripe account before refreshing.")
+            raise HTTPException(status_code=422, detail="Configure a reader key for this Stripe account before refreshing.")
         mode = re.match(r"^(?:sk|rk)_(live|test)_", incident.credential_hint or "")
         if mode and f"_{mode.group(1)}_" not in reader:
             raise HTTPException(status_code=422, detail="The configured Stripe reader key uses a different live/test mode from the detected key.")
@@ -559,21 +566,16 @@ def _queue_incident_refresh(
         "azure": "Azure Activity Log query started.",
         # The leaked Stripe key is never stored, so a refresh reads the account
         # through the configured key.
-        "stripe": "Stripe Events query started using STRIPE_API_KEY.",
+        "stripe": "Stripe Events query started using the configured reader.",
         "twilio": "Twilio Messages, Calls and Monitor Events query started.",
     }.get(platform, "Log query started.")
 
     if user is not None and request is not None:
         record(db, user, 'incident.refreshed', request, project_id=incident.project_id, incident_id=incident.incident_id)
-    reset_incident_for_refresh(db, incident_id)
-    background_tasks.add_task(
-        run_collection_pipeline,
-        incident.incident_id,
-        credential,
-        incident.exposure_start,
-        platform=platform,
-        refresh_existing=True,
-    )
+    from background_jobs import enqueue
+    reset_incident_for_refresh(db, incident_id, commit=False)
+    enqueue(db, 'incident_collect', {'incident_id': incident.incident_id, 'notify': False}, project_id=incident.project_id)
+    db.commit()
 
     return RefreshResponse(
         incident_id=incident.incident_id,
@@ -606,13 +608,19 @@ def associate_twilio_account(incident_id: str, body: TwilioAccountRequest,
                              background_tasks: BackgroundTasks, request: Request, db: Session = Depends(get_db),
                              user: User = Depends(require_admin_or_lead)):
     """Associate an operator-confirmed account with a detected key and collect its evidence."""
-    import config
     incident = get_incident(db, incident_id)
     if incident is None:
         raise HTTPException(404, "Incident not found")
     if incident.credential_type != "twilio_api_key" or incident.forensic_tier != 2:
         raise HTTPException(400, "Only Twilio API key detections without an account can be associated")
-    if not re.fullmatch(r"AC[0-9a-fA-F]{32}", config.TWILIO_ACCOUNT_SID or "") or body.account_sid.lower() != config.TWILIO_ACCOUNT_SID.lower():
+    from collection_credentials import ReaderConfigurationError, project_reader
+    import config
+    try:
+        reader = project_reader(db, incident, 'twilio')
+    except ReaderConfigurationError as exc:
+        raise HTTPException(422, str(exc)) from None
+    account_sid = reader['account_sid'] if reader is not None else config.TWILIO_ACCOUNT_SID
+    if not re.fullmatch(r"AC[0-9a-fA-F]{32}", account_sid or "") or body.account_sid.lower() != account_sid.lower():
         raise HTTPException(400, "Account SID must match the configured Twilio reader account")
     incident.principal_id = body.account_sid
     incident.forensic_tier = 1
@@ -632,8 +640,13 @@ def associate_azure_application(incident_id: str, body: AzureApplicationRequest,
         raise HTTPException(404, "Incident not found")
     if incident.credential_type != "azure_client_secret" or incident.forensic_tier != 2:
         raise HTTPException(400, "Only Azure client secret detections without an application can be associated")
+    from collection_credentials import ReaderConfigurationError, project_reader
     import config
-    if not all((config.AZURE_TENANT_ID, config.AZURE_CLIENT_ID, config.AZURE_CLIENT_SECRET, config.AZURE_SUBSCRIPTION_ID)):
+    try:
+        reader = project_reader(db, incident, 'azure')
+    except ReaderConfigurationError as exc:
+        raise HTTPException(422, str(exc)) from None
+    if reader is None and not all((config.AZURE_TENANT_ID, config.AZURE_CLIENT_ID, config.AZURE_CLIENT_SECRET, config.AZURE_SUBSCRIPTION_ID)):
         raise HTTPException(422, "Configure the Azure Activity Log reader on the backend before collecting activity")
     incident.principal_id = str(body.client_id)
     incident.forensic_tier = 1

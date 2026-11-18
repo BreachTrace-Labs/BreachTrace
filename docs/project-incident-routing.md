@@ -1,5 +1,9 @@
 # Project incident routing
 
+BreachTrace uses one organisation per installation and database. The setup flow creates the single organisation; the database constraint prevents a second one. Multiple projects and users belong to that organisation. Administrators and security leads can access all of its projects; developers can access only projects where they are members.
+
+Search, research and repository snapshot scans are **organisation-wide** and available only to administrators and security leads. Choosing a project in the navigation does not filter these features. Their results may include legacy unassigned records created in this installation. Developers cannot call these endpoints. Only import data belonging to this organisation into the installation.
+
 Each project owns one GitHub repository. Register its webhook from **Connect**, using an HTTPS URL ending in `/webhook/github`. Registration creates or updates the GitHub hook and stores a separate encrypted project secret. The backend uses `WALLET_ENCRYPTION_KEY` to encrypt webhook secrets; preserve this key across restarts and deployments.
 
 For manual registration, choose a secret of at least 16 characters, configure it in GitHub, and save the same value in Connect for the selected project. Saving a manual secret replaces that project's previous secret; GitHub must be updated to match. GitHub deliveries do not use a JWT. The backend finds the project by the payload's repository name and checks its HMAC signature before processing the push. Unknown repositories are ignored.
@@ -8,4 +12,4 @@ New webhook incidents and simulations belong to a project. Developers can list a
 
 Incidents created before projects existed remain unassigned until an admin associates them. On **Projects & team**, select the project and use **Associate older incidents**. Only unassigned records whose GitHub repository matches the project are included. Synthetic records and records without a matching GitHub repository remain unassigned.
 
-Search, research and repository snapshot scans remain restricted to admins and security leads and are not project-filtered. They are disabled if the database contains more than one organisation because their underlying data is not yet scoped. The credential wallet is not yet connected to incident collection; collectors continue to use their existing provider configuration.
+Project incidents use their project's verified provider wallet entry for collection; legacy incidents without a project use backend environment configuration. Run the database migration before starting this version on an existing database. If it contains more than one organisation, the migration stops without deleting or merging data; back up the database and resolve ownership before retrying. This scope model is not multi-tenant isolation.

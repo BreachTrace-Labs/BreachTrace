@@ -33,6 +33,7 @@ def create_incident(
     forensic_tier: int = 1,
     unavailable_reason: str | None = None,
     project_id: str | None = None,
+    commit: bool = True,
 ) -> IncidentRecord:
     """Insert a new incident row and return the persisted object."""
     incident = IncidentRecord(
@@ -55,8 +56,11 @@ def create_incident(
         gdpr_flag=False,
     )
     db.add(incident)
-    db.commit()
-    db.refresh(incident)
+    if commit:
+        db.commit()
+        db.refresh(incident)
+    else:
+        db.flush()
     return incident
 
 
@@ -93,7 +97,7 @@ def set_exposure_end(db: Session, incident_id: str, end_time: datetime) -> None:
         db.commit()
 
 
-def reset_incident_for_refresh(db: Session, incident_id: str) -> IncidentRecord | None:
+def reset_incident_for_refresh(db: Session, incident_id: str, *, commit: bool = True) -> IncidentRecord | None:
     """
     Clear derived forensic output before a manual CloudTrail refresh.
 
@@ -116,8 +120,11 @@ def reset_incident_for_refresh(db: Session, incident_id: str) -> IncidentRecord 
     incident.remediation_steps = []
     incident.gdpr_flag = False
     incident.financial_impact = None
-    db.commit()
-    db.refresh(incident)
+    if commit:
+        db.commit()
+        db.refresh(incident)
+    else:
+        db.flush()
     return incident
 
 

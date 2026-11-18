@@ -26,6 +26,7 @@ from db.models import User
 from detector.match_resolver import match_credential_value, resolve_match
 from detector.scanner import scan
 from pipeline import run_collection_pipeline
+from background_jobs import enqueue
 from rag.index import index_incident_in_background
 from window.calculator import is_key_revoked
 
@@ -147,6 +148,7 @@ async def simulate(
             forensic_tier=resolved.forensic_tier,
             unavailable_reason=resolved.unavailable_reason,
             project_id=project.id,
+            commit=False,
         )
         logger.info(
             "Simulated incident created: %s (platform=%s tier=%s)",
@@ -156,21 +158,16 @@ async def simulate(
         )
 
         if resolved.is_collectable:
-            background_tasks.add_task(
-                run_collection_pipeline,
-                incident.incident_id,
-                resolved.credential,
-                exposure_start,
-                platform=resolved.platform,
-            )
+            enqueue(db, 'incident_collect', {'incident_id': incident.incident_id, 'notify': False}, project_id=project.id)
+            db.commit()
         else:
             # Tier 2: no queryable audit log, so collection would just produce an
             # empty timeline indistinguishable from "the key was never used".
             # Finalise immediately with the reason recorded instead.
+            enqueue(db, 'incident_index', {'incident_id': incident.incident_id}, project_id=project.id)
             finalize_non_forensic_incident(
                 db, incident.incident_id, resolved.unavailable_reason
             )
-            background_tasks.add_task(index_incident_in_background, incident.incident_id)
 
         # Start revocation monitor if a secret was provided.
         if body.secret_access_key and resolved.platform == "aws":

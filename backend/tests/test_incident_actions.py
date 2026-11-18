@@ -10,6 +10,7 @@ from db.models import AuditLog
 @pytest.fixture
 def environment(sqlite_factory, monkeypatch):
     monkeypatch.setenv('JWT_SECRET_KEY','x'*64)
+    monkeypatch.setenv('WALLET_ENCRYPTION_KEY','12'*32)
     monkeypatch.setenv('BREACHTRACE_LOCAL_TEST_MODE','true')
     from main import app
     def database():
@@ -68,7 +69,13 @@ def test_refresh_and_snapshot_start_are_audited(environment, monkeypatch, tmp_pa
     token=client.post('/auth/token',data={'username':'admin@example.com','password':'admin password'}).json()['access_token']
     admin={'Authorization':'Bearer '+token}
     project=client.post('/projects',headers=admin,json={'name':'app','github_repo_url':'https://github.com/acme/app'}).json()['id']
+    from crypto import encrypt_blob
+    from db.models import CredentialWalletEntry
+    ciphertext, iv = encrypt_blob({'access_key_id':'AKIA' + 'A' * 16, 'secret_access_key':'secret', 'region':'us-east-1'})
     with factory() as db:
+        db.add(CredentialWalletEntry(project_id=project, provider='aws', encrypted_blob=ciphertext, iv=iv,
+                                     created_by=client.get('/auth/me', headers=admin).json()['id'], verification_status='ok'))
+        db.commit()
         incident=create_incident(db,credential_type='aws_access_key',credential_hint='AKIA****TEST',access_key_id='AKIA1234567890123456',repo_url='https://github.com/acme/app',commit_hash='a'*40,exposure_start=datetime.now(timezone.utc),project_id=project)
         incident_id=incident.incident_id
     monkeypatch.setattr(incidents,'run_collection_pipeline',lambda *args, **kwargs: None)

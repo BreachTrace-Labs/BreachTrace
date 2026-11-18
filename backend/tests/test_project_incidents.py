@@ -141,7 +141,13 @@ def test_azure_secret_requires_authorized_explicit_application_association(clien
     token = client.post('/auth/token', data={'username':'admin@example.com','password':'admin password'}).json()['access_token']
     headers = {'Authorization':'Bearer ' + token}
     project = client.post('/projects', headers=headers, json={'name':'App','github_repo_url':'https://github.com/acme/app'}).json()['id']
+    from crypto import encrypt_blob
+    from db.models import CredentialWalletEntry
+    ciphertext, iv = encrypt_blob({'tenant_id': 'tenant', 'client_id': 'reader', 'client_secret': 'secret', 'subscription_id': 'sub'})
     with factory() as db:
+        db.add(CredentialWalletEntry(project_id=project, provider='azure', encrypted_blob=ciphertext, iv=iv,
+                                     created_by=client.get('/auth/me', headers=headers).json()['id'], verification_status='ok'))
+        db.commit()
         incident = create_incident(db, credential_type='azure_client_secret', credential_hint='masked',
                                    repo_url='https://github.com/acme/app', commit_hash='a' * 40, exposure_start=datetime.now(timezone.utc),
                                    forensic_tier=2, project_id=project)

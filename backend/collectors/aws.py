@@ -230,12 +230,16 @@ class AWSCloudTrailCollector(BaseCollector):
 
     platform = "aws"
 
-    def __init__(self) -> None:
+    def __init__(self, reader: dict | None = None) -> None:
+        reader = reader if reader is not None else {
+            'region': config.AWS_REGION, 'access_key_id': config.AWS_ACCESS_KEY_ID,
+            'secret_access_key': config.AWS_SECRET_ACCESS_KEY,
+        }
         self._client = boto3.client(
             "cloudtrail",
-            region_name=config.AWS_REGION,
-            aws_access_key_id=config.AWS_ACCESS_KEY_ID,
-            aws_secret_access_key=config.AWS_SECRET_ACCESS_KEY,
+            region_name=reader['region'],
+            aws_access_key_id=reader['access_key_id'],
+            aws_secret_access_key=reader['secret_access_key'],
         )
 
     # ------------------------------------------------------------------
