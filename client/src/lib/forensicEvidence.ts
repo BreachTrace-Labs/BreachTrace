@@ -6,6 +6,11 @@ export function inExposureWindow(events: ForensicEvent[], start: string, end: st
   return events.filter(event => { const timestamp = Date.parse(event.timestamp); return Number.isFinite(timestamp) && timestamp >= from && timestamp <= until })
 }
 
+/** Show available history when no records fall in the estimated window. */
+export function initialEvidenceScope(incident: Pick<IncidentRecord, 'events' | 'exposure_start' | 'exposure_end'>): 'window' | 'history' {
+  return incident.events.length > 0 && inExposureWindow(incident.events, incident.exposure_start, incident.exposure_end).length === 0 ? 'history' : 'window'
+}
+
 /** Used only in synthetic preview, where the backend assessment is unavailable. */
 export function previewBlastRadius(incident: IncidentRecord): DynamicBlastRadius {
   const events = inExposureWindow(incident.events, incident.exposure_start, incident.exposure_end)

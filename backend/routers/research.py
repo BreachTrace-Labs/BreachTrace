@@ -9,17 +9,74 @@ import uuid
 from datetime import datetime
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import AliasChoices, BaseModel, Field, field_validator
 from sqlalchemy.orm import Session
 
 from db.crud import get_incident
 from db.database import get_db
-from db.models import VALID_PLATFORMS, ExperimentRun
+from db.models import VALID_PLATFORMS, ExperimentRun, BackgroundJob, User
 from redaction import mask_identifier
 from research.analysis import compare_platforms, latency_by_platform
 
 router = APIRouter(prefix="/research", tags=["research"])
+
+
+class BenchmarkRequest(BaseModel):
+    models: list[str] = Field(min_length=1, max_length=4)
+    cases: int = Field(default=4, ge=1, le=12)
+    seed: int = Field(default=20261103, ge=0, le=2147483647)
+
+    @field_validator('models')
+    @classmethod
+    def validate_models(cls, values):
+        if len(set(values)) != len(values) or any(not v.strip() or len(v) > 200 or any(c in v for c in '\r\n') for v in values):
+            raise ValueError('Select distinct installed model names')
+        return values
+
+
+def installed_ollama_models():
+    import requests
+    try:
+        session = requests.Session()
+        session.trust_env = False
+        response = session.get('http://127.0.0.1:11434/api/tags', timeout=5, allow_redirects=False)
+        response.raise_for_status()
+        models = response.json()['models']
+        return [{'name': row['name'], 'size': row.get('size'), 'digest': row.get('digest')} for row in models if isinstance(row, dict) and isinstance(row.get('name'), str)]
+    except Exception:
+        raise HTTPException(503, 'Local Ollama is unavailable. Start Ollama and install models before comparing.') from None
+
+
+@router.get('/model-benchmark/models')
+def benchmark_models(request: Request):
+    from routers.settings import local_operator
+    local_operator(request)
+    return {'models': installed_ollama_models()}
+
+
+@router.post('/model-benchmark', status_code=202)
+def start_model_benchmark(body: BenchmarkRequest, request: Request, db: Session = Depends(get_db)):
+    from routers.settings import local_operator
+    from background_jobs import enqueue
+    local_operator(request)
+    available = {model['name'] for model in installed_ollama_models()}
+    if not set(body.models).issubset(available):
+        raise HTTPException(422, 'Every selected model must already be installed in local Ollama.')
+    existing = db.query(BackgroundJob).filter(BackgroundJob.kind == 'model_benchmark', BackgroundJob.status.in_(['queued', 'running'])).first()
+    if existing:
+        raise HTTPException(409, 'A model comparison is already running.')
+    job = enqueue(db, 'model_benchmark', {'models': body.models, 'cases': body.cases, 'seed': body.seed}, max_attempts=1)
+    db.commit()
+    return {'id': job.id, 'status': job.status}
+
+
+@router.get('/model-benchmark/latest')
+def latest_model_benchmark(request: Request, db: Session = Depends(get_db)):
+    from routers.settings import local_operator
+    local_operator(request)
+    job = db.query(BackgroundJob).filter_by(kind='model_benchmark').order_by(BackgroundJob.created_at.desc()).first()
+    return {'id': job.id, 'status': job.status, 'result': job.result, 'error': job.last_error, 'created_at': job.created_at} if job else None
 
 
 class ExperimentRunOut(BaseModel):

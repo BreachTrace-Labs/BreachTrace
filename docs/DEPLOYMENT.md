@@ -15,7 +15,7 @@ Set the first result as `JWT_SECRET_KEY` and the second as `WALLET_ENCRYPTION_KE
 
 Set `FRONTEND_ORIGIN` to the browser origin, including scheme and port, for example `https://breachtrace.example.com`. Separate multiple explicitly trusted origins with commas. Set `APP_URL` to the reachable frontend URL used in email links. The local defaults allow the two Vite loopback origins on port 5173. Configure `SMTP_HOST`, `SMTP_PORT`, `SMTP_FROM`, and any SMTP credentials to enable email; see [notifications.md](notifications.md).
 
-Set `GITHUB_TOKEN` to a token authorized for the repositories you need. GitHub webhook delivery requires an externally reachable HTTPS URL. Each project uses its own encrypted webhook secret. The `/webhook/github` route validates GitHub's HMAC signature and does not require a JWT.
+Save a repository token for each project in Connect → Project GitHub connection; no `GITHUB_TOKEN` environment value is needed for project workflows. GitHub webhook delivery requires an externally reachable HTTPS URL. Each project uses its own encrypted webhook secret. The `/webhook/github` route validates GitHub's HMAC signature and does not require a JWT.
 
 The current configuration validation requires the AWS, experiment, GitHub, database, and environment variables listed in `backend/config.py`. Set up only credentials you are authorized to use. `BREACHTRACE_LOCAL_TEST_MODE=true` relaxes the required provider settings for an isolated local test environment; it does not configure those providers.
 

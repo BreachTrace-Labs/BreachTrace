@@ -181,3 +181,107 @@ def test_github_invitation_requires_configuration_and_verified_email(app_client,
     assert notifications.deliver_job(payload) == 'skipped'
     assert client.delete('/org/users/' + response.json()['user_id'], headers=admin).status_code == 200
     assert client.post('/auth/github/exchange', json=exchange).status_code == 403
+
+
+def test_exposure_observations_are_attributed_and_do_not_close_window(app_client):
+    from datetime import datetime, timezone, timedelta
+    from db.crud import create_incident
+    from db.models import IncidentRecord
+    client, factory = app_client
+    client.post('/auth/register', json={'org_name':'Acme', 'slug':'acme', 'admin_email':'admin@example.com',
+                                      'admin_password':'admin password', 'admin_full_name':'Admin'})
+    admin = login(client, 'admin@example.com', 'admin password')
+    project = client.post('/projects', headers=admin, json={'name':'App','github_repo_url':'https://github.com/acme/app'}).json()['id']
+    with factory() as db:
+        incident = create_incident(db, credential_type='aws_access_key', credential_hint='AKIA****TEST',
+                                   repo_url='https://github.com/acme/app', commit_hash='a' * 40,
+                                   exposure_start=datetime.now(timezone.utc) - timedelta(days=1), project_id=project)
+        incident_id = incident.incident_id
+    path = f'/incidents/{incident_id}/exposure-observations'
+    body = {'kind':'revoked', 'observed_at': datetime.now(timezone.utc).isoformat(),
+            'source':'Provider audit record 123', 'confidence':'high'}
+    assert client.post(path, json=body).status_code == 401
+    assert client.post(path, headers=admin, json={**body, 'observed_at':'2025-01-01T12:00:00'}).status_code == 422
+    assert client.post(path, headers=admin, json={**body, 'observed_at':(datetime.now(timezone.utc) + timedelta(days=1)).isoformat()}).status_code == 422
+    result = client.post(path, headers=admin, json=body)
+    assert result.status_code == 201, result.text
+    assert result.json()['verification'] == 'operator_reported'
+    assert result.json()['recorded_by'] == 'Admin' and result.json()['credential_hint'] == 'AKIA****TEST'
+    assert len(client.get(path, headers=admin).json()) == 1
+    with factory() as db:
+        assert db.get(IncidentRecord, incident_id).exposure_end is None
+    user_id = client.post('/org/users/invite', headers=admin, json={'email':'dev@example.com', 'full_name':'Dev',
+                          'role':'developer', 'temporary_password':'developer password'}).json()['user_id']
+    dev = login(client, 'dev@example.com', 'developer password')
+    client.post('/auth/change-password', headers=dev, json={'current_password':'developer password', 'new_password':'new developer password'})
+    assert client.get(path, headers=dev).status_code == 403
+    client.post(f'/projects/{project}/members', headers=admin, json={'user_id':user_id})
+    assert client.get(path, headers=dev).status_code == 200
+    assert client.post(path, headers=dev, json=body).status_code == 403
+
+
+def test_gcp_key_association_labels_events_without_changing_them(app_client):
+    from datetime import datetime, timezone
+    from db.crud import create_incident, save_forensic_events
+    from db.models import GCPKeyAssociation
+    from normalizer.schema import ForensicEvent
+    client, factory = app_client
+    client.post('/auth/register', json={'org_name':'Acme','slug':'acme','admin_email':'admin@example.com','admin_password':'admin password','admin_full_name':'Admin'})
+    admin = login(client, 'admin@example.com', 'admin password')
+    project = client.post('/projects', headers=admin, json={'name':'App','github_repo_url':'https://github.com/acme/app'}).json()['id']
+    email = 'svc@demo.iam.gserviceaccount.com'
+    key = 'a' * 40
+    with factory() as db:
+        incident = create_incident(db, credential_type='gcp_service_account', credential_hint='svc...', principal_id=email,
+                                   repo_url='https://github.com/acme/app', commit_hash='a' * 40,
+                                   exposure_start=datetime.now(timezone.utc), project_id=project)
+        incident_id = incident.incident_id
+        events = [ForensicEvent(platform='gcp', timestamp=datetime.now(timezone.utc), api_action='test', raw_data={'authenticationInfo': {'principalEmail':email, 'serviceAccountKeyName':f'//iam.googleapis.com/projects/demo/serviceAccounts/{email}/keys/{value}'}}) for value in (key, 'b' * 40)]
+        save_forensic_events(db, incident_id, events)
+    path = f'/incidents/{incident_id}/gcp-key-association'
+    assert client.post(path, headers=admin, json={'key_id':key, 'confirms_incident_key':False}).status_code == 422
+    result = client.post(path, headers=admin, json={'key_id':key, 'confirms_incident_key':True})
+    assert result.status_code == 200 and key not in result.text
+    detail = client.get(f'/incidents/{incident_id}', headers=admin)
+    assert detail.status_code == 200, detail.text
+    assert [e['gcp_key_attribution'] for e in detail.json()['events']] == ['matched', 'different_key']
+    assert detail.json()['gcp_key_association']['verification'] == 'operator_reported'
+    with factory() as db:
+        assert db.get(GCPKeyAssociation, incident_id).key_digest != key
+
+
+def test_azure_signins_require_authorized_project_and_verified_reader(app_client, monkeypatch):
+    from datetime import datetime, timezone
+    from crypto import encrypt_blob
+    from db.crud import create_incident
+    from db.models import CredentialWalletEntry
+    import collectors.azure_signins as signins
+    client, factory = app_client
+    client.post('/auth/register', json={'org_name':'Acme','slug':'acme','admin_email':'admin@example.com','admin_password':'admin password','admin_full_name':'Admin'})
+    admin = login(client, 'admin@example.com', 'admin password')
+    project = client.post('/projects', headers=admin, json={'name':'App','github_repo_url':'https://github.com/acme/app'}).json()['id']
+    app_id = '11111111-2222-3333-4444-555555555555'
+    with factory() as db:
+        incident = create_incident(db, credential_type='azure_client_secret', credential_hint='masked', principal_id=app_id,
+                                   repo_url='https://github.com/acme/app', commit_hash='a' * 40,
+                                   exposure_start=datetime.now(timezone.utc), project_id=project)
+        incident_id = incident.incident_id
+    path = f'/incidents/{incident_id}/azure-signins'
+    assert client.post(path, json={}).status_code == 401
+    assert client.post(path, headers=admin, json={}).status_code == 422
+    values = {'tenant_id':'tenant', 'client_id':'reader', 'client_secret':'secret', 'subscription_id':'sub'}
+    ciphertext, iv = encrypt_blob(values)
+    with factory() as db:
+        db.add(CredentialWalletEntry(project_id=project, provider='azure', encrypted_blob=ciphertext, iv=iv,
+                                     created_by=client.get('/auth/me', headers=admin).json()['id'], verification_status='ok'))
+        db.commit()
+    calls = []
+    monkeypatch.setattr(signins, 'collect_signins', lambda reader, application, key: calls.append((reader, application, key)) or {'events':[], 'truncated':False})
+    result = client.post(path, headers=admin, json={})
+    assert result.status_code == 200 and calls[0][0] == values and calls[0][1] == app_id
+    user_id = client.post('/org/users/invite', headers=admin, json={'email':'dev@example.com','full_name':'Dev','role':'developer','temporary_password':'developer password'}).json()['user_id']
+    dev = login(client, 'dev@example.com', 'developer password')
+    client.post('/auth/change-password', headers=dev, json={'current_password':'developer password','new_password':'new developer password'})
+    client.post(f'/projects/{project}/members', headers=admin, json={'user_id':user_id})
+    assert client.post(path, headers=dev, json={}).status_code == 403
+    assert len(calls) == 1

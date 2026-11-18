@@ -264,12 +264,22 @@ def test_tenant_and_subscription_ids_are_not_service_principals():
     assert ids == ["4535aaaa-bbbb-4ccc-8ddd-eeeeffffb25c"]
 
 
-def test_client_secret_with_client_id_is_not_a_separate_incident():
+def test_client_secret_is_not_suppressed_by_nearby_client_id():
     from detector.patterns import find_azure_credentials
     text = (
         "AZURE_CLIENT_ID=4535aaaa-bbbb-4ccc-8ddd-eeeeffffb25c\n"
         "AZURE_CLIENT_SECRET=abc8Q~abcdefghijklmnopqrstuvwxyz0123456\n"
     )
-    assert [m.credential_type for m in find_azure_credentials(text)] == ["azure_service_principal"]
+    assert [m.credential_type for m in find_azure_credentials(text)] == ["azure_service_principal", "azure_client_secret"]
     # A secret on its own is still reported as detection-only.
     assert [m.credential_type for m in find_azure_credentials(text.splitlines()[1])] == ["azure_client_secret"]
+
+
+def test_multiple_scenario_secrets_survive_client_id_in_same_hunk():
+    from detector.scanner import scan
+    diff = ("+AZURE_CLIENT_ID=4535aaaa-bbbb-4ccc-8ddd-eeeeffffb25c\n"
+            "+AZ-EXFIL-01\n+abc8Q~abcdefghijklmnopqrstuvwxyz0123456\n"
+            "+AZ-ABUSE-01\n+xyz8Q~zyxwvutsrqponmlkjihgfedcba9876543\n")
+    findings = scan(diff, include_saas=True)
+    assert sum(item.credential_type == 'azure_client_secret' for item in findings) == 2
+    assert sum(item.credential_type == 'azure_service_principal' for item in findings) == 1

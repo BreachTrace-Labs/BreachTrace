@@ -16,7 +16,7 @@ def isolated(tmp_path, monkeypatch):
     monkeypatch.setattr(models, "_state", None)
     monkeypatch.setattr(models, "_secret", None)
     monkeypatch.setattr(models.config, "REPORT_PROVIDER", "none")
-    for key in ("OPENAI_API_KEY", "ANTHROPIC_API_KEY", "GEMINI_API_KEY"):
+    for key in ("OPENAI_API_KEY", "ANTHROPIC_API_KEY", "GEMINI_API_KEY", "GROQ_API_KEY"):
         monkeypatch.delenv(key, raising=False)
 
 
@@ -101,3 +101,51 @@ def test_validation_errors_do_not_echo_submitted_key(monkeypatch):
         response = client.put("/settings/model", json={"provider": "openai", "model": "", "api_key": "synthetic-private-key"})
         assert response.status_code == 422
         assert "synthetic-private-key" not in response.text
+
+
+def test_ollama_answer_model_is_independent_from_report_model(monkeypatch):
+    from rag import grounded_answer
+    models.save(models.ModelSettings(provider='ollama', model='report-model', answer_model='answer-model'))
+    selected = []
+    monkeypatch.setattr(grounded_answer, '_complete', lambda settings, messages: selected.append(settings.model) or '{"answer":"Known fact.","citations":["S1"]}')
+    grounded_answer.generate_grounded_answer('What happened?', [{'id':'x','text':'Known fact.'}])
+    assert selected == ['answer-model']
+    assert models.current().model == 'report-model'
+    models.save(models.ModelSettings(provider='ollama', model='report-model'))
+    grounded_answer.generate_grounded_answer('What happened?', [{'id':'x','text':'Known fact.'}])
+    assert selected[-1] == 'report-model'
+
+
+def test_offline_mode_rejects_cloud_model_providers():
+    for provider in ('openai', 'anthropic', 'gemini', 'groq'):
+        with pytest.raises(ValueError):
+            models.ModelSettings(provider=provider, model='example', offline_models_only=True)
+    assert models.ModelSettings(provider='ollama', model='local', offline_models_only=True).offline_models_only
+
+
+def test_groq_chat_contract_and_key_handling(monkeypatch):
+    secret='synthetic-groq-key'
+    models.save(models.ModelSettings(provider='groq',model='chosen-groq-model',api_key=secret))
+    response=Mock(status_code=200)
+    response.json.return_value={'choices':[{'message':{'content':'{"answer":"A fact","citations":["S1"]}'}}]}
+    post=Mock(return_value=response)
+    monkeypatch.setattr('llm_client.requests.post',post)
+    raw=generate(models.current(),[{'role':'user','content':'Return JSON evidence.'}],json_output=True)
+    assert 'A fact' in raw
+    args,kwargs=post.call_args
+    assert args[0]=='https://api.groq.com/openai/v1/chat/completions'
+    assert kwargs['headers']['Authorization']=='Bearer '+secret
+    assert kwargs['json']['response_format']=={'type':'json_object'}
+    assert kwargs['allow_redirects'] is False
+    assert secret not in models.settings_path().read_text()
+    assert secret not in json.dumps(models.public())
+    models.save(models.ModelSettings(provider='groq',model='chosen-groq-model',clear_api_key=True))
+    assert models.key_for(models.current())==''
+
+
+def test_incident_model_status_uses_selected_local_answer_model(monkeypatch):
+    from routers.assistant import answer_model_status
+    models.save(models.ModelSettings(provider='ollama',model='report-model',answer_model='answer-model'))
+    assert answer_model_status()=={'provider':'ollama','model':'answer-model','configured':True}
+    models.save(models.ModelSettings(provider='groq',model='test-model'))
+    assert answer_model_status()['configured'] is False

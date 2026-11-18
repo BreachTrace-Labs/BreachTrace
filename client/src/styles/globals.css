@@ -11,6 +11,59 @@ body { font-family: var(--font-sans); font-size: var(--text-base); line-height: 
 ::-webkit-scrollbar-thumb:hover { background: var(--color-border-strong); }
 .mono { font-family: var(--font-mono); font-size: var(--text-sm); }
 
+/* Keep native form semantics while sharing the app's light/dark control style. */
+input[type="checkbox"] {
+  appearance: none;
+  -webkit-appearance: none;
+  display: inline-grid;
+  place-content: center;
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+  vertical-align: middle;
+  padding: 0;
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-sm);
+  background-color: var(--color-bg-elevated);
+  color: var(--color-primary-foreground);
+  cursor: pointer;
+  transition: background-color var(--transition-base), border-color var(--transition-base), box-shadow var(--transition-base);
+}
+input[type="checkbox"]::before {
+  content: "";
+  width: 10px;
+  height: 10px;
+  background-color: currentColor;
+  clip-path: polygon(14% 44%, 0 59%, 39% 97%, 100% 20%, 84% 7%, 37% 67%);
+  visibility: hidden;
+}
+input[type="checkbox"]:hover:not(:disabled) {
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 3px var(--color-accent-subtle);
+}
+input[type="checkbox"]:checked,
+input[type="checkbox"]:indeterminate {
+  background-color: var(--color-primary);
+  border-color: var(--color-primary);
+}
+input[type="checkbox"]:checked::before,
+input[type="checkbox"]:indeterminate::before { visibility: visible; }
+input[type="checkbox"]:indeterminate::before {
+  height: 2px;
+  border-radius: 1px;
+  clip-path: none;
+}
+input[type="checkbox"]:focus-visible {
+  outline: 2px solid var(--color-ring);
+  outline-offset: 3px;
+}
+input[type="checkbox"]:disabled { opacity: 0.45; cursor: not-allowed; }
+input[type="checkbox"][aria-invalid="true"] { border-color: var(--color-destructive); }
+@media (forced-colors: active) {
+  input[type="checkbox"] { appearance: auto; -webkit-appearance: auto; }
+  input[type="checkbox"]::before { display: none; }
+}
+
 /* Keep the dropdown indicator and text clear of the field edge in every form. */
 select:not([multiple]):not([size]) {
   appearance: none;

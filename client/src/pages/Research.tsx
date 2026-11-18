@@ -4,6 +4,7 @@ import client from '@/api/client'
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
 import { Separator } from '@/components/ui/separator'
 import PlatformLatencyChart from '@/components/PlatformLatencyChart'
+import ModelBenchmark from '@/components/ModelBenchmark'
 import type { ExperimentRun, PlatformComparison } from '@/types'
 
 /* ─── types for research endpoint ─────────────────────────────── */
@@ -170,6 +171,8 @@ const Research: React.FC = () => {
           </span>
         </div>
       </div>
+
+      <ModelBenchmark />
 
       {/* Track A */}
       <section className="space-y-5">

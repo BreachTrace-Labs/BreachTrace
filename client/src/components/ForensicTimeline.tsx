@@ -564,6 +564,7 @@ const ForensicTimeline: React.FC<Props> = ({ events, exposureStart }) => {
                             >
                               {e.api_action}
                             </span>
+                            {e.gcp_key_attribution && <span className="shrink-0 text-[10px] font-semibold px-1.5 py-0.5 rounded border text-muted-foreground">{e.gcp_key_attribution === 'matched' ? 'Matches associated key' : e.gcp_key_attribution === 'different_key' ? 'Different key' : 'Key attribution unavailable'}</span>}
                             {e.event_source?.includes('request-log') && (
                               <span className="shrink-0 text-[10px] font-semibold px-1.5 py-0.5 rounded border text-muted-foreground">Request log</span>
                             )}

@@ -12,6 +12,7 @@ export interface ForensicEvent {
   resource_type: string | null
   success: boolean
   error_code: string | null
+  gcp_key_attribution?: 'matched' | 'different_key' | 'unavailable' | null
   raw_data: Record<string, unknown>
   impact_category: string | null
   severity_weight: 1 | 2 | 3 | 4 | null
@@ -91,6 +92,9 @@ export interface IncidentRecord {
   report_source?: ReportSource | null
   collection_status?: string | null
   collection_error?: string | null
+  azure_repeat_count?: number
+  azure_secret_occurrences?: { commit_hash: string; observed_at: string }[]
+  gcp_key_association?: { key_hint: string; recorded_by: string | null; recorded_at: string; verification: string } | null
   dynamic_blast_radius?: DynamicBlastRadius | null
   remediation_steps: string[]
   gdpr_flag: boolean
@@ -188,7 +192,7 @@ export interface PlatformComparison {
 }
 
 /** deterministic = template from verified facts; local_model = the on-device report model. */
-export type ReportSource = 'deterministic' | 'local_model' | 'gemini' | 'openai' | 'anthropic' | 'ollama'
+export type ReportSource = 'deterministic' | 'local_model' | 'gemini' | 'openai' | 'anthropic' | 'ollama' | 'groq'
 
 /* ─── Natural-language search (POST /assistant/search) ─────────────────── */
 

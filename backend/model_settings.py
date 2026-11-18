@@ -14,8 +14,10 @@ import config
 
 
 class ModelSettings(BaseModel):
-    provider: Literal["none", "openai", "anthropic", "ollama", "local", "gemini"] = "none"
+    provider: Literal["none", "openai", "anthropic", "ollama", "local", "gemini", "groq"] = "none"
     model: str = Field("", max_length=200, pattern=r"^[^\r\n]*$")
+    answer_model: str = Field("", max_length=200, pattern=r"^[^\r\n]*$")
+    offline_models_only: bool = False
     ollama_url: str = "http://127.0.0.1:11434"
     model_path: str = Field("", max_length=1000)
     timeout_s: int = Field(60, ge=5, le=300)
@@ -25,7 +27,9 @@ class ModelSettings(BaseModel):
 
     @model_validator(mode="after")
     def validate_selection(self):
-        if self.provider in {"openai", "anthropic", "ollama", "gemini"} and not self.model.strip():
+        if self.offline_models_only and self.provider in {"openai", "anthropic", "gemini", "groq"}:
+            raise ValueError("Offline model mode requires a local or deterministic provider")
+        if self.provider in {"openai", "anthropic", "ollama", "gemini", "groq"} and not self.model.strip():
             raise ValueError("Choose a model name for this provider")
         if self.provider == "local" and not self.model_path.strip():
             raise ValueError("Choose an existing GGUF model file")
@@ -75,7 +79,7 @@ def key_for(settings: ModelSettings) -> str:
     with _lock:
         if _secret and current().provider == settings.provider:
             return _secret
-    env = {"openai": "OPENAI_API_KEY", "anthropic": "ANTHROPIC_API_KEY", "gemini": "GEMINI_API_KEY"}
+    env = {"openai": "OPENAI_API_KEY", "anthropic": "ANTHROPIC_API_KEY", "gemini": "GEMINI_API_KEY", "groq": "GROQ_API_KEY"}
     return os.getenv(env.get(settings.provider, ""), "")
 
 

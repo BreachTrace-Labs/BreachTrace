@@ -22,6 +22,7 @@ from typing import Literal, Optional
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
 from pydantic import BaseModel, Field, field_validator
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from access import accessible_project_ids, assert_project_access, incident_access
@@ -29,7 +30,7 @@ from auth import get_active_user, require_admin_or_lead, require_single_organisa
 from audit import public as audit_public, record
 from db.crud import get_incident, list_incidents, reset_incident_for_refresh
 from db.database import get_db
-from db.models import AuditLog, CREDENTIAL_TYPE_TO_PLATFORM, ExperimentRun, IncidentRecord, ProjectMember, User, ForensicEvent as StoredEvent
+from db.models import AuditLog, AzureSecretOccurrence, ExposureObservation, GCPKeyAssociation, CREDENTIAL_TYPE_TO_PLATFORM, ExperimentRun, IncidentRecord, ProjectMember, User, ForensicEvent as StoredEvent
 from normalizer.time_window import after_exposure, within_exposure
 from routers.settings import local_operator
 from pipeline import run_collection_pipeline
@@ -81,6 +82,7 @@ class ForensicEventOut(BaseModel):
     principal_id: Optional[str] = None
     location: Optional[str] = None
     raw_data: dict = Field(default_factory=dict)
+    gcp_key_attribution: Optional[Literal['matched', 'different_key', 'unavailable']] = None
 
     @field_validator("api_action", "event_source", "source_ip", "user_agent", "affected_resource", "resource_type", "error_code", "principal_id", "location", mode="before")
     @classmethod
@@ -130,6 +132,7 @@ class IncidentSummaryOut(BaseModel):
     # too — not just the detail one — or the dashboard cannot label rows.
     forensic_tier: int = 1
     unavailable_reason: Optional[str] = None
+    azure_repeat_count: int = 0
 
     @field_validator("access_key_id", mode="before")
     @classmethod
@@ -188,6 +191,8 @@ class IncidentDetailOut(IncidentSummaryOut):
     collection_status: Optional[str] = None
     collection_error: Optional[str] = None
     dynamic_blast_radius: dict | None = None
+    azure_secret_occurrences: list[dict] = []
+    gcp_key_association: dict | None = None
 
     @field_validator("report_text", "remediation_steps", mode="before")
     @classmethod
@@ -234,6 +239,116 @@ def audit_incident_view(request: Request, incident: IncidentRecord = Depends(inc
                         user: User = Depends(get_active_user), db: Session = Depends(get_db)):
     record(db, user, 'incident.viewed', request, project_id=incident.project_id, incident_id=incident.incident_id)
     db.commit()
+
+
+class ExposureObservationIn(BaseModel):
+    kind: Literal['revoked', 'rotated', 'expired', 'active', 'inconclusive']
+    observed_at: datetime
+    source: str = Field(min_length=3, max_length=200)
+    confidence: Literal['low', 'medium', 'high']
+
+    @field_validator('source')
+    @classmethod
+    def validate_source(cls, value):
+        value = value.strip()
+        if len(value) < 3:
+            raise ValueError('Describe the evidence source')
+        return redact(value)
+
+    @field_validator('observed_at')
+    @classmethod
+    def validate_time(cls, value):
+        if value.tzinfo is None or value.utcoffset() is None:
+            raise ValueError('Observation time must include a timezone')
+        if value > datetime.now(timezone.utc):
+            raise ValueError('Observation time cannot be in the future')
+        return value
+
+
+def observation_data(row, actor):
+    return {'id': row.id, 'kind': row.kind, 'observed_at': row.observed_at,
+            'recorded_at': row.recorded_at, 'recorded_by': actor, 'source': redact(row.source),
+            'confidence': row.confidence, 'credential_hint': row.credential_hint,
+            'verification': 'operator_reported'}
+
+
+@router.get('/{incident_id}/exposure-observations')
+def list_exposure_observations(incident: IncidentRecord = Depends(incident_access), db: Session = Depends(get_db)):
+    rows = (db.query(ExposureObservation, User.full_name).join(User, User.id == ExposureObservation.recorded_by)
+            .filter(ExposureObservation.incident_id == incident.incident_id)
+            .order_by(ExposureObservation.recorded_at.desc(), ExposureObservation.id.desc()).all())
+    return [observation_data(row, actor) for row, actor in rows]
+
+
+@router.post('/{incident_id}/exposure-observations', status_code=201)
+def create_exposure_observation(body: ExposureObservationIn, request: Request,
+                                incident: IncidentRecord = Depends(incident_access),
+                                user: User = Depends(require_admin_or_lead), db: Session = Depends(get_db)):
+    row = ExposureObservation(incident_id=incident.incident_id, recorded_by=user.id, kind=body.kind,
+                              observed_at=body.observed_at, source=body.source,
+                              confidence=body.confidence, credential_hint=incident.credential_hint)
+    db.add(row)
+    db.flush()
+    record(db, user, 'incident.exposure_observation_recorded', request, project_id=incident.project_id,
+           incident_id=incident.incident_id, detail={'observation_id': row.id, 'kind': row.kind})
+    db.commit()
+    db.refresh(row)
+    return observation_data(row, user.full_name)
+
+
+class GCPKeyAssociationIn(BaseModel):
+    key_id: str = Field(pattern=r'^[a-fA-F0-9]{40}$')
+    confirms_incident_key: Literal[True]
+
+
+@router.post('/{incident_id}/gcp-key-association', status_code=200)
+def associate_gcp_key(body: GCPKeyAssociationIn, request: Request,
+                      incident: IncidentRecord = Depends(incident_access),
+                      user: User = Depends(require_admin_or_lead), db: Session = Depends(get_db)):
+    from gcp_attribution import key_digest
+    if incident.platform not in ('gcp', 'firebase') or not incident.principal_id:
+        raise HTTPException(422, 'A GCP service-account incident with an identified account is required')
+    row = db.get(GCPKeyAssociation, incident.incident_id)
+    if row is None:
+        row = GCPKeyAssociation(incident_id=incident.incident_id)
+        db.add(row)
+    row.key_digest = key_digest(body.key_id)
+    row.key_hint = body.key_id[:4] + '…' + body.key_id[-4:]
+    row.recorded_by = user.id
+    row.recorded_at = datetime.now(timezone.utc)
+    record(db, user, 'incident.gcp_key_associated', request, project_id=incident.project_id,
+           incident_id=incident.incident_id, detail={'key_hint': row.key_hint})
+    db.commit()
+    return {'key_hint': row.key_hint, 'recorded_by': user.full_name, 'recorded_at': row.recorded_at,
+            'verification': 'operator_reported'}
+
+
+class AzureSignInsRequest(BaseModel):
+    credential_key_id: uuid.UUID | None = None
+
+
+@router.post('/{incident_id}/azure-signins')
+def azure_signins(body: AzureSignInsRequest, request: Request,
+                  incident: IncidentRecord = Depends(incident_access),
+                  user: User = Depends(require_admin_or_lead), db: Session = Depends(get_db)):
+    from collection_credentials import ReaderConfigurationError, project_reader
+    from collectors.azure_signins import SignInCollectionError, collect_signins
+    if incident.platform != 'azure' or not incident.principal_id:
+        raise HTTPException(422, 'Associate an Azure application with this incident first.')
+    try:
+        uuid.UUID(incident.principal_id)
+        reader = project_reader(db, incident, 'azure')
+    except ValueError as exc:
+        raise HTTPException(422, str(exc) if isinstance(exc, ReaderConfigurationError) else 'The incident application ID is invalid.') from None
+    if reader is None:
+        raise HTTPException(422, 'Configure a verified Azure reader for this project.')
+    record(db, user, 'incident.azure_signins_requested', request, project_id=incident.project_id,
+           incident_id=incident.incident_id, detail={'key_comparison': body.credential_key_id is not None})
+    db.commit()
+    try:
+        return collect_signins(reader, incident.principal_id, str(body.credential_key_id) if body.credential_key_id else None)
+    except SignInCollectionError as exc:
+        raise HTTPException(502, str(exc)) from None
 
 
 class TwilioAccountRequest(BaseModel):
@@ -348,9 +463,13 @@ def list_all_incidents(
     incidents = query.order_by(IncidentRecord.exposure_start.desc()).offset(max(0, offset)).limit(min(max(1, limit), 500)).all()
     ids = {value for incident in incidents for value in (incident.assigned_to, incident.dismissed_by) if value}
     names = dict(db.query(User.id, User.full_name).filter(User.id.in_(ids)).all()) if ids else {}
+    counts = dict(db.query(AzureSecretOccurrence.incident_id, func.count(AzureSecretOccurrence.id))
+                  .filter(AzureSecretOccurrence.incident_id.in_([row.incident_id for row in incidents]))
+                  .group_by(AzureSecretOccurrence.incident_id).all()) if incidents else {}
     result = []
     for incident in incidents:
         item = IncidentSummaryOut.model_validate(incident)
+        item.azure_repeat_count = max(0, counts.get(incident.incident_id, 0) - 1)
         item.assigned_to_name = names.get(incident.assigned_to)
         item.dismissed_by_name = names.get(incident.dismissed_by)
         result.append(item)
@@ -392,6 +511,17 @@ def get_incident_detail(
         raise HTTPException(status_code=404, detail="Incident not found")
 
     out = IncidentDetailOut.model_validate(incident)
+    occurrences = db.query(AzureSecretOccurrence).filter_by(incident_id=incident.incident_id).order_by(AzureSecretOccurrence.observed_at).all()
+    out.azure_secret_occurrences = [{'commit_hash': item.commit_hash, 'observed_at': item.observed_at} for item in occurrences]
+    out.azure_repeat_count = max(0, len(occurrences) - 1)
+    association = db.get(GCPKeyAssociation, incident.incident_id)
+    if association is not None:
+        from gcp_attribution import event_attribution
+        actor = db.get(User, association.recorded_by)
+        out.gcp_key_association = {'key_hint': association.key_hint, 'recorded_by': actor.full_name if actor else None,
+                                   'recorded_at': association.recorded_at, 'verification': 'operator_reported'}
+        for source, event in zip(incident.events, out.events):
+            event.gcp_key_attribution = event_attribution(source, incident, association)
     if incident.collection_statuses and incident.status not in ("collecting", "classifying", "scoring", "reporting"):
         latest = max(incident.collection_statuses, key=lambda status: status.queried_at)
         out.collection_status = latest.status

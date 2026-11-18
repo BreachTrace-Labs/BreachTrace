@@ -36,7 +36,10 @@ def get_embedder() -> Any | None:
             try:
                 from fastembed import TextEmbedding
 
-                _model = TextEmbedding(config.EMBED_MODEL, cache_dir=config.MODEL_CACHE_DIR)
+                import model_settings
+                offline = model_settings.current().offline_models_only or os.getenv("BREACHTRACE_MODELS_OFFLINE", "false").lower() in ("1", "true", "yes")
+                _model = TextEmbedding(config.EMBED_MODEL, cache_dir=config.MODEL_CACHE_DIR,
+                                       local_files_only=offline)
                 logger.info("[SEARCH] Embedding model %s ready", config.EMBED_MODEL)
             except Exception:
                 logger.exception("[SEARCH] Embedding model unavailable; keyword search only")

@@ -93,6 +93,8 @@ def generate_grounded_answer(question: str, passages: list[dict]) -> dict:
         return {"status": "insufficient_evidence", "message": "No retrieved evidence is available to answer this question."}
 
     settings = model_settings.current()
+    if settings.provider == "ollama" and settings.answer_model.strip():
+        settings = settings.model_copy(update={"model": settings.answer_model.strip()})
     if settings.provider == "none":
         return {"status": "unavailable", "message": "Select and test a report model in Settings to generate an answer."}
 

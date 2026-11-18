@@ -162,12 +162,13 @@ The smoke script creates a synthetic detection, briefly tests an installed local
 
 ## Authorized provider/webhook setup
 
-For an account-backed installation, use `.env.example` as a template without overwriting existing configuration. The standard profile currently validates AWS, experiment and GitHub settings listed in `backend/config.py`; the isolated test profile bypasses those requirements. `GITHUB_TOKEN` authorizes GitHub API access, while `GITHUB_WEBHOOK_SECRET` independently verifies incoming webhook signatures. A GitHub token is not the webhook signing secret.
+For an account-backed installation, use `.env.example` as a template without overwriting existing configuration. The standard profile currently validates AWS, experiment and GitHub settings listed in `backend/config.py`; the isolated test profile bypasses those requirements. Project GitHub API tokens are saved and encrypted in Connect; project webhook signing secrets are stored separately. A GitHub token is not the webhook signing secret.
 
 | Configuration | Purpose |
 |---|---|
 | `DATABASE_URL` | Application database |
-| `GITHUB_TOKEN`, `GITHUB_WEBHOOK_SECRET`, `GITHUB_TEST_REPO` | Repository API access, signed pushes, experiment repository |
+| GitHub project connection (Connect) | Encrypted repository token for webhook registration, push diffs and private scans |
+| `GITHUB_TOKEN`, `GITHUB_WEBHOOK_SECRET`, `GITHUB_TEST_REPO` | Legacy/research tooling configuration; project workflows use saved connections |
 | `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_REGION` | Authorized CloudTrail access |
 | `GCP_PROJECT_ID`, `GCP_SERVICE_ACCOUNT_JSON` | Authorized GCP log access |
 | `AZURE_TENANT_ID`, `AZURE_CLIENT_ID`, `AZURE_CLIENT_SECRET`, `AZURE_SUBSCRIPTION_ID` | Authorized Azure log access |
@@ -219,3 +220,5 @@ The collector includes outbound messages and calls and supported Monitor Events 
 | Vedant | React dashboard, timeline, reports, normalization |
 
 **Guide:** Dr. Irfan Siddavatam · K.J. Somaiya College of Engineering
+
+Local inference, offline mode, and model comparison are documented in [Offline models](docs/offline-models.md).

@@ -37,6 +37,7 @@ def test_simulated_and_signed_webhook_incidents_are_scoped(client_factory, monke
     a, b = project('alpha'), project('beta')
     secret_a, secret_b = 'alpha-secret-value-123456', 'beta-secret-value-1234567'
     for project_id, secret in ((a, secret_a), (b, secret_b)):
+        assert client.put(f'/projects/{project_id}/github-connection', headers=admin, json={'token':'github_pat_synthetic_example_for_tests'}).status_code == 200
         assert client.put(f'/webhook/projects/{project_id}/secret', headers=admin, json={'secret':secret}).status_code == 200
     with factory() as db:
         assert secret_a not in db.get(Project, a).webhook_secret
@@ -45,7 +46,8 @@ def test_simulated_and_signed_webhook_incidents_are_scoped(client_factory, monke
     assert simulation.status_code == 202, simulation.text
     b_incident = simulation.json()['incident_id']
     from routers import webhook
-    monkeypatch.setattr(webhook, '_fetch_diff', lambda *_: diff)
+    diff_calls = []
+    monkeypatch.setattr(webhook, '_fetch_diff', lambda *args: diff_calls.append(args) or diff)
     payload = {'repository':{'full_name':'acme/alpha'}, 'commits':[{'id':'a'*40,'timestamp':'2026-01-01T00:00:00Z'}]}
     body = json.dumps(payload).encode()
     def send(secret):
@@ -54,6 +56,7 @@ def test_simulated_and_signed_webhook_incidents_are_scoped(client_factory, monke
     assert send(secret_b).status_code == 401
     response = send(secret_a)
     assert response.status_code == 202 and response.json()['incidents_created'] == 1
+    assert diff_calls[0][2] == 'github_pat_synthetic_example_for_tests'
     a_incident = response.json()['incident_ids'][0]
     with factory() as db:
         assert db.get(IncidentRecord, a_incident).project_id == a
@@ -80,6 +83,7 @@ def test_register_webhook_reuses_encrypted_secret_and_updates_existing_hook(clie
     client.post('/auth/register', json={'org_name':'Acme','slug':'acme','admin_email':'admin@example.com','admin_password':'admin password','admin_full_name':'Admin'})
     admin = {'Authorization':'Bearer ' + client.post('/auth/token',data={'username':'admin@example.com','password':'admin password'}).json()['access_token']}
     project_id = client.post('/projects',headers=admin,json={'name':'App','github_repo_url':'https://github.com/acme/app'}).json()['id']
+    assert client.put(f'/projects/{project_id}/github-connection', headers=admin, json={'token':'github_pat_synthetic_example_for_tests'}).status_code == 200
     calls=[]
     class Hook:
         id = 123
@@ -194,3 +198,103 @@ def test_related_credentials_are_scoped_to_same_project_and_exact_commit(client_
     assert client.get(f'/incidents/{foreign}/related-credentials', headers=dev).status_code == 403
     assert client.get(f'/incidents/{no_commit}/related-credentials', headers=dev).json()['commit_available'] is False
     assert client.get(f'/incidents/{first}/related-credentials', headers=dev, params={'offset':1}).json()['items'] == []
+
+
+def test_webhook_denial_explains_token_write_permission_without_exposing_provider_body(client_factory, monkeypatch):
+    from github import GithubException
+    from routers import webhook
+    client, _ = client_factory
+    client.post('/auth/register', json={'org_name':'Acme','slug':'acme','admin_email':'admin@example.com','admin_password':'admin password','admin_full_name':'Admin'})
+    token = client.post('/auth/token', data={'username':'admin@example.com','password':'admin password'}).json()['access_token']
+    admin = {'Authorization':'Bearer ' + token}
+    project_id = client.post('/projects', headers=admin, json={'name':'App','github_repo_url':'https://github.com/acme/app'}).json()['id']
+    assert client.put(f'/projects/{project_id}/github-connection', headers=admin, json={'token':'github_pat_synthetic_example_for_tests'}).status_code == 200
+    class Hook:
+        config = {'url':'https://example.test/webhook/github'}
+        def edit(self, **kwargs):
+            raise GithubException(403, {'message':'provider-body-must-not-escape'})
+    class Repo:
+        def get_hooks(self): return [Hook()]
+    class Github:
+        def __init__(self, *_): pass
+        def get_repo(self, *_): return Repo()
+    monkeypatch.setattr(webhook, 'Github', Github)
+    response = client.post('/webhook/register', headers=admin, json={'project_id':project_id,'webhook_url':'https://example.test/webhook/github'})
+    assert response.status_code == 400
+    assert 'Webhooks: read and write' in response.json()['detail']
+    assert 'admin:repo_hook' in response.json()['detail']
+    assert 'provider-body-must-not-escape' not in response.text
+
+
+def test_github_connections_are_encrypted_project_scoped_and_write_only(client_factory):
+    from db.models import ProjectGitHubConnection
+    from github_connection import project_token
+    client, factory = client_factory
+    client.post('/auth/register', json={'org_name':'Acme','slug':'acme','admin_email':'admin@example.com','admin_password':'admin password','admin_full_name':'Admin'})
+    admin = {'Authorization':'Bearer '+client.post('/auth/token', data={'username':'admin@example.com','password':'admin password'}).json()['access_token']}
+    ids = [client.post('/projects',headers=admin,json={'name':name,'github_repo_url':f'https://github.com/acme/{name}'}).json()['id'] for name in ('alpha', 'beta')]
+    path=f'/projects/{ids[0]}/github-connection'
+    token='github_pat_synthetic_test_value_only'
+    assert client.put(path,json={'token':token}).status_code == 401
+    response=client.put(path,headers=admin,json={'token':token})
+    assert response.status_code == 200 and response.json()['configured'] is True
+    assert token not in response.text and token not in client.get(path,headers=admin).text
+    with factory() as db:
+        assert token not in db.get(ProjectGitHubConnection,ids[0]).encrypted_blob
+        assert project_token(db, ids[0]) == token
+        assert project_token(db, ids[1]) is None
+    user=client.post('/org/users/invite',headers=admin,json={'email':'dev@example.com','full_name':'Dev','role':'developer','temporary_password':'developer password'}).json()['user_id']
+    dev={'Authorization':'Bearer '+client.post('/auth/token',data={'username':'dev@example.com','password':'developer password'}).json()['access_token']}
+    client.post('/auth/change-password',headers=dev,json={'current_password':'developer password','new_password':'new developer password'})
+    client.post(f'/projects/{ids[0]}/members',headers=admin,json={'user_id':user})
+    assert client.get(path,headers=dev).status_code == 403
+    assert client.put(path,headers=dev,json={'token':token}).status_code == 403
+    assert client.delete(path,headers=dev).status_code == 403
+    assert client.delete(path,headers=admin).status_code == 204
+    assert client.get(path,headers=admin).json()['configured'] is False
+
+
+def test_manual_webhook_status_tracks_only_valid_signed_deliveries(client_factory):
+    client, factory = client_factory
+    client.post('/auth/register', json={'org_name':'Acme','slug':'acme','admin_email':'admin@example.com','admin_password':'admin password','admin_full_name':'Admin'})
+    token=client.post('/auth/token',data={'username':'admin@example.com','password':'admin password'}).json()['access_token']
+    headers={'Authorization':'Bearer '+token}
+    project=client.post('/projects',headers=headers,json={'name':'App','github_repo_url':'https://github.com/acme/app'}).json()['id']
+    secret='valid-test-secret-123456789'
+    assert client.put(f'/webhook/projects/{project}/secret',headers=headers,json={'secret':secret}).status_code == 200
+    body=json.dumps({'repository':{'full_name':'acme/app'}}).encode()
+    assert client.post('/webhook/github',content=body,headers={'X-GitHub-Event':'ping','X-Hub-Signature-256':'sha256=wrong'}).status_code == 401
+    assert client.get(f'/projects/{project}',headers=headers).json()['webhook_last_verified_at'] is None
+    signature='sha256='+hmac.new(secret.encode(),body,hashlib.sha256).hexdigest()
+    assert client.post('/webhook/github',content=body,headers={'X-GitHub-Event':'ping','X-Hub-Signature-256':signature}).status_code == 202
+    data=client.get(f'/projects/{project}',headers=headers).json()
+    assert data['webhook_registered_at'] is None and data['webhook_last_verified_at'] is not None
+    client.put(f'/webhook/projects/{project}/secret',headers=headers,json={'secret':'another-valid-secret-123456'})
+    assert client.get(f'/projects/{project}',headers=headers).json()['webhook_last_verified_at'] is None
+
+
+def test_repeated_azure_secret_creates_one_incident_with_distinct_commits(client_factory, monkeypatch):
+    from routers import webhook
+    from db.models import AzureSecretOccurrence
+    client, factory = client_factory
+    client.post('/auth/register', json={'org_name':'Acme','slug':'acme','admin_email':'admin@example.com','admin_password':'admin password','admin_full_name':'Admin'})
+    headers={'Authorization':'Bearer '+client.post('/auth/token',data={'username':'admin@example.com','password':'admin password'}).json()['access_token']}
+    project=client.post('/projects',headers=headers,json={'name':'App','github_repo_url':'https://github.com/acme/app'}).json()['id']
+    client.put(f'/projects/{project}/github-connection',headers=headers,json={'token':'github_pat_synthetic_example_for_tests'})
+    signing='webhook-signing-secret-12345'
+    client.put(f'/webhook/projects/{project}/secret',headers=headers,json={'secret':signing})
+    secret='abc8Q~abcdefghijklmnopqrstuvwxyz0123456'
+    monkeypatch.setattr(webhook,'_fetch_diff',lambda *_: '+AZ-EXFIL-01\n+'+secret)
+    def push(sha):
+        body=json.dumps({'repository':{'full_name':'acme/app'},'commits':[{'id':sha,'timestamp':'2026-01-01T00:00:00Z'}]}).encode()
+        signature='sha256='+hmac.new(signing.encode(),body,hashlib.sha256).hexdigest()
+        return client.post('/webhook/github',content=body,headers={'X-GitHub-Event':'push','X-Hub-Signature-256':signature})
+    first=push('a'*40).json(); second=push('b'*40).json(); replay=push('b'*40).json()
+    assert first['incidents_created']==1 and second['incidents_created']==0 and replay['incidents_created']==0
+    assert second['repeated_incident_ids']==first['incident_ids'] and replay['repeated_incident_ids']==[]
+    with factory() as db:
+        row=db.get(IncidentRecord,first['incident_ids'][0])
+        assert secret not in row.azure_secret_fingerprint
+        assert db.query(AzureSecretOccurrence).filter_by(incident_id=row.incident_id).count()==2
+    detail=client.get('/incidents/'+first['incident_ids'][0],headers=headers).json()
+    assert len(detail['azure_secret_occurrences'])==2 and secret not in str(detail)

@@ -1,5 +1,5 @@
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Sequence
 
 # =============================================================================
@@ -360,6 +360,7 @@ class AzureCredentialMatch:
     credential_hint: str        # first 8 chars of client_id, or 'AZURE_CONN...'
     raw_match: str
     line_number: int | None = None
+    secret_value: str | None = field(default=None, repr=False, compare=False)
 
 
 def find_azure_credentials(
@@ -429,7 +430,7 @@ def find_azure_credentials(
             continue
         for m in AZURE_CLIENT_SECRET_PATTERN.finditer(line):
             secret = m.group(0)
-            if secret.lower() in seen:
+            if secret in seen:
                 continue
 
             context = _context_window(lines, i, AZURE_CONTEXT_RADIUS).lower()
@@ -438,20 +439,15 @@ def find_azure_credentials(
                     and not AZURE_SCENARIO_SECRET_LABEL.search(context)):
                 continue
 
-            seen.add(secret.lower())
+            seen.add(secret)
             matches.append(AzureCredentialMatch(
                 credential_type="azure_client_secret",
                 client_id=None,
                 credential_hint=secret[:8] + "...",
                 raw_match=f"Azure client secret @ line {i + 1}",
                 line_number=i + 1,
+                secret_value=secret,
             ))
-
-    # A secret found alongside its client ID is the same credential: the client
-    # ID incident already covers it (and is the only one forensics can trace),
-    # so a second secret-only incident would just be an orphan detection.
-    if any(m.credential_type == "azure_service_principal" for m in matches):
-        matches = [m for m in matches if m.credential_type != "azure_client_secret"]
 
     return matches
 

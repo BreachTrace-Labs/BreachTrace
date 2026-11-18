@@ -77,6 +77,43 @@ CREDENTIAL_TYPE_TO_PLATFORM.update({f"{p}_api_key": p for p in AI_PROVIDERS})
 # ---------------------------------------------------------------------------
 # 1. incident_records
 # ---------------------------------------------------------------------------
+class GCPKeyAssociation(Base):
+    """Operator-reported GCP key ID fingerprint, never a private key."""
+    __tablename__ = 'gcp_key_associations'
+    incident_id = Column(String(36), ForeignKey('incident_records.incident_id', ondelete='CASCADE'), primary_key=True)
+    key_digest = Column(String(64), nullable=False)
+    key_hint = Column(String(20), nullable=False)
+    recorded_by = Column(String(36), ForeignKey('users.id'), nullable=False)
+    recorded_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+
+class ExposureObservation(Base):
+    """An operator's attributable observation, not provider-verified closure."""
+    __tablename__ = 'exposure_observations'
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    incident_id = Column(String(36), ForeignKey('incident_records.incident_id', ondelete='CASCADE'), nullable=False, index=True)
+    recorded_by = Column(String(36), ForeignKey('users.id'), nullable=False)
+    kind = Column(String(30), nullable=False)
+    observed_at = Column(DateTime(timezone=True), nullable=False)
+    recorded_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    source = Column(String(200), nullable=False)
+    confidence = Column(String(20), nullable=False)
+    credential_hint = Column(String(50), nullable=False)
+    __table_args__ = (
+        CheckConstraint("kind IN ('revoked', 'rotated', 'expired', 'active', 'inconclusive')", name='ck_exposure_observation_kind'),
+        CheckConstraint("confidence IN ('low', 'medium', 'high')", name='ck_exposure_observation_confidence'),
+    )
+
+
+class AzureSecretOccurrence(Base):
+    __tablename__ = 'azure_secret_occurrences'
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    incident_id = Column(String(36), ForeignKey('incident_records.incident_id', ondelete='CASCADE'), nullable=False, index=True)
+    commit_hash = Column(String(40), nullable=False)
+    observed_at = Column(DateTime(timezone=True), nullable=False)
+    __table_args__ = (UniqueConstraint('incident_id', 'commit_hash', name='uq_azure_secret_occurrence_commit'),)
+
+
 class IncidentRecord(Base):
     """
     One row per detected credential leak event.
@@ -99,6 +136,7 @@ class IncidentRecord(Base):
         server_default=func.gen_random_uuid(),
         comment="UUID primary key",
     )
+    azure_secret_fingerprint = Column(String(64), nullable=True)
     credential_type = Column(
         VARCHAR(50),
         nullable=False,
@@ -230,6 +268,7 @@ class IncidentRecord(Base):
 
     # Indexes
     __table_args__ = (
+        Index("uq_incident_azure_secret_project", "project_id", "azure_secret_fingerprint", unique=True),
         Index("ix_incident_records_credential_type", "credential_type"),
         Index("ix_incident_records_exposure_start", "exposure_start"),
         Index("ix_incident_records_status", "status"),
@@ -658,10 +697,20 @@ class Project(Base):
     github_repo_full_name = Column(String(200), nullable=False, index=True)
     webhook_secret = Column(Text, nullable=True)
     webhook_registered_at = Column(DateTime(timezone=True), nullable=True)
+    webhook_last_verified_at = Column(DateTime(timezone=True), nullable=True)
     created_by = Column(String(36), ForeignKey("users.id"), nullable=False)
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
     is_deleted = Column(Boolean, nullable=False, default=False, server_default="false")
     __table_args__ = (UniqueConstraint("organisation_id", "github_repo_full_name", name="uq_project_repo"),)
+
+
+class ProjectGitHubConnection(Base):
+    __tablename__ = 'project_github_connections'
+    project_id = Column(String(36), ForeignKey('projects.id'), primary_key=True)
+    encrypted_blob = Column(Text, nullable=False)
+    iv = Column(String(24), nullable=False)
+    updated_by = Column(String(36), ForeignKey('users.id'), nullable=False)
+    updated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
 
 
 class ProjectMember(Base):

@@ -28,7 +28,7 @@ from auth import require_admin_or_lead
 from crypto import decrypt_blob, encrypt_blob
 from db.crud import create_incident, finalize_non_forensic_incident, set_exposure_end
 from db.database import SessionLocal, get_db
-from db.models import Project, User
+from db.models import AzureSecretOccurrence, IncidentRecord, Project, User
 from detector.match_resolver import resolve_match
 from detector.scanner import scan
 from pipeline import run_collection_pipeline
@@ -81,13 +81,13 @@ def _decrypt_secret(value: str) -> str:
 # Diff fetching via PyGitHub
 # ---------------------------------------------------------------------------
 
-def _fetch_diff(repo_full_name: str, sha: str) -> str:
+def _fetch_diff(repo_full_name: str, sha: str, token: str | None = None) -> str:
     """
     Fetch the unified diff for a commit using the GitHub API.
     Returns one big string with all file patches concatenated.
     """
     try:
-        gh = Github(config.GITHUB_TOKEN)
+        gh = Github(token)
         repo = gh.get_repo(repo_full_name)
         commit = repo.get_commit(sha)
         parts: list[str] = []
@@ -186,6 +186,8 @@ async def github_webhook(
 
     from auth import ensure_single_organisation
     ensure_single_organisation(db)
+    project.webhook_last_verified_at = datetime.now(timezone.utc)
+    db.commit()
 
     # 2. Only process push events
     if event_type != "push":
@@ -200,6 +202,7 @@ async def github_webhook(
         return {"status": "ignored", "reason": "no commits in payload"}
 
     created_incidents: list[str] = []
+    repeated_incidents: list[str] = []
     logger.info(f"[WEBHOOK] Processing {len(commits)} commit(s) on {repo_full_name}...")
 
     # 3. Process each commit
@@ -214,7 +217,14 @@ async def github_webhook(
 
         # 4. Fetch the commit diff
         logger.info(f"[WEBHOOK PROCESS] Fetching diff for {sha}...")
-        diff_text = _fetch_diff(repo_full_name, sha)
+        from github_connection import project_token
+        try:
+            token = project_token(db, project.id)
+        except ValueError:
+            raise HTTPException(503, 'Save this project’s GitHub connection again in Connect') from None
+        if not token:
+            raise HTTPException(503, 'Save a GitHub connection for this project in Connect before processing pushes')
+        diff_text = _fetch_diff(repo_full_name, sha, token)
         if not diff_text:
             logger.info(f"[WEBHOOK FAIL] Could not fetch diff text for {sha}.")
             continue
@@ -234,6 +244,21 @@ async def github_webhook(
             match_platform = resolved.platform
             credential = resolved.credential
 
+            fingerprint = None
+            if resolved.credential_type == 'azure_client_secret' and getattr(match, 'secret_value', None):
+                from crypto import _key
+                # Use a project-scoped, keyed digest; never persist the secret or a plain hash.
+                fingerprint = hmac.new(_key(), b'azure-secret-v1\0' + project.id.encode() + b'\0' + match.secret_value.encode(), hashlib.sha256).hexdigest()
+                db.query(Project).filter_by(id=project.id).with_for_update().one()
+                existing = db.query(IncidentRecord).filter_by(project_id=project.id, azure_secret_fingerprint=fingerprint).first()
+                if existing:
+                    occurrence = db.query(AzureSecretOccurrence).filter_by(incident_id=existing.incident_id, commit_hash=sha).first()
+                    if not occurrence:
+                        db.add(AzureSecretOccurrence(incident_id=existing.incident_id, commit_hash=sha, observed_at=exposure_start))
+                        repeated_incidents.append(existing.incident_id)
+                    db.commit()
+                    continue
+
             incident = create_incident(
                 db,
                 credential_type=resolved.credential_type,
@@ -248,6 +273,9 @@ async def github_webhook(
                 project_id=project.id,
                 commit=False,
             )
+            if fingerprint:
+                incident.azure_secret_fingerprint = fingerprint
+                db.add(AzureSecretOccurrence(incident_id=incident.incident_id, commit_hash=sha, observed_at=exposure_start))
             created_incidents.append(incident.incident_id)
             logger.info(
                 "Incident created: %s | platform: %s | tier: %s | hint: %s | repo: %s",
@@ -306,6 +334,7 @@ async def github_webhook(
         "status": "processed",
         "incidents_created": len(created_incidents),
         "incident_ids": created_incidents,
+        "repeated_incident_ids": repeated_incidents,
     }
 
 
@@ -333,6 +362,7 @@ def set_manual_secret(project_id: str, body: ManualSecretRequest, request: Reque
     except Exception:
         raise HTTPException(503, "Webhook encryption is not configured") from None
     project.webhook_registered_at = None
+    project.webhook_last_verified_at = None
     record(db, user, "project.webhook_secret_updated", request, project_id=project.id)
     db.commit()
     return {"message": "Webhook secret saved. Configure the same secret in GitHub."}
@@ -355,8 +385,15 @@ async def register_webhook(body: RegisterRequest, request: Request,
     except Exception:
         db.rollback()
         raise HTTPException(503, "Project webhook encryption is not configured") from None
+    from github_connection import project_token
     try:
-        repo = Github(config.GITHUB_TOKEN).get_repo(project.github_repo_full_name)
+        token = project_token(db, project.id)
+    except ValueError as exc:
+        raise HTTPException(503, str(exc)) from None
+    if not token:
+        raise HTTPException(422, 'Save a GitHub access token for this project in Connect before registering the webhook')
+    try:
+        repo = Github(token).get_repo(project.github_repo_full_name)
         hooks = list(repo.get_hooks())
         hook = next((item for item in hooks if item.config.get("url", "") == body.webhook_url), None)
         hook_config = {"url": body.webhook_url, "content_type": "json", "secret": webhook_secret, "insecure_ssl": "0"}
@@ -367,7 +404,13 @@ async def register_webhook(body: RegisterRequest, request: Request,
             hook = repo.create_hook(name="web", config=hook_config, events=["push"], active=True)
     except GithubException as exc:
         if exc.status == 403:
-            detail = "GitHub denied access. Check the token's repository administration permissions."
+            detail = ("GitHub denied webhook access. Give this project’s saved GitHub token access to this repository "
+                      "with Webhooks: read and write permission (fine-grained token), or admin:repo_hook "
+                      "scope (classic token). Repository admin access alone does not grant the token webhook write access.")
+        elif exc.status == 401:
+            detail = "GitHub rejected the saved token. Replace it in this project’s GitHub connection."
+        elif exc.status == 404:
+            detail = "GitHub could not access this repository or its webhooks. Check the repository name and the saved token's repository access."
         else:
             detail = "GitHub rejected the request. Check repository access and webhook settings."
         raise HTTPException(400, detail) from None

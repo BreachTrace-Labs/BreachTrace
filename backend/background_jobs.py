@@ -112,7 +112,22 @@ def process_one() -> bool:
 def dispatch(kind: str, payload: dict) -> dict:
     if kind == 'snapshot':
         from repository_snapshot import scan_github
-        return scan_github(payload['repo_url'])
+        from repository_snapshot import repository_name
+        from db.models import Project
+        from github_connection import project_token
+        with SessionLocal() as db:
+            project = db.query(Project).filter_by(github_repo_full_name=repository_name(payload['repo_url']).lower(), is_deleted=False).first()
+            token = project_token(db, project.id) if project else None
+        return scan_github(payload['repo_url'], token=token)
+    if kind == 'model_benchmark':
+        from tempfile import TemporaryDirectory
+        from pathlib import Path
+        from research.model_benchmark import run
+        with TemporaryDirectory(prefix='breachtrace-benchmark-') as directory:
+            try:
+                return run(payload['models'], payload['cases'], payload['seed'], Path(directory) / 'results.json')
+            except SystemExit as exc:
+                raise RuntimeError('Local model comparison unavailable') from exc
     if kind == 'wallet_verify':
         from wallet_verify import verify_entry
         if not verify_entry(payload['entry_id'], payload['iv'], payload.get('actor_id')):

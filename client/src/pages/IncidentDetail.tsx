@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { useParams, useNavigate } from 'react-router-dom'
+import { Link, useParams, useNavigate } from 'react-router-dom'
 import {
   ArrowLeft,
   AlertTriangle,
@@ -30,11 +30,14 @@ import ForensicTimeline from '@/components/ForensicTimeline'
 import ForensicsUnavailable from '@/components/ForensicsUnavailable'
 import FinancialImpactPanel from '@/components/FinancialImpactPanel'
 import BlastRadiusSummary from '@/components/BlastRadiusSummary'
-import { inExposureWindow } from '@/lib/forensicEvidence'
+import { inExposureWindow, initialEvidenceScope } from '@/lib/forensicEvidence'
 import AffectedResources from '@/components/AffectedResources'
 import SourceIPs from '@/components/SourceIPs'
 import RelatedCredentials from '@/components/RelatedCredentials'
 import ComplianceReview from '@/components/ComplianceReview'
+import ExposureObservations from '@/components/ExposureObservations'
+import GCPKeyAttribution from '@/components/GCPKeyAttribution'
+import AzureSignIns from '@/components/AzureSignIns'
 import ReactMarkdown from 'react-markdown'
 import RemediationChecklist from '@/components/RemediationChecklist'
 import EventAnalytics from '@/components/EventAnalytics'
@@ -74,6 +77,7 @@ function ReportSourceBadge({ source }: { source?: ReportSource | null }) {
     openai: 'OpenAI',
     anthropic: 'Anthropic',
     ollama: 'Local Ollama model',
+    groq: 'Groq',
   }[source]
   const title = {
     deterministic: 'Written from verified facts by a fixed template.',
@@ -82,6 +86,7 @@ function ReportSourceBadge({ source }: { source?: ReportSource | null }) {
     openai: 'Written by your selected OpenAI model, and checked against the facts.',
     anthropic: 'Written by your selected Anthropic model, and checked against the facts.',
     ollama: 'Written by your selected local Ollama model, and checked against the facts.',
+    groq: 'Written by your selected Groq model, and checked against the facts.',
   }[source]
   return (
     <span
@@ -97,7 +102,9 @@ function ReportSourceBadge({ source }: { source?: ReportSource | null }) {
 /** Search scoped to one incident: its report passages plus the knowledge base. */
 function AskAboutIncident({ incidentId }: { incidentId: string }) {
   const [question, setQuestion] = useState('')
-  const [generateAnswer, setGenerateAnswer] = useState(false)
+  const [generateAnswer, setGenerateAnswer] = useState(true)
+  const [answerModel, setAnswerModel] = useState<{provider: string; model: string; configured: boolean} | null>(null)
+  useEffect(() => { let active = true; client.get('/assistant/model').then(({data}) => { if (active) setAnswerModel(data) }).catch(() => {}); return () => { active = false } }, [])
   const [result, setResult] = useState<SearchResult | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
@@ -155,6 +162,7 @@ function AskAboutIncident({ incidentId }: { incidentId: string }) {
         <input type="checkbox" checked={generateAnswer} onChange={e => setGenerateAnswer(e.target.checked)} className="mt-0.5" />
         <span>Generate an answer from the retrieved evidence with the model selected in Settings. Cloud models receive the question and matching passages.</span>
       </label>
+      <p className="text-xs text-muted-foreground">{answerModel?.configured ? `Answer model: ${answerModel.model || answerModel.provider}. ` : 'Choose and test a model to generate answers. '}<Link className="underline" to="/settings?section=model">Model settings →</Link></p>
       {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
       {result && !loading && (
         <SearchResults result={result} showIncidents={false} onSuggestion={(q) => void ask(q)} />
@@ -247,7 +255,7 @@ const IncidentDetail: React.FC = () => {
   const [error, setError] = useState<string | null>(null)
   const [refreshing, setRefreshing] = useState(false)
   const [refreshNotice, setRefreshNotice] = useState<string | null>(null)
-  const [evidenceScope, setEvidenceScope] = useState<'window' | 'history'>('window')
+  const [evidenceScope, setEvidenceScope] = useState<'auto' | 'window' | 'history'>('auto')
   const [twilioAccount, setTwilioAccount] = useState('')
   const [azureClientId, setAzureClientId] = useState('')
   const [azureOwnershipConfirmed, setAzureOwnershipConfirmed] = useState(false)
@@ -255,7 +263,7 @@ const IncidentDetail: React.FC = () => {
 
   useEffect(() => {
     if (!id) return
-    setEvidenceScope('window')
+    setEvidenceScope('auto')
     const load = async () => {
       setLoading(true)
       setError(null)
@@ -379,7 +387,8 @@ const IncidentDetail: React.FC = () => {
   const exposureTimestamp = new Date(incident.exposure_start).getTime()
   const exposureEvents = incident.events.filter(event => new Date(event.timestamp).getTime() >= exposureTimestamp)
   const windowEvents = inExposureWindow(incident.events, incident.exposure_start, incident.exposure_end)
-  const evidenceEvents = evidenceScope === 'window' ? windowEvents : incident.events
+  const activeEvidenceScope = evidenceScope === 'auto' ? initialEvidenceScope(incident) : evidenceScope
+  const evidenceEvents = activeEvidenceScope === 'window' ? windowEvents : incident.events
   const collectionInProgress = ['detecting', 'collecting', 'classifying', 'scoring', 'reporting'].includes(incident.status)
   const collectionFailed = incident.status === 'error' || incident.collection_status === 'error'
 
@@ -525,6 +534,10 @@ const IncidentDetail: React.FC = () => {
                 )}
               </div>
 
+              {platform === 'azure' && <AzureSignIns incidentId={incident.incident_id} canManage={canManage} hasApplication={!!incident.principal_id} exposureStart={incident.exposure_start} exposureEnd={incident.exposure_end} />}
+              {platform === 'gcp' && <GCPKeyAttribution incident={incident} canManage={canManage} onChange={setIncident}/>}
+              {(incident.azure_secret_occurrences?.length ?? 0) > 1 && <section className="rounded-lg border border-amber-500/50 bg-card p-5 space-y-2" role="status"><h2 className="font-semibold flex items-center gap-2"><AlertTriangle size={18}/>Credential exposed again</h2><p className="text-sm text-muted-foreground">The same Azure secret was detected in {incident.azure_secret_occurrences?.length} commits in this project. Review each occurrence; activity remains scoped to the application unless key-specific evidence is available.</p><ul className="text-sm space-y-1">{incident.azure_secret_occurrences?.map(item => <li key={item.commit_hash}><code>{item.commit_hash.slice(0, 7)}</code> · {fmtTime(item.observed_at)} (commit time)</li>)}</ul></section>}
+              <ExposureObservations key={`exposure-${incident.incident_id}`} incidentId={incident.incident_id} canManage={canManage} />
               <RelatedCredentials key={incident.incident_id} incidentId={incident.incident_id} />
 
               {/* Leaked principal — named per platform. AWS reports an access key
@@ -641,13 +654,13 @@ const IncidentDetail: React.FC = () => {
               <p className="forensic-range-title">Evidence time range</p>
               <p className="forensic-range-intro">Applies to financial activity, source IPs and resources below.</p>
               <div className="forensic-range-options" role="group" aria-label="Event time range">
-                <button type="button" aria-pressed={evidenceScope === 'window'} onClick={() => setEvidenceScope('window')}>Exposure window <span>{windowEvents.length}</span></button>
-                <button type="button" aria-pressed={evidenceScope === 'history'} onClick={() => setEvidenceScope('history')}>All history <span>{incident.events.length}</span></button>
+                <button type="button" aria-pressed={activeEvidenceScope === 'window'} onClick={() => setEvidenceScope('window')}>Exposure window <span>{windowEvents.length}</span></button>
+                <button type="button" aria-pressed={activeEvidenceScope === 'history'} onClick={() => setEvidenceScope('history')}>All history <span>{incident.events.length}</span></button>
               </div>
-              <p className="forensic-range-help">{evidenceScope === 'window' ? windowEvents.length === 0 && incident.events.length > 0 ? 'No events fall within the recorded exposure window. Choose All history to view events outside it as context.' : 'From the estimated exposure start through the recorded end, if present.' : 'Includes events outside the exposure window. These are context, not evidence of activity caused by this exposure.'}</p>
+              <p className="forensic-range-help">{activeEvidenceScope === 'window' ? windowEvents.length === 0 && incident.events.length > 0 ? 'No events fall within the estimated exposure window. Select All history to see the available context.' : 'From the estimated exposure start through the recorded end, if present.' : windowEvents.length === 0 ? 'Showing history because no events fall within the estimated exposure window. Historical events are context, not evidence of activity caused by this exposure.' : 'Includes events outside the exposure window. These are context, not evidence of activity caused by this exposure.'}</p>{platform === 'azure' && <p className="forensic-range-help">Azure Activity Log is matched to the application, so incidents for different secrets in the same application can show the same events. The log does not identify which secret was used.</p>}
               {!forensic && <p className="forensic-range-help">This credential type is detection only; provider activity is not collected for this finding.</p>}
             </div>
-            {forensic && <FinancialImpactPanel incident={incident} scope={evidenceScope} />}
+            {forensic && <FinancialImpactPanel incident={incident} scope={activeEvidenceScope} />}
             <SourceIPs events={evidenceEvents} platform={platform} collecting={collectionInProgress} error={collectionFailed} />
             <AffectedResources events={evidenceEvents} collecting={collectionInProgress} error={collectionFailed} />
             <RemediationChecklist steps={incident.remediation_steps} />

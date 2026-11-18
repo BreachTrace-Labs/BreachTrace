@@ -15,6 +15,7 @@ const messages = {
 }
 
 export default function BlastRadiusSummary({ incident }: { incident: IncidentRecord }) {
+  const historyOnly = incident.events.length > 0 && (incident.dynamic_blast_radius?.event_count ?? 0) === 0
   const assessment = incident.dynamic_blast_radius ?? (USE_MOCK ? previewBlastRadius(incident) : null)
   return <Card className="forensic-card"><CardHeader className="forensic-card-header"><div className="forensic-card-heading"><span className="forensic-icon"><Activity size={17}/></span><div><CardTitle>Dynamic blast radius</CardTitle><p>Based on exposure-window events</p></div></div><SeverityBadge severity={assessment?.severity ?? null} /></CardHeader><CardContent className="forensic-card-content">
     {!assessment ? <div className="forensic-empty"><ShieldAlert size={18}/><div><strong>Assessment unavailable</strong><p>Restart or update the backend, then reload this incident.</p></div></div> : <>
@@ -26,6 +27,8 @@ export default function BlastRadiusSummary({ incident }: { incident: IncidentRec
         </section>)}
         {assessment.last_observed_at && <p className="forensic-meta">Latest recorded event · {new Date(assessment.last_observed_at).toLocaleString()}</p>}
       </> : <div className="forensic-empty"><ShieldAlert size={18}/><div><strong>{assessment.status === 'no_observed_activity' ? 'No activity observed' : 'No activity to summarise'}</strong><p>{assessment.status === 'no_observed_activity' ? 'Available logs do not establish that no activity occurred.' : 'The assessment will update when eligible events are available.'}</p></div></div>}
+      {historyOnly && <p className="forensic-meta">{incident.events.length} events are available in collected history. They fall outside the exposure window and are shown as context below.</p>}
+      {(incident.platform === 'azure' || incident.credential_type.startsWith('azure_')) && <p className="forensic-meta">Azure Activity Log describes the application, not an individual secret. Different secrets for the same application may share these events.</p>}
       <details className="forensic-details forensic-notes"><summary>How to interpret this <ChevronDown size={15}/></summary><p>The window starts at the estimated commit exposure time and ends at the recorded end, if present; an end does not independently confirm revocation. The score uses successful classified events, not a complete list of permissions. Failed events are counted separately. Account or identity activity may not be attributable to this key. Provider collection may require a refresh; this view can differ from the last generated report.</p></details>
     </>}
   </CardContent></Card>

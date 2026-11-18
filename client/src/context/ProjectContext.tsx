@@ -2,7 +2,7 @@ import { createContext, useCallback, useContext, useEffect, useRef, useState } f
 import { realClient, USE_MOCK } from '@/api/client'
 import { useAuth } from '@/context/AuthContext'
 
-export type Project = { id: string; name: string; github_repo_url: string; github_repo_full_name: string; webhook_registered_at: string | null; created_at?: string | null; member_count: number; incident_count: number }
+export type Project = { id: string; name: string; github_repo_url: string; github_repo_full_name: string; webhook_registered_at: string | null; webhook_last_verified_at?: string | null; created_at?: string | null; member_count: number; incident_count: number }
 type Projects = { projects: Project[]; selected: Project | null; select: (id: string) => void; refresh: () => Promise<void>; error: string; loading: boolean }
 const Context = createContext<Projects | null>(null)
 export function ProjectProvider({ children }: { children: React.ReactNode }) {

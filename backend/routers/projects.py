@@ -1,6 +1,6 @@
 """Project management and membership."""
 from fastapi import APIRouter, Depends, HTTPException, Request
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, SecretStr, field_validator
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -93,6 +93,7 @@ class MemberCreate(BaseModel):
 def project_data(db: Session, project: Project):
     return {"id": project.id, "name": project.name, "github_repo_url": project.github_repo_url,
             "github_repo_full_name": project.github_repo_full_name, "webhook_registered_at": project.webhook_registered_at,
+            "webhook_last_verified_at": project.webhook_last_verified_at,
             "created_at": project.created_at,
             "member_count": db.query(ProjectMember).filter_by(project_id=project.id).count(),
             "incident_count": db.query(IncidentRecord).filter_by(project_id=project.id).count()}
@@ -131,6 +132,59 @@ def create_project(body: ProjectCreate, request: Request, user: User = Depends(r
 @router.get("/{project_id}")
 def get_project(project_id: str, user: User = Depends(get_active_user), db: Session = Depends(get_db)):
     return project_data(db, assert_project_access(project_id, user, db))
+
+
+class GitHubConnectionInput(BaseModel):
+    token: SecretStr = Field(min_length=20, max_length=300)
+
+
+def github_connection_data(db, project_id):
+    from db.models import ProjectGitHubConnection
+    row = db.get(ProjectGitHubConnection, project_id)
+    return {'configured': row is not None, 'updated_at': row.updated_at if row else None}
+
+
+@router.get('/{project_id}/github-connection')
+def get_github_connection(project_id: str, user: User = Depends(require_admin_or_lead), db: Session = Depends(get_db)):
+    assert_project_access(project_id, user, db)
+    return github_connection_data(db, project_id)
+
+
+@router.put('/{project_id}/github-connection')
+def save_github_connection(project_id: str, body: GitHubConnectionInput, request: Request,
+                           user: User = Depends(require_admin_or_lead), db: Session = Depends(get_db)):
+    from datetime import datetime, timezone
+    from crypto import encrypt_blob
+    from db.models import ProjectGitHubConnection
+    assert_project_access(project_id, user, db)
+    token = body.token.get_secret_value().strip()
+    if len(token) < 20 or any(char.isspace() for char in token):
+        raise HTTPException(422, 'Enter a valid GitHub access token without spaces')
+    try:
+        ciphertext, iv = encrypt_blob({'token': token})
+    except Exception:
+        raise HTTPException(503, 'Connection encryption is not configured') from None
+    row = db.get(ProjectGitHubConnection, project_id)
+    if row is None:
+        row = ProjectGitHubConnection(project_id=project_id)
+        db.add(row)
+    row.encrypted_blob, row.iv = ciphertext, iv
+    row.updated_by, row.updated_at = user.id, datetime.now(timezone.utc)
+    record(db, user, 'project.github_connection_saved', request, project_id=project_id)
+    db.commit()
+    return github_connection_data(db, project_id)
+
+
+@router.delete('/{project_id}/github-connection', status_code=204)
+def remove_github_connection(project_id: str, request: Request,
+                             user: User = Depends(require_admin_or_lead), db: Session = Depends(get_db)):
+    from db.models import ProjectGitHubConnection
+    assert_project_access(project_id, user, db)
+    row = db.get(ProjectGitHubConnection, project_id)
+    if row:
+        db.delete(row)
+        record(db, user, 'project.github_connection_removed', request, project_id=project_id)
+        db.commit()
 
 
 @router.get("/{project_id}/notifications")
