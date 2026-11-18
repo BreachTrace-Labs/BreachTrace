@@ -5,6 +5,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import Sequence
 
+from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from db.models import CollectionStatus, IncidentRecord
@@ -31,10 +32,13 @@ def create_incident(
     azure_subscription_id: str | None = None,
     forensic_tier: int = 1,
     unavailable_reason: str | None = None,
+    project_id: str | None = None,
+    commit: bool = True,
 ) -> IncidentRecord:
     """Insert a new incident row and return the persisted object."""
     incident = IncidentRecord(
         incident_id=str(uuid.uuid4()),
+        project_id=project_id,
         credential_type=credential_type,
         credential_hint=credential_hint,
         access_key_id=access_key_id,
@@ -52,8 +56,11 @@ def create_incident(
         gdpr_flag=False,
     )
     db.add(incident)
-    db.commit()
-    db.refresh(incident)
+    if commit:
+        db.commit()
+        db.refresh(incident)
+    else:
+        db.flush()
     return incident
 
 
@@ -90,7 +97,7 @@ def set_exposure_end(db: Session, incident_id: str, end_time: datetime) -> None:
         db.commit()
 
 
-def reset_incident_for_refresh(db: Session, incident_id: str) -> IncidentRecord | None:
+def reset_incident_for_refresh(db: Session, incident_id: str, *, commit: bool = True) -> IncidentRecord | None:
     """
     Clear derived forensic output before a manual CloudTrail refresh.
 
@@ -102,7 +109,9 @@ def reset_incident_for_refresh(db: Session, incident_id: str) -> IncidentRecord 
         return None
 
     db.query(ORMForensicEvent).filter(
-        ORMForensicEvent.incident_id == incident_id
+        ORMForensicEvent.incident_id == incident_id,
+        or_(ORMForensicEvent.event_source.is_(None),
+            ORMForensicEvent.event_source != "stripe-cli-request-log"),
     ).delete(synchronize_session=False)
 
     incident.status = "collecting"
@@ -111,8 +120,11 @@ def reset_incident_for_refresh(db: Session, incident_id: str) -> IncidentRecord 
     incident.remediation_steps = []
     incident.gdpr_flag = False
     incident.financial_impact = None
-    db.commit()
-    db.refresh(incident)
+    if commit:
+        db.commit()
+        db.refresh(incident)
+    else:
+        db.flush()
     return incident
 
 
@@ -130,11 +142,19 @@ def save_forensic_events(
     Returns the created ORM rows.
     """
     orm_events: list[ORMForensicEvent] = []
+    existing_sources = {row[0] for row in db.query(ORMForensicEvent.source_record_id)
+                        .filter(ORMForensicEvent.incident_id == incident_id,
+                                ORMForensicEvent.source_record_id.isnot(None)).all()}
     for event in events:
+        source_record_id = event.source_record_id if event.platform == 'gcp' else None
+        if source_record_id and source_record_id in existing_sources:
+            continue
+        if source_record_id:
+            existing_sources.add(source_record_id)
         error_code = event.error_code
         is_denied = (
             error_code is not None
-            and "AccessDenied" in error_code
+            and ("AccessDenied" in error_code or (event.platform == 'gcp' and error_code == '7'))
         )
         # Extract principal ARN from raw CloudTrail data when available.
         principal_arn = None
@@ -144,6 +164,7 @@ def save_forensic_events(
 
         orm_event = ORMForensicEvent(
             event_id=event.event_id,
+            source_record_id=source_record_id,
             incident_id=incident_id,
             platform=event.platform,
             timestamp=event.timestamp,

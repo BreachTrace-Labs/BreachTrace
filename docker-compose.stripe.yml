@@ -1,0 +1,16 @@
+# Long-running Stripe CLI request-log sidecar.
+# Run beside a local backend or deploy beside the backend on an always-on host.
+services:
+  stripe-request-logs:
+    build:
+      context: .
+      dockerfile: Dockerfile.stripe-logs
+    restart: unless-stopped
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    environment:
+      STRIPE_INCIDENT_ID: ${STRIPE_INCIDENT_ID:?Set the Stripe incident UUID}
+      STRIPE_CLI_API_KEY: ${STRIPE_CLI_API_KEY:?Set a dedicated Stripe test key with CLI request-log access}
+      STRIPE_LOG_INGEST_TOKEN: ${STRIPE_LOG_INGEST_TOKEN:?Set the same ingest token on the backend}
+      BREACHTRACE_API_URL: ${BREACHTRACE_API_URL:-http://host.docker.internal:8000}
+    command: ["--confirm-sandbox"]

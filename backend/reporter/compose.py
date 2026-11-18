@@ -29,6 +29,7 @@ _CREDENTIAL_NAMES = {
     "azure_storage_connection": "storage connection string",
     "stripe_secret_key": "secret API key",
     "twilio_account_sid": "account credential",
+    "twilio_api_key": "API key",
 }
 
 
@@ -45,32 +46,33 @@ def _what(facts: dict) -> str:
 def deterministic_sections(facts: dict) -> dict:
     """Template prose built purely from facts — always grounded, never fluent."""
     audit_log = facts["audit_log"]
-    duration = facts["exposure_duration"]
     severity = facts["severity"]
 
     if facts["event_count"] == 0:
         summary = (
-            f"{_what(facts)} was exposed in a public repository for {duration}. "
-            f"No activity was recorded in {audit_log} during the investigation window. "
+            f"{_what(facts)} was detected in repository content. The commit timestamp is an estimated exposure start; rotation is not confirmed by this report. "
+            f"No activity was recorded in {audit_log} after the detected exposure in the collected window. "
             "This does not prove the credential went unused, so treat it as compromised."
         )
         narrative = [
-            f"No events were recorded in {audit_log}. {facts.get('blind_spot', '')}".strip()
+            f"No events were recorded in {audit_log} after the detected exposure in the collected window. {facts.get('blind_spot', '')}".strip()
         ]
         impact = (
-            "No financial or data impact could be measured from the audit log. "
-            "Rotate the credential as urgently as if activity had been found."
+            ("Cloud Audit Logs do not establish billing charges or financial loss. " if facts['platform'] == 'gcp' else "No financial or data impact could be measured from the audit log. ")
+            + "Rotate the credential as urgently as if activity had been found."
         )
         return {"executive_summary": summary, "narrative": narrative, "business_impact": impact}
 
     worst = next(iter(facts["categories"]), None)
     summary = (
-        f"{_what(facts)} was exposed in a public repository for {duration}. "
+        f"{_what(facts)} was detected in repository content. The commit timestamp is an estimated exposure start; rotation is not confirmed by this report. "
         f"{audit_log} recorded {facts['event_count']} event(s) between "
         f"{facts['first_event']} and {facts['last_event']}"
-        + (f", the most serious being {CATEGORY_LABELS.get(worst, worst)}" if worst else "")
+        + (f", the most serious being {'resource changes' if facts['platform'] == 'gcp' and worst == 'resource_abuse' else CATEGORY_LABELS.get(worst, worst)}" if worst else "")
         + f". Overall severity: {severity}."
     )
+    if facts['platform'] == 'gcp' and facts['failed_count'] == facts['event_count']:
+        summary += ' All recorded operations failed; attempts remain relevant to the investigation.'
 
     narrative = []
     # facts["actions"] is ranked worst-first to choose what to show; the
@@ -78,6 +80,8 @@ def deterministic_sections(facts: dict) -> dict:
     for action in sorted(facts["actions"], key=lambda a: a["first_seen"] or ""):
         name = action["label"] or action["action"]
         line = f"{action['first_seen']}: {name} ({action['action']})"
+        if facts['platform'] == 'gcp' and action['failed'] == action['count']:
+            line = f"{action['first_seen']}: Attempted {name} ({action['action']})"
         if action["count"] > 1:
             line += f", {action['count']} times"
         if action["resources"]:
@@ -92,10 +96,12 @@ def deterministic_sections(facts: dict) -> dict:
     if facts["financial"]:
         impact_parts.append("Financial impact: " + "; ".join(facts["financial"]) + ".")
     else:
-        impact_parts.append("No direct financial impact was measured.")
+        impact_parts.append("Cloud Audit Logs do not establish billing charges or financial loss." if facts['platform'] == 'gcp' else "No direct financial impact was measured.")
     impact_parts.extend(facts["compliance"])
     if facts["event_count"] and not facts["source_ips"]:
-        impact_parts.append(f"{audit_log} does not record source IP addresses for this activity.")
+        impact_parts.append("No source IP addresses were available in the collected events.")
+    if facts.get("blind_spot"):
+        impact_parts.append(facts["blind_spot"])
 
     return {
         "executive_summary": summary,

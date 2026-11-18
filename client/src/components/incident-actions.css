@@ -1,0 +1,14 @@
+.incident-actions { display: grid; gap: var(--space-3); }
+.incident-action-row { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-3); font-size: var(--text-sm); }
+.incident-dismissed { padding: var(--space-4); border: 1px solid var(--color-sev-medium); border-radius: var(--radius-lg); background: var(--color-sev-medium-bg); font-size: var(--text-sm); }
+.incident-dismissed p { margin-top: var(--space-1); }
+.incident-action-form { display: grid; gap: var(--space-4); font-size: var(--text-sm); }
+.incident-action-form fieldset { display: grid; gap: var(--space-3); }
+.incident-action-form legend { margin-bottom: var(--space-2); font-weight: var(--weight-semibold); }
+.incident-radio { display: flex; align-items: flex-start; gap: var(--space-2); }
+.incident-radio small { display: block; color: var(--color-text-secondary); }
+.incident-action-form textarea, .incident-action-form select { display: block; width: 100%; margin-top: var(--space-2); padding: var(--space-2); border: 1px solid var(--color-border-default); border-radius: var(--radius-md); background: var(--color-bg-base); }
+.incident-action-form textarea { min-height: 100px; resize: vertical; }
+.incident-action-hint { color: var(--color-text-secondary); font-size: var(--text-xs); }
+.incident-action-error { color: var(--color-sev-critical); font-size: var(--text-sm); }
+.incident-audit { display: grid; gap: var(--space-3); padding-bottom: var(--space-6); font-size: var(--text-sm); }

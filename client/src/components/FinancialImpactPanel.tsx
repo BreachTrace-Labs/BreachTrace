@@ -1,257 +1,31 @@
-import { Banknote, TrendingDown } from 'lucide-react'
+import { Banknote, Info } from 'lucide-react'
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
-import { PLATFORM_META, derivePlatform, type Platform } from '@/lib/platform'
 import type { FinancialImpactLine, IncidentRecord } from '@/types'
 
-/**
- * What the leak cost.
- *
- * The panel's whole job is keeping two very different numbers apart. Stripe
- * lines are money that demonstrably moved — a real amount, in a real currency,
- * on a real transaction. Every other platform is an order-of-magnitude estimate
- * from public list prices. Presenting them with equal confidence would either
- * overstate a cloud estimate or understate an actual loss, so `actual` splits
- * the panel in two and the footnote says which is which.
- */
-
-interface Props {
-  incident: IncidentRecord
+type Props = { incident: IncidentRecord; scope: 'window' | 'history' }
+const labels: Record<string, string> = { charge: 'Charged', refund: 'Refunded', payout: 'Paid out', messaging: 'Messaging and calls' }
+const countLabels: Record<string, [string, string]> = { charge: ['transaction', 'transactions'], refund: ['refund', 'refunds'], payout: ['payout', 'payouts'] }
+const units: Record<string, string> = { hour: '/hr', day: '/day', month: '/month' }
+function money(amount: number, currency: string | null) {
+  if (!currency) return amount.toFixed(2)
+  try { return new Intl.NumberFormat(undefined, { style: 'currency', currency, maximumFractionDigits: 2 }).format(amount) }
+  catch { return `${amount.toFixed(2)} ${currency}` }
 }
-
-const UNIT_SUFFIX: Record<NonNullable<FinancialImpactLine['unit']>, string> = {
-  hour: '/hr',
-  day: '/day',
-  month: '/mo',
+function Figure({ line }: { line: FinancialImpactLine }) {
+  const title = labels[line.kind] ?? line.label
+  const count = line.quantity != null && countLabels[line.kind] ? `${line.quantity} ${countLabels[line.kind][line.quantity === 1 ? 0 : 1]}` : null
+  return <div className="finance-row"><div><strong>{title}</strong><span>{line.actual ? 'Provider reported' : 'Estimate'}{count ? ` · ${count}` : ''}</span></div><div className="finance-value">{line.amount != null ? <>{money(line.amount, line.currency)}{line.unit && <small>{units[line.unit]}</small>}</> : <span>{line.text}</span>}</div></div>
 }
-
-/**
- * Render an amount in its own currency.
- *
- * Intl handles the symbol, placement and grouping per currency, which is why
- * the ISO code is carried as data rather than baked into the backend string —
- * `1,240.00 USD` is not what a reader expects to see for a charge.
- */
-function formatCurrency(amount: number, currency: string): string {
-  try {
-    return new Intl.NumberFormat(undefined, {
-      style: 'currency',
-      currency,
-      maximumFractionDigits: 2,
-    }).format(amount)
-  } catch {
-    // Unknown/invalid ISO code — never let a formatting failure hide the figure.
-    return `${amount.toFixed(2)} ${currency}`
-  }
+export default function FinancialImpactPanel({ incident, scope }: Props) {
+  const lines = (scope === 'history' ? incident.financial_history_lines : incident.financial_impact_lines)?.filter(line => line.platform !== 'gcp')
+  const gcp = incident.platform === 'gcp' || incident.credential_type?.startsWith('gcp_') || incident.credential_type === 'firebase_service_account'
+  const isLegacy = incident.financial_impact_lines === undefined
+  const fallback = !gcp && isLegacy && scope === 'window' ? incident.estimated_financial_impact : null
+  const unavailable = !gcp && lines === undefined && !fallback
+  const collecting = ['detecting', 'collecting', 'classifying', 'scoring', 'reporting'].includes(incident.status)
+  const failed = incident.status === 'error' || incident.collection_status === 'error'
+  const azure = incident.platform === 'azure' || incident.credential_type?.startsWith('azure_')
+  return <Card className="forensic-card"><CardHeader className="forensic-card-header"><div className="forensic-card-heading"><span className="forensic-icon"><Banknote size={17}/></span><div><CardTitle>Financial activity</CardTitle><p>{scope === 'window' ? 'Exposure window' : 'All collected history'}</p></div></div></CardHeader><CardContent className="forensic-card-content">
+    {fallback && fallback !== 'No financial impact detected' ? <div className="forensic-empty"><Info size={18}/><div><strong>Previous report summary</strong><p>{fallback}</p><p>Its time range cannot be verified here. Update the backend for a current breakdown.</p></div></div> : unavailable ? <div className="forensic-empty"><Info size={18}/><div><strong>Breakdown unavailable</strong><p>Update the backend to calculate financial activity for this time range.</p></div></div> : !lines?.length ? <div className="forensic-empty"><Banknote size={18}/><div><strong>{collecting ? 'Collection in progress' : failed ? 'Financial activity unavailable' : azure || gcp ? 'No billing data available' : 'No financial activity found'}</strong><p>{collecting ? 'Financial activity will update as collection completes.' : failed ? 'Collection failed, so financial activity could not be assessed.' : gcp ? 'Cloud Audit Logs do not provide billing charges. Review Cloud Billing separately; these events do not establish financial loss.' : azure ? 'No estimate was calculated from these events. Azure Activity Log is not a billing feed, so charges and financial loss cannot be established here.' : 'No amounts were calculated from events in this range. This does not establish that no financial activity occurred.'}</p></div></div> : <><div className="finance-rows">{lines.map((line,index) => <Figure key={`${line.platform}-${line.kind}-${line.currency}-${index}`} line={line}/>)}</div><p className="finance-explanation">{scope === 'history' ? 'All history includes events outside the exposure window; these are context only. ' : ''}Provider-reported amounts reflect account activity, not proof of use by this credential or a financial loss. Estimates are not billing figures.</p></>}
+  </CardContent></Card>
 }
-
-/** Sum actual-money lines of one kind, grouped by currency. */
-function totalsByCurrency(
-  lines: FinancialImpactLine[],
-  kind: FinancialImpactLine['kind'],
-): { currency: string; total: number; count: number }[] {
-  const acc = new Map<string, { total: number; count: number }>()
-
-  for (const line of lines) {
-    if (!line.actual || line.kind !== kind || line.amount === null) continue
-    const currency = line.currency ?? 'USD'
-    const entry = acc.get(currency) ?? { total: 0, count: 0 }
-    entry.total += line.amount
-    entry.count += line.quantity ?? 1
-    acc.set(currency, entry)
-  }
-
-  return [...acc.entries()]
-    .map(([currency, v]) => ({ currency, ...v }))
-    .sort((a, b) => b.total - a.total)
-}
-
-function ActualFigure({
-  label,
-  entries,
-  color,
-}: {
-  label: string
-  entries: { currency: string; total: number; count: number }[]
-  color: string
-}) {
-  if (entries.length === 0) return null
-
-  return (
-    <div>
-      <p
-        className="text-[10px] font-semibold uppercase tracking-wider"
-        style={{ color: 'var(--color-muted-foreground)' }}
-      >
-        {label}
-      </p>
-      {entries.map(({ currency, total, count }) => (
-        <div key={currency} className="flex items-baseline gap-2 mt-1">
-          <span
-            className="text-2xl font-bold font-mono tracking-tight tabular-nums"
-            style={{ color }}
-          >
-            {formatCurrency(total, currency)}
-          </span>
-          <span className="text-[11px]" style={{ color: 'var(--color-muted-foreground)' }}>
-            {count} transaction{count === 1 ? '' : 's'}
-          </span>
-        </div>
-      ))}
-    </div>
-  )
-}
-
-const FinancialImpactPanel: React.FC<Props> = ({ incident }) => {
-  const lines = incident.financial_impact_lines ?? []
-  const fallback = incident.estimated_financial_impact
-
-  // Nothing to show at all — render nothing rather than an empty card.
-  if (lines.length === 0 && !fallback) return null
-
-  // Older backend: structured lines absent, but the string is still stored.
-  if (lines.length === 0 && fallback) {
-    if (fallback === 'No financial impact detected') return null
-    return (
-      <Card>
-        <CardHeader className="pb-3">
-          <CardTitle className="flex items-center gap-2 text-sm">
-            <Banknote size={14} strokeWidth={2} />
-            Financial Impact
-          </CardTitle>
-        </CardHeader>
-        <CardContent>
-          <p className="text-sm font-mono" style={{ color: 'var(--color-foreground)' }}>
-            {fallback}
-          </p>
-        </CardContent>
-      </Card>
-    )
-  }
-
-  const charged = totalsByCurrency(lines, 'charge')
-  const refunded = totalsByCurrency(lines, 'refund')
-  const paidOut = totalsByCurrency(lines, 'payout')
-  const estimates = lines.filter(l => !l.actual)
-  const hasActual = charged.length > 0 || refunded.length > 0 || paidOut.length > 0
-
-  // Group estimates by platform so a multi-vendor leak reads as separate bills.
-  const byPlatform = new Map<Platform, FinancialImpactLine[]>()
-  for (const line of estimates) {
-    const platform = derivePlatform({ platform: line.platform })
-    byPlatform.set(platform, [...(byPlatform.get(platform) ?? []), line])
-  }
-
-  return (
-    <Card>
-      <CardHeader className="pb-3">
-        <CardTitle className="flex items-center gap-2 text-sm">
-          <Banknote size={14} strokeWidth={2} />
-          Financial Impact
-          {hasActual && (
-            <span
-              className="ml-auto text-[10px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded"
-              style={{
-                backgroundColor: 'color-mix(in srgb, var(--color-sev-critical) 15%, transparent)',
-                color: 'var(--color-sev-critical)',
-              }}
-            >
-              Money moved
-            </span>
-          )}
-        </CardTitle>
-      </CardHeader>
-
-      <CardContent className="space-y-4">
-        {/* Actual money first — it is the only figure here that is not a guess. */}
-        {hasActual && (
-          <div className="space-y-3">
-            <ActualFigure
-              label="Charged"
-              entries={charged}
-              color="var(--color-sev-critical)"
-            />
-            {/* Charges and refunds are never netted: the scorer treats them as
-                different harms, and the panel must not contradict it. */}
-            <ActualFigure
-              label="Refunded"
-              entries={refunded}
-              color="var(--color-sev-high)"
-            />
-            {/* Payouts move the balance to a bank account — the attack that
-                follows a changed payout destination. */}
-            <ActualFigure
-              label="Paid out"
-              entries={paidOut}
-              color="var(--color-sev-critical)"
-            />
-          </div>
-        )}
-
-        {estimates.length > 0 && (
-          <div className={hasActual ? 'pt-3 border-t' : ''} style={hasActual ? { borderColor: 'var(--color-border)' } : undefined}>
-            <p
-              className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wider mb-2"
-              style={{ color: 'var(--color-muted-foreground)' }}
-            >
-              <TrendingDown size={11} strokeWidth={2} />
-              Estimated running cost
-            </p>
-
-            <div className="space-y-2.5">
-              {[...byPlatform.entries()].map(([platform, platformLines]) => (
-                <div key={platform}>
-                  <p
-                    className="text-[10px] font-semibold uppercase tracking-wider"
-                    style={{ color: PLATFORM_META[platform].color }}
-                  >
-                    {PLATFORM_META[platform].label}
-                  </p>
-                  {platformLines.map((line, i) => (
-                    <div
-                      key={`${line.kind}-${i}`}
-                      className="flex items-baseline justify-between gap-3 mt-0.5"
-                    >
-                      <span
-                        className="text-xs truncate"
-                        style={{ color: 'var(--color-muted-foreground)' }}
-                        title={line.text}
-                      >
-                        {line.label}
-                        {line.quantity !== null && line.quantity > 1 && ` ×${line.quantity}`}
-                      </span>
-                      <span
-                        className="text-xs font-mono tabular-nums shrink-0"
-                        style={{ color: 'var(--color-foreground)' }}
-                      >
-                        {line.amount !== null
-                          ? formatCurrency(line.amount, line.currency ?? 'USD')
-                          : '—'}
-                        {line.unit && (
-                          <span style={{ color: 'var(--color-muted-foreground)' }}>
-                            {UNIT_SUFFIX[line.unit]}
-                          </span>
-                        )}
-                      </span>
-                    </div>
-                  ))}
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {/* Provenance. Without this the two sections read as equally certain. */}
-        <p
-          className="text-[10px] leading-relaxed pt-1"
-          style={{ color: 'var(--color-muted-foreground)' }}
-        >
-          {hasActual && 'Charged and refunded figures are amounts actually transacted. '}
-          {estimates.length > 0 &&
-            'Running costs are order-of-magnitude estimates from public list prices, not billing figures, and accrue until the resources are shut down.'}
-        </p>
-      </CardContent>
-    </Card>
-  )
-}
-
-export default FinancialImpactPanel

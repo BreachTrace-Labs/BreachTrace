@@ -10,6 +10,7 @@ from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.lib.units import mm
 from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+from reporter.profiles import PLATFORM_PROFILES
 
 _SEV_COLOR = {"low": "#2e7d32", "medium": "#f9a825", "high": "#ef6c00", "critical": "#c62828"}
 
@@ -50,11 +51,10 @@ def build_incident_pdf(inc) -> bytes:
         ["Principal", inc.principal_id or inc.access_key_id or "-"],
         ["Repository", inc.repo_url],
         ["Commit", inc.commit_hash or "-"],
-        ["Exposure start", _fmt(inc.exposure_start)],
-        ["Exposure end", _fmt(inc.exposure_end) if inc.exposure_end else "still exposed / not revoked"],
+        ["Estimated start", _fmt(inc.exposure_start)],
+        ["Closure recorded", _fmt(inc.exposure_end) if inc.exposure_end else "Not confirmed"],
         ["Status", inc.status],
-        ["Compliance flags", ", ".join(n for n, f in (("GDPR", inc.gdpr_flag), ("PCI-DSS", inc.pcidss_flag),
-                                                      ("SOC 2", inc.soc2_flag)) if f) or "none"],
+        ["Framework review", ", ".join({"owasp-nhi2": "OWASP NHI2", "gdpr-32-33": "GDPR", "pci-incident-response": "PCI DSS", "soc2-security": "SOC 2"}.get(f.get("id"), "Review") for f in getattr(inc, "compliance_review_flags", [])) or "Not assessed"],
     ]
     t = Table([[Paragraph(f"<b>{a}</b>", body), Paragraph(escape(str(b)), body)] for a, b in rows],
               colWidths=[38 * mm, 140 * mm])
@@ -62,9 +62,16 @@ def build_incident_pdf(inc) -> bytes:
                            ("BACKGROUND", (0, 0), (0, -1), colors.HexColor("#f2f5f9")),
                            ("VALIGN", (0, 0), (-1, -1), "TOP")]))
     s += [Spacer(1, 6), t]
+    s.append(Paragraph("The start is estimated from the detected commit. A recorded closure time does not independently establish provider-side revocation.", body))
+    s.append(Paragraph("Framework review signals suggest areas for human review; they do not determine applicability, a breach, or compliance.", body))
+    profile = PLATFORM_PROFILES.get((inc.platform or '').lower())
+    if profile and profile.blind_spot:
+        s.append(Paragraph(escape(profile.blind_spot), body))
 
     if inc.report_text:
         s.append(Paragraph("Forensic analysis", h2))
+        if (inc.platform or '').lower() == 'gcp':
+            s.append(Paragraph("Older reports may contain unsupported GCP cost estimates. Refresh logs to regenerate the report; Cloud Audit Logs do not establish billing charges or loss.", body))
         for line in inc.report_text.splitlines():
             line = line.strip()
             if not line:

@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
 import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
+import { MemoryRouter } from 'react-router-dom'
 import { createServer } from 'vite'
 
 // Exercise real presentation logic/components without adding a browser runtime.
@@ -33,6 +34,47 @@ try {
   assert.equal(ui.repositoryLink('https://github.com/team/repo'), 'https://github.com/team/repo')
   const { default: Notice } = await server.ssrLoadModule('/src/components/SyntheticNotice.tsx')
   const { default: Unavailable } = await server.ssrLoadModule('/src/components/ForensicsUnavailable.tsx')
+  const evidence = await server.ssrLoadModule('/src/lib/forensicEvidence.ts')
+  const { default: BlastRadiusSummary } = await server.ssrLoadModule('/src/components/BlastRadiusSummary.tsx')
+  const { default: SourceIPs } = await server.ssrLoadModule('/src/components/SourceIPs.tsx')
+  const { default: AffectedResources } = await server.ssrLoadModule('/src/components/AffectedResources.tsx')
+  const { default: FinancialImpactPanel } = await server.ssrLoadModule('/src/components/FinancialImpactPanel.tsx')
+  const { default: ComplianceReview } = await server.ssrLoadModule('/src/components/ComplianceReview.tsx')
+  const { complianceFrameworks } = await server.ssrLoadModule('/src/data/compliance.ts')
+  assert.deepEqual(complianceFrameworks.map(item => item.id), ['owasp-nhi2', 'gdpr-32-33', 'pci-incident-response', 'soc2-security'])
+  const review = renderToStaticMarkup(createElement(MemoryRouter, null, createElement(ComplianceReview, { incident: { credential_type: 'stripe_secret_key', compliance_review_flags: [{id:'pci-incident-response',reason:'Review payment context.'}] } })))
+  assert.match(review, /PCI DSS/)
+  assert.match(review, /regulations#pci-incident-response/)
+  assert.match(review, /not proof/)
+  const event = (timestamp, overrides = {}) => ({ timestamp, platform: 'aws', api_action: 'ListBuckets', source_ip: null, affected_resource: null, resource_type: null, success: true, impact_category: 'reconnaissance', severity_weight: 1, ...overrides })
+  const recorded = [event('2026-01-01T00:00:00Z'), event('2026-01-02T00:00:00Z', { source_ip: '192.0.2.1', affected_resource: 'bucket' }), event('2026-01-04T00:00:00Z')]
+  const windowEvents = evidence.inExposureWindow(recorded, '2026-01-02T00:00:00Z', '2026-01-03T00:00:00Z')
+  assert.equal(windowEvents.length, 1)
+  assert.equal(evidence.initialEvidenceScope({events:recorded, exposure_start:'2026-01-05T00:00:00Z', exposure_end:null}), 'history')
+  assert.equal(evidence.initialEvidenceScope({events:recorded, exposure_start:'2026-01-02T00:00:00Z', exposure_end:null}), 'window')
+  assert.equal(evidence.initialEvidenceScope({events:[], exposure_start:'2026-01-02T00:00:00Z', exposure_end:null}), 'window')
+  assert.equal(evidence.inExposureWindow(recorded, 'invalid', null).length, 0)
+  const preview = evidence.previewBlastRadius({ events: recorded, exposure_start: '2026-01-02T00:00:00Z', exposure_end: '2026-01-03T00:00:00Z', forensic_tier: 1, status: 'complete' })
+  assert.equal(preview.event_count, 1)
+  assert.equal(preview.severity, 'LOW')
+  assert.equal(preview.resource_count, 1)
+  assert.match(renderToStaticMarkup(createElement(SourceIPs, { events: windowEvents, platform: 'aws', collecting: false, error: false })), /192\.0\.2\.1/)
+  assert.match(renderToStaticMarkup(createElement(AffectedResources, { events: windowEvents, collecting: false, error: false })), /bucket/)
+  assert.match(renderToStaticMarkup(createElement(SourceIPs, { events: [event('2026-01-02T00:00:00Z')], platform: 'stripe', collecting: false, error: false })), /do not supply source IPs/)
+  assert.match(renderToStaticMarkup(createElement(AffectedResources, { events: [], collecting: false, error: false })), /resources are unknown/)
+  const historicalAzure = renderToStaticMarkup(createElement(BlastRadiusSummary, { incident: { platform:'azure', credential_type:'azure_client_secret', events:recorded, dynamic_blast_radius:{status:'no_observed_activity', event_count:0, successful_count:0, failed_count:0, resource_count:0, platforms:[], severity:null} } }))
+  assert.match(historicalAzure, /3 events are available in collected history/)
+  assert.match(historicalAzure, /Different secrets for the same application/)
+  const azureFinance = renderToStaticMarkup(createElement(FinancialImpactPanel, { incident: {credential_type:'azure_client_secret', financial_impact_lines:[], financial_history_lines:[]}, scope:'history' }))
+  assert.match(azureFinance, /not a billing feed/)
+  const finance = { financial_impact_lines: [], financial_history_lines: [{platform:'stripe',kind:'charge',label:'Stripe',text:'Stripe charge',amount:170,currency:'USD',unit:null,quantity:3,actual:true}], estimated_financial_impact: 'stale amount' }
+  const exposureFinance = renderToStaticMarkup(createElement(FinancialImpactPanel, { incident: finance, scope: 'window' }))
+  assert.match(exposureFinance, /No financial activity found/)
+  assert.ok(!exposureFinance.includes('stale amount'))
+  const historyFinance = renderToStaticMarkup(createElement(FinancialImpactPanel, { incident: finance, scope: 'history' }))
+  assert.match(historyFinance, /All collected history/)
+  assert.match(historyFinance, /3 transactions/)
+  assert.match(historyFinance, /events outside the exposure window/)
   assert.match(renderToStaticMarkup(createElement(Notice)), /Synthetic demo data/)
   for (const fixture of fixtures) {
     const html = renderToStaticMarkup(createElement(Unavailable, { incident: fixture }))

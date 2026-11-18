@@ -1,8 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
-import axios from 'axios'
+import { realClient as api } from '@/api/client'
 import { Button } from '@/components/ui/button'
 
-const api = axios.create({ baseURL: import.meta.env.VITE_API_URL ?? 'http://localhost:8000', timeout: 30_000 })
 type Scan = { scan_id: string; status: string; error?: string; result?: {
   repo_url: string; branch: string;
   revision: string; files_scanned: number; duration_s: number; finding_count: number;
@@ -19,6 +18,12 @@ export default function RepositoryScan({ repoUrl, onRepoUrlChange, trigger = 0 }
   const alive = useRef(true)
   const busy = useRef(false)
   useEffect(() => { alive.current = true; return () => { alive.current = false; if (pollTimer.current) clearTimeout(pollTimer.current) } }, [])
+  useEffect(() => {
+    const savedId = localStorage.getItem('bt_last_snapshot_scan')
+    if (savedId && !busy.current) { busy.current = true; setStarting(true); void poll(savedId) }
+    // Restore the last scan after navigating away or restarting the backend.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   async function start() {
     if (busy.current || !repoUrl.trim()) return
@@ -26,6 +31,7 @@ export default function RepositoryScan({ repoUrl, onRepoUrlChange, trigger = 0 }
     setStarting(true); setError(''); setScan(null)
     try {
       const { data } = await api.post<Scan>('/repositories/scan', { repo_url: repoUrl.trim() })
+      localStorage.setItem('bt_last_snapshot_scan', data.scan_id)
       if (alive.current) { setScan(data); void poll(data.scan_id) }
     } catch {
       busy.current = false
@@ -37,14 +43,22 @@ export default function RepositoryScan({ repoUrl, onRepoUrlChange, trigger = 0 }
     try {
       const { data } = await api.get<Scan>(`/repositories/scans/${id}`)
       if (!alive.current) return
+      setStarting(false); setError('')
       setScan(data)
       if (['queued', 'scanning'].includes(data.status)) pollTimer.current = setTimeout(() => { void poll(id) }, 2000)
       else busy.current = false
-    } catch {
-      busy.current = false
+    } catch (err) {
       if (alive.current) {
-        setError('Cannot retrieve scan status. The backend may have restarted; completed evidence is saved on the server.')
-        setScan(previous => previous ? { ...previous, status: 'status-unavailable' } : null)
+        const status = (err as { response?: { status?: number } }).response?.status
+        if (status === 404 || status === 401 || status === 403) {
+          busy.current = false
+          setStarting(false)
+          if (status === 404) localStorage.removeItem('bt_last_snapshot_scan')
+          setError('Cannot retrieve this scan. Check your access or start a new scan.')
+        } else {
+          setError('Waiting for the backend to reconnect. The scan is saved and its status will be checked again.')
+          pollTimer.current = setTimeout(() => { void poll(id) }, 5000)
+        }
       }
     }
   }
@@ -55,20 +69,22 @@ export default function RepositoryScan({ repoUrl, onRepoUrlChange, trigger = 0 }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [trigger])
   const running = starting || (scan && ['queued', 'scanning'].includes(scan.status))
-  return <section className="border rounded p-6 space-y-4">
-    <h2 className="font-semibold">Scan existing codebase</h2>
-    <p className="text-sm">Paste a GitHub repository URL to check its current codebase for exposed credentials. No webhook or new commit is required. Private repositories require GitHub access configured on the backend.</p>
+  return <section className="border rounded-xl bg-card p-6 space-y-4">
+    <h2 className="text-lg font-semibold">Scan a repository</h2>
+    <p className="text-sm">Paste a GitHub repository URL to check the current default branch for credential candidates. Private repositories require GitHub access configured on the backend.</p>
+    <p className="text-sm text-muted-foreground">Snapshot findings appear here for review. They do not create Monitor incidents or start provider log collection. To monitor future pushes, register the webhook below.</p>
     <form onSubmit={event => { event.preventDefault(); void start() }} className="space-y-2">
       <label htmlFor="scan-repository-url" className="block text-sm font-medium">Repository URL</label>
       <div className="flex flex-col sm:flex-row gap-2">
         <input id="scan-repository-url" type="url" required disabled={!!running} value={repoUrl}
           onChange={event => onRepoUrlChange(event.target.value)} placeholder="https://github.com/owner/repository"
           className="min-w-0 flex-1 border rounded px-3 py-2 text-sm bg-transparent" />
-        <Button type="submit" disabled={!repoUrl.trim() || !!running}>{running ? 'Scanning…' : 'Scan repository'}</Button>
+        <Button type="submit" loading={!!running}>Start scan</Button>
       </div>
     </form>
-    <p className="text-xs text-[var(--color-muted-foreground)]">Scans the default branch’s current text files, subject to size limits and exclusions. Git history, submodules and binaries are excluded.</p>
+    <p className="text-xs text-[var(--color-muted-foreground)]">No webhook or new commit is needed. The scan covers current text files within size limits and exclusions; Git history, submodules and binaries are excluded.</p>
     {error && <p role="alert">{error}</p>}
+    {running && <p role="status" className="text-sm text-muted-foreground">{starting || scan?.status === 'queued' ? 'Preparing scan…' : 'Fetching and scanning the repository…'}</p>}
     {scan && <div role="status" className="space-y-2 text-sm">
       <p>Scan {scan.scan_id}: {scan.status}</p>
       {scan.error && <p>{scan.error}</p>}
@@ -79,7 +95,7 @@ export default function RepositoryScan({ repoUrl, onRepoUrlChange, trigger = 0 }
         <p className="break-all">Revision: {scan.result.revision}</p>
         {!scan.result.complete && <p>Partial scan: {scan.result.stopped_reason ?? 'some files or decoding steps could not be completed'}.</p>}
         <p>Skipped: {JSON.stringify({ ...scan.result.skipped, ...scan.result.archive_skipped })}</p>
-        <p>Findings are unverified. A public identifier or test fixture can match a rule. Snapshot detection does not establish the first exposure time and does not start cloud forensics.</p>
+        <p>These are snapshot results, not Monitor incidents. Findings are unverified and do not establish when a credential was first exposed. Review the linked files and rotate any real exposed credential.</p>
         <div className="max-h-96 overflow-auto space-y-2">{scan.result.findings.map(f => <div key={f.fingerprint} className="border-t pt-2 break-all">
           <a className="font-mono underline" target="_blank" rel="noopener noreferrer"
             href={`${scan.result!.repo_url}/blob/${scan.result!.revision}/${f.path.split('/').map(encodeURIComponent).join('/')}#L${f.line_number}`}>

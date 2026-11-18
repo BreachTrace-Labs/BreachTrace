@@ -62,8 +62,7 @@ def test_download_is_pinned_and_redirect_does_not_receive_token(tmp_path, monkey
     download.__enter__ = Mock(return_value=download); download.__exit__ = Mock(return_value=False)
     get = Mock(side_effect=[meta, commit, redirect, download])
     monkeypatch.setattr("repository_snapshot.requests.get", get)
-    monkeypatch.setattr("repository_snapshot.config.GITHUB_TOKEN", "synthetic-private-token")
-    result = scan_github("https://github.com/team/repo")
+    result = scan_github("https://github.com/team/repo", token="synthetic-private-token")
     assert result["revision"] == "a" * 40 and result["finding_count"] == 1
     assert result["exposure_start"] is None and not result["forensics_started"]
     assert value not in str(result)
@@ -85,7 +84,7 @@ def test_encoded_ai_key_survives_archive_scan_with_masked_provenance(tmp_path, m
     download.__enter__ = Mock(return_value=download)
     download.__exit__ = Mock(return_value=False)
     monkeypatch.setattr("repository_snapshot.requests.get", Mock(side_effect=[meta, commit, download]))
-    result = scan_github("https://github.com/team/repo")
+    result = scan_github("https://github.com/team/repo", token="synthetic-private-token")
     assert result["complete"] and result["finding_count"] == 1
     finding = result["findings"][0]
     assert finding["credential_type"] == "sarvam_api_key"
@@ -95,22 +94,29 @@ def test_encoded_ai_key_survives_archive_scan_with_masked_provenance(tmp_path, m
     assert value not in str(result) and encoded not in str(result)
 
 
-def test_scan_api_returns_masked_job_and_preserves_failure_safety(monkeypatch, tmp_path):
+def test_scan_api_queues_job_and_worker_preserves_failure_safety(monkeypatch, sqlite_factory):
+    import background_jobs
+    import repository_snapshot
     from routers import repositories
-    monkeypatch.setattr(repositories, "_jobs", {})
-    monkeypatch.setattr(repositories, "scan_github", lambda url: {"finding_count": 0, "findings": [], "repo_url": url})
-    # Keep persistence within the test's throwaway directory.
-    monkeypatch.setattr(repositories, "__file__", str(tmp_path / "backend" / "routers" / "repositories.py"))
+    monkeypatch.setattr(background_jobs, "SessionLocal", sqlite_factory)
     app = FastAPI(); app.include_router(repositories.router)
+    def database():
+        with sqlite_factory() as db:
+            yield db
+    app.dependency_overrides[repositories.require_admin_or_lead] = lambda: Mock()
+    app.dependency_overrides[repositories.get_db] = database
+    monkeypatch.setattr(repositories, 'record', lambda *_args, **_kwargs: None)
     with TestClient(app, base_url="http://localhost", client=("127.0.0.1", 1234)) as client:
         response = client.post("/repositories/scan", json={"repo_url": "https://github.com/team/repo"})
-        assert response.status_code == 202
-        result = client.get("/repositories/scans/" + response.json()["scan_id"]).json()
-        assert result["status"] == "complete" and result["result"]["finding_count"] == 0
-        def fail(_url):
+        assert response.status_code == 202 and response.json()["status"] == "queued"
+        status = client.get("/repositories/scans/" + response.json()["scan_id"]).json()
+        assert status["status"] == "queued" and status["result"] is None
+        monkeypatch.setattr(repository_snapshot, "scan_github", lambda url, token=None: {"finding_count": 0, "findings": [], "repo_url": url})
+        result = background_jobs.dispatch("snapshot", {"repo_url": "https://github.com/team/repo"})
+        assert result["finding_count"] == 0
+        def fail(_url, token=None):
             raise ValueError("never expose signed URL or token")
-        monkeypatch.setattr(repositories, "scan_github", fail)
-        job = client.post("/repositories/scan", json={"repo_url": "https://github.com/team/repo"}).json()
-        failed = client.get("/repositories/scans/" + job["scan_id"]).json()
-        assert failed["status"] == "failed" and "signed URL" not in str(failed)
+        monkeypatch.setattr(repository_snapshot, "scan_github", fail)
+        with pytest.raises(ValueError):
+            background_jobs.dispatch("snapshot", {"repo_url": "https://github.com/team/repo"})
         assert client.post("/repositories/scan", json={"repo_url": "https://evil.test/team/repo"}).status_code == 422

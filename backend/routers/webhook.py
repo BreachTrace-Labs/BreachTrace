@@ -10,54 +10,84 @@ import hashlib
 import hmac
 import json
 import logging
+import re
+import secrets
 from datetime import datetime, timezone
+from urllib.parse import urlsplit
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
+from fastapi.responses import JSONResponse
 from github import Github, GithubException
 from pydantic import BaseModel
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 import config
+from access import assert_project_access
+from auth import require_admin_or_lead
+from crypto import decrypt_blob, encrypt_blob
 from db.crud import create_incident, finalize_non_forensic_incident, set_exposure_end
 from db.database import SessionLocal, get_db
+from db.models import AzureSecretOccurrence, IncidentRecord, Project, User
 from detector.match_resolver import resolve_match
 from detector.scanner import scan
 from pipeline import run_collection_pipeline
+from notifications import notify_incident_created_by_id
 from rag.index import index_incident_in_background
 from window.calculator import is_key_revoked, record_exposure_start
+from audit import record
+from background_jobs import enqueue
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/webhook", tags=["webhook"])
 
 
+def _run_initial_pipeline_and_notify(incident_id: str, credential: str, exposure_start: datetime, *, platform: str) -> None:
+    """Run initial forensics, then notify using the persisted severity."""
+    try:
+        run_collection_pipeline(incident_id, credential, exposure_start, platform=platform)
+    finally:
+        notify_incident_created_by_id(incident_id)
+
+
 # ---------------------------------------------------------------------------
 # Signature validation
 # ---------------------------------------------------------------------------
 
-def _verify_signature(body: bytes, sig_header: str) -> bool:
+def _verify_signature(body: bytes, sig_header: str, secret: str) -> bool:
     """Return True if the X-Hub-Signature-256 header matches the HMAC of the body."""
     if not sig_header.startswith("sha256="):
         return False
     expected = "sha256=" + hmac.new(
-        config.GITHUB_WEBHOOK_SECRET.encode(),
+        secret.encode(),
         body,
         hashlib.sha256,
     ).hexdigest()
     return hmac.compare_digest(sig_header, expected)
 
 
+def _encrypt_secret(secret: str) -> str:
+    ciphertext, iv = encrypt_blob({"secret": secret})
+    return f"{iv}.{ciphertext}"
+
+
+def _decrypt_secret(value: str) -> str:
+    iv, ciphertext = value.split('.', 1)
+    return decrypt_blob(ciphertext, iv)["secret"]
+
+
 # ---------------------------------------------------------------------------
 # Diff fetching via PyGitHub
 # ---------------------------------------------------------------------------
 
-def _fetch_diff(repo_full_name: str, sha: str) -> str:
+def _fetch_diff(repo_full_name: str, sha: str, token: str | None = None) -> str:
     """
     Fetch the unified diff for a commit using the GitHub API.
     Returns one big string with all file patches concatenated.
     """
     try:
-        gh = Github(config.GITHUB_TOKEN)
+        gh = Github(token)
         repo = gh.get_repo(repo_full_name)
         commit = repo.get_commit(sha)
         parts: list[str] = []
@@ -66,7 +96,7 @@ def _fetch_diff(repo_full_name: str, sha: str) -> str:
                 parts.append(f.patch)
         return "\n".join(parts)
     except GithubException as exc:
-        logger.warning("GitHub API error fetching diff %s@%s: %s", repo_full_name, sha, exc)
+        logger.warning("GitHub API error fetching diff (%s)", type(exc).__name__)
         return ""
 
 
@@ -92,7 +122,7 @@ async def _monitor_revocation(
         try:
             revoked = is_key_revoked(credential, secret, platform=platform)
         except Exception as exc:
-            logger.error("Revocation check failed for %s: %s", credential[:20], exc)
+            logger.error("Revocation check failed for incident %s (%s)", incident_id, type(exc).__name__)
             continue
 
         if revoked:
@@ -127,21 +157,44 @@ async def github_webhook(
     event_type = request.headers.get("X-GitHub-Event", "unknown")
     logger.info(f"======> [WEBHOOK HIT] Received '{event_type}' event <======")
 
-    # 1. Validate HMAC-SHA256 signature
+    # Only the repository name is used before signature verification.
+    try:
+        payload = json.loads(body)
+        repo_full_name = payload.get("repository", {}).get("full_name", "")
+        if not isinstance(repo_full_name, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9-]{0,38}/[A-Za-z0-9_.-]{1,100}", repo_full_name):
+            raise ValueError()
+    except (ValueError, TypeError, AttributeError):
+        raise HTTPException(400, "Invalid GitHub webhook payload")
+    matches = db.query(Project).filter(func.lower(Project.github_repo_full_name) == repo_full_name.lower(), Project.is_deleted.is_(False)).all()
+    if not matches:
+        logger.warning("Ignored webhook for an unregistered repository")
+        return JSONResponse(status_code=200, content={"status": "ignored", "reason": "project not found"})
+    # A single-org deployment should have at most one matching project.
+    if len(matches) != 1 or not matches[0].webhook_secret:
+        raise HTTPException(401, "Webhook secret not configured")
+    project = matches[0]
+    try:
+        project_secret = _decrypt_secret(project.webhook_secret)
+    except Exception:
+        raise HTTPException(503, "Project webhook secret is unavailable") from None
+
+    # Verify the signature with the matched project's secret.
     sig_header = request.headers.get("X-Hub-Signature-256", "")
-    if not _verify_signature(body, sig_header):
-        logger.error(f"[WEBHOOK FAIL] Signature mismatch. Received: {sig_header[:25]}...")
+    if not _verify_signature(body, sig_header, project_secret):
+        logger.error("[WEBHOOK FAIL] Signature mismatch")
         raise HTTPException(status_code=401, detail="Invalid webhook signature")
+
+    from auth import ensure_single_organisation
+    ensure_single_organisation(db)
+    project.webhook_last_verified_at = datetime.now(timezone.utc)
+    db.commit()
 
     # 2. Only process push events
     if event_type != "push":
         logger.info(f"[WEBHOOK] Ignored non-push event: {event_type}")
         return {"status": "ignored", "event": event_type}
 
-    payload: dict = json.loads(body)
-
-    repo_full_name: str = payload.get("repository", {}).get("full_name", "")
-    repo_url: str = payload.get("repository", {}).get("html_url", "")
+    repo_url: str = project.github_repo_url
     commits: list[dict] = payload.get("commits", [])
 
     if not commits:
@@ -149,6 +202,7 @@ async def github_webhook(
         return {"status": "ignored", "reason": "no commits in payload"}
 
     created_incidents: list[str] = []
+    repeated_incidents: list[str] = []
     logger.info(f"[WEBHOOK] Processing {len(commits)} commit(s) on {repo_full_name}...")
 
     # 3. Process each commit
@@ -163,7 +217,14 @@ async def github_webhook(
 
         # 4. Fetch the commit diff
         logger.info(f"[WEBHOOK PROCESS] Fetching diff for {sha}...")
-        diff_text = _fetch_diff(repo_full_name, sha)
+        from github_connection import project_token
+        try:
+            token = project_token(db, project.id)
+        except ValueError:
+            raise HTTPException(503, 'Save this project’s GitHub connection again in Connect') from None
+        if not token:
+            raise HTTPException(503, 'Save a GitHub connection for this project in Connect before processing pushes')
+        diff_text = _fetch_diff(repo_full_name, sha, token)
         if not diff_text:
             logger.info(f"[WEBHOOK FAIL] Could not fetch diff text for {sha}.")
             continue
@@ -183,6 +244,21 @@ async def github_webhook(
             match_platform = resolved.platform
             credential = resolved.credential
 
+            fingerprint = None
+            if resolved.credential_type == 'azure_client_secret' and getattr(match, 'secret_value', None):
+                from crypto import _key
+                # Use a project-scoped, keyed digest; never persist the secret or a plain hash.
+                fingerprint = hmac.new(_key(), b'azure-secret-v1\0' + project.id.encode() + b'\0' + match.secret_value.encode(), hashlib.sha256).hexdigest()
+                db.query(Project).filter_by(id=project.id).with_for_update().one()
+                existing = db.query(IncidentRecord).filter_by(project_id=project.id, azure_secret_fingerprint=fingerprint).first()
+                if existing:
+                    occurrence = db.query(AzureSecretOccurrence).filter_by(incident_id=existing.incident_id, commit_hash=sha).first()
+                    if not occurrence:
+                        db.add(AzureSecretOccurrence(incident_id=existing.incident_id, commit_hash=sha, observed_at=exposure_start))
+                        repeated_incidents.append(existing.incident_id)
+                    db.commit()
+                    continue
+
             incident = create_incident(
                 db,
                 credential_type=resolved.credential_type,
@@ -194,7 +270,14 @@ async def github_webhook(
                 principal_id=resolved.principal_id,
                 forensic_tier=resolved.forensic_tier,
                 unavailable_reason=resolved.unavailable_reason,
+                project_id=project.id,
+                commit=False,
             )
+            from gcp_attribution import record_detected_key
+            record_detected_key(db, incident, match)
+            if fingerprint:
+                incident.azure_secret_fingerprint = fingerprint
+                db.add(AzureSecretOccurrence(incident_id=incident.incident_id, commit_hash=sha, observed_at=exposure_start))
             created_incidents.append(incident.incident_id)
             logger.info(
                 "Incident created: %s | platform: %s | tier: %s | hint: %s | repo: %s",
@@ -206,20 +289,16 @@ async def github_webhook(
             )
 
             if resolved.is_collectable:
-                background_tasks.add_task(
-                    run_collection_pipeline,
-                    incident.incident_id,
-                    credential,
-                    exposure_start,
-                    platform=match_platform,
-                )
+                enqueue(db, 'incident_collect', {'incident_id': incident.incident_id, 'notify': True}, project_id=project.id)
+                db.commit()
             else:
                 # Tier 2: nothing to query. Finalise now with the reason recorded
                 # rather than leaving the incident stuck in 'collecting' forever.
+                enqueue(db, 'incident_index', {'incident_id': incident.incident_id}, project_id=project.id)
+                enqueue(db, 'incident_notify', {'incident_id': incident.incident_id}, project_id=project.id)
                 finalize_non_forensic_incident(
                     db, incident.incident_id, resolved.unavailable_reason
                 )
-                background_tasks.add_task(index_incident_in_background, incident.incident_id)
 
             # Launch revocation monitor for known experiment credentials only.
             if match_platform == "aws" and credential == config.EXPERIMENT_AWS_ACCESS_KEY_ID:
@@ -232,7 +311,7 @@ async def github_webhook(
                         platform="aws",
                     )
                 )
-            elif match_platform == "gcp" and credential == config.GCP_EXPERIMENT_CLIENT_EMAIL:
+            elif match_platform == "gcp" and resolved.is_collectable and credential == config.GCP_EXPERIMENT_CLIENT_EMAIL:
                 asyncio.create_task(
                     _monitor_revocation(
                         incident.incident_id,
@@ -257,6 +336,7 @@ async def github_webhook(
         "status": "processed",
         "incidents_created": len(created_incidents),
         "incident_ids": created_incidents,
+        "repeated_incident_ids": repeated_incidents,
     }
 
 
@@ -265,77 +345,85 @@ async def github_webhook(
 # ---------------------------------------------------------------------------
 
 class RegisterRequest(BaseModel):
-    repo_url: str      # e.g. "https://github.com/user/repo"
-    webhook_url: str   # e.g. "http://localhost:8000/webhook/github" or ngrok URL
+    project_id: str
+    webhook_url: str
+
+
+class ManualSecretRequest(BaseModel):
+    secret: str
+
+
+@router.put("/projects/{project_id}/secret")
+def set_manual_secret(project_id: str, body: ManualSecretRequest, request: Request,
+                      user: User = Depends(require_admin_or_lead), db: Session = Depends(get_db)):
+    project = assert_project_access(project_id, user, db)
+    if not 16 <= len(body.secret) <= 128:
+        raise HTTPException(422, "Webhook secret must contain 16 to 128 characters")
+    try:
+        project.webhook_secret = _encrypt_secret(body.secret)
+    except Exception:
+        raise HTTPException(503, "Webhook encryption is not configured") from None
+    project.webhook_registered_at = None
+    project.webhook_last_verified_at = None
+    record(db, user, "project.webhook_secret_updated", request, project_id=project.id)
+    db.commit()
+    return {"message": "Webhook secret saved. Configure the same secret in GitHub."}
 
 
 @router.post("/register", status_code=200)
-async def register_webhook(body: RegisterRequest):
-    """
-    Use the configured GITHUB_TOKEN to register (or confirm) a push webhook on
-    the target repo.  The frontend calls this when the user clicks
-    'Connect Repository'.
-    """
-    # Parse "user/repo" from any GitHub URL form
-    url = body.repo_url.rstrip("/")
-    if "github.com/" not in url:
-        raise HTTPException(status_code=400, detail="repo_url must be a GitHub repository URL")
-
-    repo_full_name = url.split("github.com/", 1)[1]
-
+async def register_webhook(body: RegisterRequest, request: Request,
+                           user: User = Depends(require_admin_or_lead), db: Session = Depends(get_db)):
+    """Register a push hook for a project using its own encrypted secret."""
+    project = assert_project_access(body.project_id, user, db)
+    parsed = urlsplit(body.webhook_url)
+    if (parsed.scheme != "https" or not parsed.hostname or parsed.username or parsed.password
+            or parsed.path != "/webhook/github" or parsed.query or parsed.fragment):
+        raise HTTPException(422, "Use an HTTPS webhook URL ending in /webhook/github")
     try:
-        gh = Github(config.GITHUB_TOKEN)
-        repo = gh.get_repo(repo_full_name)
+        if not project.webhook_secret:
+            project.webhook_secret = _encrypt_secret(secrets.token_urlsafe(32))
+            db.commit()
+        webhook_secret = _decrypt_secret(project.webhook_secret)
+    except Exception:
+        db.rollback()
+        raise HTTPException(503, "Project webhook encryption is not configured") from None
+    from github_connection import project_token
+    try:
+        token = project_token(db, project.id)
+    except ValueError as exc:
+        raise HTTPException(503, str(exc)) from None
+    if not token:
+        raise HTTPException(422, 'Save a GitHub access token for this project in Connect before registering the webhook')
+    try:
+        repo = Github(token).get_repo(project.github_repo_full_name)
+        hooks = list(repo.get_hooks())
+        hook = next((item for item in hooks if item.config.get("url", "") == body.webhook_url), None)
+        hook_config = {"url": body.webhook_url, "content_type": "json", "secret": webhook_secret, "insecure_ssl": "0"}
+        already_existed = hook is not None
+        if hook:
+            hook.edit(name="web", config=hook_config, events=["push"], active=True)
+        else:
+            hook = repo.create_hook(name="web", config=hook_config, events=["push"], active=True)
     except GithubException as exc:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Cannot access repository '{repo_full_name}': {exc.data.get('message', str(exc))}",
-        )
-
-    # Check if our webhook URL is already registered
-    try:
-        existing_hooks = list(repo.get_hooks())
-    except GithubException:
-        existing_hooks = []
-
-    for hook in existing_hooks:
-        if hook.config.get("url", "") == body.webhook_url:
-            return {
-                "success": True,
-                "already_existed": True,
-                "webhook_id": hook.id,
-                "message": f"Webhook already registered on {repo_full_name}",
-            }
-
-    # Register a new webhook
-    try:
-        hook = repo.create_hook(
-            name="web",
-            config={
-                "url": body.webhook_url,
-                "content_type": "json",
-                "secret": config.GITHUB_WEBHOOK_SECRET,
-                "insecure_ssl": "0",
-            },
-            events=["push"],
-            active=True,
-        )
-    except GithubException as exc:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Failed to create webhook: {exc.data.get('message', str(exc))}",
-        )
-
-    logger.info("Webhook registered on %s — hook id %s", repo_full_name, hook.id)
-    return {
-        "success": True,
-        "already_existed": False,
-        "webhook_id": hook.id,
-        "message": f"Webhook registered on {repo_full_name}",
-    }
+        if exc.status == 403:
+            detail = ("GitHub denied webhook access. Give this project’s saved GitHub token access to this repository "
+                      "with Webhooks: read and write permission (fine-grained token), or admin:repo_hook "
+                      "scope (classic token). Repository admin access alone does not grant the token webhook write access.")
+        elif exc.status == 401:
+            detail = "GitHub rejected the saved token. Replace it in this project’s GitHub connection."
+        elif exc.status == 404:
+            detail = "GitHub could not access this repository or its webhooks. Check the repository name and the saved token's repository access."
+        else:
+            detail = "GitHub rejected the request. Check repository access and webhook settings."
+        raise HTTPException(400, detail) from None
+    project.webhook_registered_at = datetime.now(timezone.utc)
+    record(db, user, "project.webhook_registered", request, project_id=project.id)
+    db.commit()
+    return {"success": True, "already_existed": already_existed, "webhook_id": hook.id,
+            "message": "Project webhook registered on GitHub"}
 
 
-@router.get("/info")
+@router.get("/info", dependencies=[Depends(require_admin_or_lead)])
 async def webhook_info(request: Request):
     """
     Return the webhook URL the frontend should display and offer to register.
@@ -345,6 +433,5 @@ async def webhook_info(request: Request):
     base = str(request.base_url).rstrip("/")
     return {
         "webhook_url": f"{base}/webhook/github",
-        "secret_hint": config.GITHUB_WEBHOOK_SECRET[:4] + "****" if config.GITHUB_WEBHOOK_SECRET else "",
         "environment": config.ENVIRONMENT,
     }

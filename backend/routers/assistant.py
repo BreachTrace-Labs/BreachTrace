@@ -63,6 +63,15 @@ def assistant_search(body: SearchRequest, db: Session = Depends(get_db)):
     return result
 
 
+@router.get('/model')
+def answer_model_status():
+    import model_settings
+    settings = model_settings.current()
+    model = settings.answer_model.strip() if settings.provider == 'ollama' and settings.answer_model.strip() else settings.model
+    configured = settings.provider != 'none' and (settings.provider in {'ollama', 'local'} or bool(model_settings.key_for(settings)))
+    return {'provider': settings.provider, 'model': model, 'configured': configured}
+
+
 @router.get("/status")
 def assistant_status(db: Session = Depends(get_db)):
     model = get_local_model()

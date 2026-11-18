@@ -7,6 +7,7 @@ import { Clock } from 'lucide-react'
 
 interface Props {
   events: ForensicEvent[]
+  exposureStart?: string
 }
 
 const SEV_COLOR: Record<number, string> = {
@@ -91,7 +92,8 @@ type EnrichedEvent = ForensicEvent & {
   row: string
 }
 
-const ForensicTimeline: React.FC<Props> = ({ events }) => {
+const ForensicTimeline: React.FC<Props> = ({ events, exposureStart }) => {
+  const exposureMs = exposureStart ? new Date(exposureStart).getTime() : Number.NaN
   const svgRef      = useRef<SVGSVGElement | null>(null)
   const wrapperRef  = useRef<HTMLDivElement | null>(null)
   const tooltipRef  = useRef<HTMLDivElement | null>(null)
@@ -110,10 +112,11 @@ const ForensicTimeline: React.FC<Props> = ({ events }) => {
   /* Platforms present, in a stable order, for the legend and axis grouping */
   const platformsPresent = useMemo<Platform[]>(() => {
     const seen = new Set(data.map(d => d.plat))
-    return (['aws', 'gcp', 'azure'] as Platform[]).filter(p => seen.has(p))
+    return (['aws', 'gcp', 'azure', 'stripe', 'twilio'] as Platform[]).filter(p => seen.has(p))
   }, [data])
 
   const isMultiPlatform = platformsPresent.length > 1
+  const hasData = data.length > 0
 
   /* Grouped by calendar date for the list view */
   const grouped = useMemo(() => {
@@ -147,7 +150,7 @@ const ForensicTimeline: React.FC<Props> = ({ events }) => {
     observer.observe(el)
     setChartWidth(el.clientWidth)
     return () => observer.disconnect()
-  }, [])
+  }, [hasData])
 
   /* Create tooltip div once on mount */
   useEffect(() => {
@@ -171,7 +174,7 @@ const ForensicTimeline: React.FC<Props> = ({ events }) => {
     wrapperRef.current.appendChild(div)
     tooltipRef.current = div
     return () => { div.remove(); tooltipRef.current = null }
-  }, [])
+  }, [hasData])
 
   /* D3 scatter chart */
   useEffect(() => {
@@ -326,7 +329,7 @@ const ForensicTimeline: React.FC<Props> = ({ events }) => {
       // independent so severity is still readable within a single platform.
       .attr('d', (d) => d3.symbol().type(PLATFORM_SYMBOL[d.plat] ?? d3.symbolCross).size(120)())
       .attr('transform', (d) => `translate(${x(d.ts)}, ${(y(d.row) ?? 0) + y.bandwidth() / 2})`)
-      .attr('fill', (d) => SEV_COLOR[d.severity_weight || 1] || 'var(--color-muted-foreground)')
+      .attr('fill', (d) => d.severity_weight ? SEV_COLOR[d.severity_weight] || 'var(--color-muted-foreground)' : 'var(--color-muted-foreground)')
       .attr('stroke', 'var(--color-background)')
       .attr('stroke-width', 1.5)
       .style('cursor', 'pointer')
@@ -367,7 +370,7 @@ const ForensicTimeline: React.FC<Props> = ({ events }) => {
         l4.style.color = 'var(--color-muted-foreground)'
         l4.style.marginTop = '4px'
         l4.style.fontSize = '10px'
-        l4.textContent = `Mapped to ${d.impact_category ?? 'unclassified'} because action = ${d.api_action}`
+        l4.textContent = d.impact_category ? `Mapped to ${d.plat === 'gcp' && d.impact_category === 'resource_abuse' ? 'resource change' : d.impact_category} for ${d.api_action}` : 'No classification rule matched this action'
 
         node.append(plat, b, l2, l3, l4)
         const [mx, my] = d3.pointer(event, wrapperRef.current)
@@ -517,9 +520,9 @@ const ForensicTimeline: React.FC<Props> = ({ events }) => {
 
                   {/* Event rows */}
                   {group.events.map((e, ei) => {
-                    const sevColor = SEV_COLOR[e.severity_weight || 1] ?? 'var(--color-muted-foreground)'
+                    const sevColor = e.severity_weight ? SEV_COLOR[e.severity_weight] ?? 'var(--color-muted-foreground)' : 'var(--color-muted-foreground)'
                     const catColor = CAT_COLOR[e.impact_category ?? ''] ?? 'var(--color-muted-foreground)'
-                    const catLabel = e.impact_category ? (CAT_LABEL[e.impact_category] ?? e.impact_category) : null
+                    const catLabel = e.impact_category ? (e.plat === 'gcp' && e.impact_category === 'resource_abuse' ? 'Resource change' : (CAT_LABEL[e.impact_category] ?? e.impact_category)) : 'Unclassified'
                     const isLast   = ei === group.events.length - 1
 
                     return (
@@ -562,6 +565,13 @@ const ForensicTimeline: React.FC<Props> = ({ events }) => {
                             >
                               {e.api_action}
                             </span>
+                            {e.gcp_key_attribution && <span className="shrink-0 text-[10px] font-semibold px-1.5 py-0.5 rounded border text-muted-foreground">{e.gcp_key_attribution === 'matched' ? 'Matches associated key' : e.gcp_key_attribution === 'different_key' ? 'Different key' : 'Key attribution unavailable'}</span>}
+                            {e.event_source?.includes('request-log') && (
+                              <span className="shrink-0 text-[10px] font-semibold px-1.5 py-0.5 rounded border text-muted-foreground">Request log</span>
+                            )}
+                            {Number.isFinite(exposureMs) && e.ts.getTime() < exposureMs && (
+                              <span className="shrink-0 text-[10px] font-semibold px-1.5 py-0.5 rounded border text-muted-foreground">Before detected exposure</span>
+                            )}
                             {catLabel && (
                               <span
                                 className="shrink-0 text-[10px] font-bold px-1.5 py-0.5 rounded uppercase tracking-wider"
@@ -581,7 +591,7 @@ const ForensicTimeline: React.FC<Props> = ({ events }) => {
                                   color: 'var(--color-muted-foreground)',
                                 }}
                               >
-                                Denied
+                                {e.is_denied ? 'Denied' : 'Failed'}
                               </span>
                             )}
                           </div>

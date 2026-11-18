@@ -113,6 +113,26 @@ def test_principal_id_from_caller():
     assert event.principal_id == "app-client-id-abc"
 
 
+def test_collect_matches_app_claim_and_caller_without_attributing_other_apps():
+    app_id = '11111111-2222-3333-4444-555555555555'
+    object_event = _make_event(caller='service-principal-object-id')
+    object_event.claims = {'appid': app_id.upper(), 'secret': 'do-not-store'}
+    direct_event = _make_event(caller=app_id)
+    other_event = _make_event(caller='another-object-id')
+    other_event.claims = {'appid': 'another-app', 'aud': app_id}
+    unidentifiable = _make_event(caller='service-principal-object-id')
+    filters = []
+    collector = _make_collector()
+    collector._client = SimpleNamespace(activity_logs=SimpleNamespace(
+        list=lambda **kwargs: (filters.append(kwargs['filter']) or iter([object_event, direct_event, other_event, unidentifiable]))
+    ))
+    result = collector.collect(app_id, datetime(2026, 5, 9, tzinfo=timezone.utc), datetime(2026, 5, 10, tzinfo=timezone.utc))
+    assert len(result) == 2
+    assert result[0].principal_id == 'service-principal-object-id'
+    assert 'do-not-store' not in str(result[0].raw_data)
+    assert 'caller eq' not in filters[0]
+
+
 # ---------------------------------------------------------------------------
 # Success / error_code from status and sub_status
 # ---------------------------------------------------------------------------

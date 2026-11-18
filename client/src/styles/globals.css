@@ -1,0 +1,80 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap');
+@import './tokens.css';
+
+html, body, #root { min-height: 100%; }
+body { font-family: var(--font-sans); font-size: var(--text-base); line-height: var(--leading-normal); }
+::selection { background: var(--color-accent-subtle); color: var(--color-text-primary); }
+:focus-visible { outline: 2px solid var(--color-ring); outline-offset: 2px; }
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--color-border-default); border-radius: var(--radius-full); }
+::-webkit-scrollbar-thumb:hover { background: var(--color-border-strong); }
+.mono { font-family: var(--font-mono); font-size: var(--text-sm); }
+
+/* Keep native form semantics while sharing the app's light/dark control style. */
+input[type="checkbox"] {
+  appearance: none;
+  -webkit-appearance: none;
+  display: inline-grid;
+  place-content: center;
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+  vertical-align: middle;
+  padding: 0;
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-sm);
+  background-color: var(--color-bg-elevated);
+  color: var(--color-primary-foreground);
+  cursor: pointer;
+  transition: background-color var(--transition-base), border-color var(--transition-base), box-shadow var(--transition-base);
+}
+input[type="checkbox"]::before {
+  content: "";
+  width: 10px;
+  height: 10px;
+  background-color: currentColor;
+  clip-path: polygon(14% 44%, 0 59%, 39% 97%, 100% 20%, 84% 7%, 37% 67%);
+  visibility: hidden;
+}
+input[type="checkbox"]:hover:not(:disabled) {
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 3px var(--color-accent-subtle);
+}
+input[type="checkbox"]:checked,
+input[type="checkbox"]:indeterminate {
+  background-color: var(--color-primary);
+  border-color: var(--color-primary);
+}
+input[type="checkbox"]:checked::before,
+input[type="checkbox"]:indeterminate::before { visibility: visible; }
+input[type="checkbox"]:indeterminate::before {
+  height: 2px;
+  border-radius: 1px;
+  clip-path: none;
+}
+input[type="checkbox"]:focus-visible {
+  outline: 2px solid var(--color-ring);
+  outline-offset: 3px;
+}
+input[type="checkbox"]:disabled { opacity: 0.45; cursor: not-allowed; }
+input[type="checkbox"][aria-invalid="true"] { border-color: var(--color-destructive); }
+@media (forced-colors: active) {
+  input[type="checkbox"] { appearance: auto; -webkit-appearance: auto; }
+  input[type="checkbox"]::before { display: none; }
+}
+
+/* Keep the dropdown indicator and text clear of the field edge in every form. */
+select:not([multiple]):not([size]) {
+  appearance: none;
+  padding-inline-end: var(--space-10) !important;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='m4 6 4 4 4-4' fill='none' stroke='%23888890' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") !important;
+  background-repeat: no-repeat !important;
+  background-position: right var(--space-3) center !important;
+  background-size: 16px 16px !important;
+}
+@media (forced-colors: active) {
+  select:not([multiple]):not([size]) { appearance: auto; background-image: none !important; }
+}
+.standalone-theme-toggle { position: fixed; z-index: 80; top: 16px; right: 16px; display: grid; place-items: center; width: 40px; height: 40px; border: 1px solid var(--color-border-default); border-radius: 10px; background: var(--color-bg-elevated); color: var(--color-text-primary); cursor: pointer; }
+.standalone-theme-toggle:focus-visible { outline: 2px solid var(--color-primary); outline-offset: 3px; }

@@ -79,7 +79,8 @@ def test_credential_hint_is_first_8_chars_plus_ellipsis():
 
 def test_extracts_private_key_id_when_present():
     matches = find_gcp_credentials(SA_JSON)
-    assert matches[0].private_key_id == VALID_KEY_ID
+    # An incomplete document cannot establish that a nearby ID belongs to it.
+    assert matches[0].private_key_id is None
 
 
 def test_private_key_id_is_none_when_absent():

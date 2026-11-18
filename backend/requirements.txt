@@ -5,6 +5,13 @@
 fastapi
 uvicorn[standard]
 requests
+httpx
+slowapi>=0.1.10,<0.2
+python-jose[cryptography]>=3.5
+bcrypt>=4,<5
+python-multipart
+email-validator
+cryptography
 
 # Database
 sqlalchemy

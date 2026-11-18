@@ -1,6 +1,5 @@
 import { useState } from 'react'
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
-import { CheckSquare, Square } from 'lucide-react'
 
 interface Props {
   steps: string[]
@@ -91,26 +90,11 @@ const RemediationChecklist: React.FC<Props> = ({ steps }) => {
                 const text = cleanStep(raw)
                 const done = checked.has(i)
                 return (
-                  <li
-                    key={i}
-                    className="flex items-start gap-3 cursor-pointer"
-                    onClick={() => toggle(i)}
-                  >
-                    <span
-                      className="mt-0.5 shrink-0 transition-colors"
-                      style={{ color: done ? 'var(--color-sev-low)' : 'var(--color-muted-foreground)' }}
-                    >
-                      {done ? <CheckSquare size={15} strokeWidth={2} /> : <Square size={15} strokeWidth={2} />}
-                    </span>
-                    <span
-                      className="text-sm leading-snug transition-colors"
-                      style={{
-                        color: done ? 'var(--color-muted-foreground)' : 'var(--color-foreground)',
-                        textDecoration: done ? 'line-through' : 'none',
-                      }}
-                    >
-                      {renderInline(text)}
-                    </span>
+                  <li key={i}>
+                    <label className="flex min-w-0 items-start gap-3 cursor-pointer">
+                      <input type="checkbox" checked={done} onChange={() => toggle(i)} className="mt-0.5 shrink-0" />
+                      <span className={`min-w-0 flex-1 [overflow-wrap:anywhere] text-sm leading-snug ${done ? 'text-muted-foreground line-through' : 'text-foreground'}`}>{renderInline(text)}</span>
+                    </label>
                   </li>
                 )
               })}

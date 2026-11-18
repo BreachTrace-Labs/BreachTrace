@@ -1,13 +1,11 @@
 import { useEffect, useState } from 'react'
-import { useParams, useNavigate } from 'react-router-dom'
+import { Link, useParams, useNavigate } from 'react-router-dom'
 import {
   ArrowLeft,
   AlertTriangle,
   Printer,
   ExternalLink,
   ShieldAlert,
-  Scale,
-  Building2,
   Activity,
   Clock3,
   GitCommitHorizontal,
@@ -20,7 +18,10 @@ import {
   Search as SearchIcon,
 } from 'lucide-react'
 import client, { USE_MOCK } from '@/api/client'
+import { useAuth } from '@/context/AuthContext'
+import IncidentActions from '@/components/IncidentActions'
 import type { IncidentRecord, ReportSource, SearchResult } from '@/types'
+import GCPRecordCorrelation from '@/components/GCPRecordCorrelation'
 import SearchResults from '@/components/SearchResults'
 import { derivePlatform, isForensicTier, PLATFORM_META, platformIdentity } from '@/lib/platform'
 import { completeLabel, exposureDuration, exposureLabel, isSyntheticIncident, repositoryLink } from '@/lib/incidentPresentation'
@@ -30,12 +31,20 @@ import ForensicTimeline from '@/components/ForensicTimeline'
 import ForensicsUnavailable from '@/components/ForensicsUnavailable'
 import FinancialImpactPanel from '@/components/FinancialImpactPanel'
 import BlastRadiusSummary from '@/components/BlastRadiusSummary'
+import { inExposureWindow, initialEvidenceScope } from '@/lib/forensicEvidence'
 import AffectedResources from '@/components/AffectedResources'
 import SourceIPs from '@/components/SourceIPs'
+import RelatedCredentials from '@/components/RelatedCredentials'
+import ComplianceReview from '@/components/ComplianceReview'
+import ExposureObservations from '@/components/ExposureObservations'
+import GCPKeyAttribution from '@/components/GCPKeyAttribution'
+import AzureSignIns from '@/components/AzureSignIns'
 import ReactMarkdown from 'react-markdown'
 import RemediationChecklist from '@/components/RemediationChecklist'
 import EventAnalytics from '@/components/EventAnalytics'
 import { Button } from '@/components/ui/button'
+import { CodeBlock } from '@/components/ui/code-block'
+import './incident-detail.css'
 
 /* ─── helpers ─────────────────────────────────────────────────── */
 
@@ -69,6 +78,7 @@ function ReportSourceBadge({ source }: { source?: ReportSource | null }) {
     openai: 'OpenAI',
     anthropic: 'Anthropic',
     ollama: 'Local Ollama model',
+    groq: 'Groq',
   }[source]
   const title = {
     deterministic: 'Written from verified facts by a fixed template.',
@@ -77,6 +87,7 @@ function ReportSourceBadge({ source }: { source?: ReportSource | null }) {
     openai: 'Written by your selected OpenAI model, and checked against the facts.',
     anthropic: 'Written by your selected Anthropic model, and checked against the facts.',
     ollama: 'Written by your selected local Ollama model, and checked against the facts.',
+    groq: 'Written by your selected Groq model, and checked against the facts.',
   }[source]
   return (
     <span
@@ -92,7 +103,9 @@ function ReportSourceBadge({ source }: { source?: ReportSource | null }) {
 /** Search scoped to one incident: its report passages plus the knowledge base. */
 function AskAboutIncident({ incidentId }: { incidentId: string }) {
   const [question, setQuestion] = useState('')
-  const [generateAnswer, setGenerateAnswer] = useState(false)
+  const [generateAnswer, setGenerateAnswer] = useState(true)
+  const [answerModel, setAnswerModel] = useState<{provider: string; model: string; configured: boolean} | null>(null)
+  useEffect(() => { let active = true; client.get('/assistant/model').then(({data}) => { if (active) setAnswerModel(data) }).catch(() => {}); return () => { active = false } }, [])
   const [result, setResult] = useState<SearchResult | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
@@ -150,6 +163,7 @@ function AskAboutIncident({ incidentId }: { incidentId: string }) {
         <input type="checkbox" checked={generateAnswer} onChange={e => setGenerateAnswer(e.target.checked)} className="mt-0.5" />
         <span>Generate an answer from the retrieved evidence with the model selected in Settings. Cloud models receive the question and matching passages.</span>
       </label>
+      <p className="text-xs text-muted-foreground">{answerModel?.configured ? `Answer model: ${answerModel.model || answerModel.provider}. ` : 'Choose and test a model to generate answers. '}<Link className="underline" to="/settings?section=model">Model settings →</Link></p>
       {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
       {result && !loading && (
         <SearchResults result={result} showIncidents={false} onSuggestion={(q) => void ask(q)} />
@@ -233,6 +247,8 @@ function SummaryTile({
 /* ─── component ────────────────────────────────────────────────── */
 
 const IncidentDetail: React.FC = () => {
+  const { user } = useAuth()
+  const canManage = user?.role !== 'developer'
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
   const [incident, setIncident] = useState<IncidentRecord | null>(null)
@@ -240,9 +256,15 @@ const IncidentDetail: React.FC = () => {
   const [error, setError] = useState<string | null>(null)
   const [refreshing, setRefreshing] = useState(false)
   const [refreshNotice, setRefreshNotice] = useState<string | null>(null)
+  const [evidenceScope, setEvidenceScope] = useState<'auto' | 'window' | 'history'>('auto')
+  const [twilioAccount, setTwilioAccount] = useState('')
+  const [azureClientId, setAzureClientId] = useState('')
+  const [azureOwnershipConfirmed, setAzureOwnershipConfirmed] = useState(false)
+  const incidentStatus = incident?.status
 
   useEffect(() => {
     if (!id) return
+    setEvidenceScope('auto')
     const load = async () => {
       setLoading(true)
       setError(null)
@@ -257,48 +279,92 @@ const IncidentDetail: React.FC = () => {
     }
     load()
 
+  }, [id])
+
+  useEffect(() => {
+    if (!id || !incidentStatus || incidentStatus === 'error' || USE_MOCK) return
     const poll = setInterval(() => {
       client
         .get<IncidentRecord>(`/incidents/${id}`)
         .then(({ data }) => setIncident(data))
         .catch(() => { })
-    }, 3000)
+    }, incidentStatus === 'complete' ? 30000 : 3000)
     return () => clearInterval(poll)
-  }, [id])
+  }, [id, incidentStatus])
 
   const handleRefreshForensics = async () => {
     if (!id || refreshing) return
+    if (incident?.credential_type === 'stripe_secret_key' && !window.confirm('Confirm that this project’s Stripe wallet reader belongs to the same account and mode as this exposed key. Continue?')) return
     setRefreshing(true)
     setRefreshNotice(null)
     try {
       const { data } = await client.post<RefreshResponse>(`/incidents/${id}/refresh`)
-      setIncident((current) => current ? { ...current, status: 'collecting', events: [], report_text: null } : current)
+      setIncident((current) => current ? { ...current, status: 'collecting', events: [], report_text: null, dynamic_blast_radius: null } : current)
       setRefreshNotice(data.message || 'Forensics refresh started.')
 
       const detail = await client.get<IncidentRecord>(`/incidents/${id}`)
       setIncident(detail.data)
-    } catch {
-      setRefreshNotice('Unable to start forensic refresh. Check the backend logs and try again.')
+    } catch (error) {
+      const detail = (error as { response?: { data?: { detail?: unknown } } }).response?.data?.detail
+      setRefreshNotice(typeof detail === 'string' ? detail : 'Unable to start forensic refresh. Check the backend logs and try again.')
     } finally {
       setRefreshing(false)
     }
   }
 
+  const handleTwilioAccount = async () => {
+    if (!id || refreshing) return
+    setRefreshing(true)
+    setRefreshNotice(null)
+    try {
+      await client.post(`/incidents/${id}/twilio-account`, { account_sid: twilioAccount.trim() })
+      setRefreshNotice('Twilio account associated. Collection started.')
+      const detail = await client.get<IncidentRecord>(`/incidents/${id}`)
+      setIncident(detail.data)
+    } catch (error) {
+      const detail = (error as { response?: { data?: { detail?: unknown } } }).response?.data?.detail
+      setRefreshNotice(typeof detail === 'string' ? detail : 'Could not start collection. Check that the Account SID matches the configured Twilio reader account.')
+    } finally {
+      setRefreshing(false)
+    }
+  }
+
+  const handleAzureApplication = async () => {
+    if (!id || refreshing || !azureOwnershipConfirmed) return
+    setRefreshing(true)
+    setRefreshNotice(null)
+    try {
+      await client.post(`/incidents/${id}/azure-application`, { client_id: azureClientId.trim() })
+      setRefreshNotice('Azure application associated. Activity Log collection started.')
+      const detail = await client.get<IncidentRecord>(`/incidents/${id}`)
+      setIncident(detail.data)
+    } catch (error) {
+      const detail = (error as { response?: { data?: { detail?: unknown } } }).response?.data?.detail
+      setRefreshNotice(typeof detail === 'string' ? detail : 'Could not start collection. Check the application ID and Azure reader configuration.')
+    } finally {
+      setRefreshing(false)
+    }
+  }
+
+  const downloadReport = async () => {
+    if (!id) return
+    try {
+      const { data } = await client.get<Blob>(`/incidents/${id}/report.pdf`, { responseType: 'blob' })
+      const url = URL.createObjectURL(data)
+      const link = document.createElement('a')
+      link.href = url; link.download = `breachtrace-${id}.pdf`; link.click()
+      URL.revokeObjectURL(url)
+    } catch { setRefreshNotice('Could not download the report. Please try again.') }
+  }
+
   if (loading) {
-    return (
-      <div className="flex items-center justify-center min-h-[60vh]">
-        <div className="flex flex-col items-center gap-4">
-          <div className="w-8 h-8 border-4 rounded-full border-muted-foreground/20 border-t-primary animate-spin" />
-          <p className="text-sm font-medium text-muted-foreground animate-pulse">Loading incident details...</p>
-        </div>
-      </div>
-    )
+    return <div className="incident-loading" role="status" aria-label="Loading incident details"><div className="incident-loading-header"/><div className="incident-loading-grid"><div><div/><div/><div/></div><aside><div/><div/></aside></div></div>
   }
 
   if (error || !incident) {
     return (
       <div className="max-w-2xl mx-auto mt-12 space-y-6">
-        <Button variant="ghost" size="sm" onClick={() => navigate('/')} className="hover:bg-accent -ml-3">
+        <Button variant="ghost" size="sm" onClick={() => navigate('/dashboard')} className="hover:bg-accent -ml-3">
           <ArrowLeft size={16} className="mr-2" />
           Back to Dashboard
         </Button>
@@ -319,6 +385,13 @@ const IncidentDetail: React.FC = () => {
   const platform = derivePlatform(incident)
   const platformMeta = PLATFORM_META[platform]
   const identity = platformIdentity(incident, incident.events ?? [])
+  const exposureTimestamp = new Date(incident.exposure_start).getTime()
+  const exposureEvents = incident.events.filter(event => new Date(event.timestamp).getTime() >= exposureTimestamp)
+  const windowEvents = inExposureWindow(incident.events, incident.exposure_start, incident.exposure_end)
+  const activeEvidenceScope = evidenceScope === 'auto' ? initialEvidenceScope(incident) : evidenceScope
+  const evidenceEvents = activeEvidenceScope === 'window' ? windowEvents : incident.events
+  const collectionInProgress = ['detecting', 'collecting', 'classifying', 'scoring', 'reporting'].includes(incident.status)
+  const collectionFailed = incident.status === 'error' || incident.collection_status === 'error'
 
   return (
     <div className="max-w-7xl mx-auto space-y-8 pb-12 animate-in fade-in duration-500">
@@ -326,12 +399,12 @@ const IncidentDetail: React.FC = () => {
       {/* Top Header Section */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b pb-6">
         <div className="flex min-w-0 items-center gap-4">
-          <Button variant="outline" size="icon" aria-label="Back to incident monitor" onClick={() => navigate('/')} className="rounded-sm shadow-sm">
+          <Button variant="outline" size="icon" aria-label="Back to incident monitor" onClick={() => navigate('/dashboard')} className="rounded-sm shadow-sm">
             <ArrowLeft size={18} />
           </Button>
           <div className="min-w-0">
             <h1 className="text-2xl font-bold tracking-tight text-foreground flex flex-wrap items-center gap-3">
-              Incident Detail
+              {incident.credential_type.replace(/_/g, ' ')}
               <SeverityBadge severity={incident.overall_severity} />
               {!incident.overall_severity && <span className="rounded border px-2 py-1 text-xs font-medium text-muted-foreground">Severity not assessed</span>}
             </h1>
@@ -343,7 +416,7 @@ const IncidentDetail: React.FC = () => {
 
         <div className="flex flex-wrap items-center gap-3">
           <StatusPill incident={incident} />
-          {forensic && !synthetic && !USE_MOCK && <Button
+          {canManage && forensic && !synthetic && !USE_MOCK && <Button
             variant="outline"
             className="shadow-sm bg-background rounded-sm"
             onClick={handleRefreshForensics}
@@ -354,10 +427,8 @@ const IncidentDetail: React.FC = () => {
             {refreshing ? 'Refreshing…' : 'Refresh logs'}
           </Button>}
           {!USE_MOCK && (
-            <Button asChild variant="outline" className="shadow-sm bg-background hidden sm:flex rounded-sm">
-              <a href={`${import.meta.env.VITE_API_URL ?? 'http://localhost:8000'}/incidents/${incident.incident_id}/report.pdf`} download>
-                <Printer size={16} className="mr-2" /> Download PDF report
-              </a>
+            <Button variant="outline" className="shadow-sm bg-background hidden sm:flex rounded-sm" onClick={() => void downloadReport()}>
+              <Printer size={16} className="mr-2" /> Download PDF report
             </Button>
           )}
           <Button variant="outline" className="shadow-sm bg-background hidden sm:flex rounded-sm" onClick={() => window.print()}>
@@ -366,11 +437,13 @@ const IncidentDetail: React.FC = () => {
         </div>
       </div>
 
+      <IncidentActions incident={incident} canManage={canManage} onChange={setIncident} />
+
       {/* Main Content Grid */}
       <div className="grid grid-cols-1 xl:grid-cols-12 gap-8">
 
         {/* Left Column (Main Info) */}
-        <div className="xl:col-span-8 space-y-8">
+        <div className="xl:col-span-8 min-w-0 space-y-8">
 
           {/* Overview Card */}
           <div className="bg-card border rounded-sm shadow-sm overflow-hidden">
@@ -384,9 +457,7 @@ const IncidentDetail: React.FC = () => {
                 <div className="space-y-6">
                   <div>
                     <h2 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground mb-1">Detected Credential</h2>
-                    <p className="text-2xl sm:text-3xl font-mono font-bold tracking-tight text-foreground break-all">
-                      {incident.credential_hint}
-                    </p>
+                    <CodeBlock value={incident.credential_hint} />
                   </div>
                   <div className="flex flex-wrap items-center gap-3 text-sm">
                     <span
@@ -434,8 +505,9 @@ const IncidentDetail: React.FC = () => {
                     </div>
                   </div>
                   <div className="mt-5 border-t pt-4">
-                    <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Confirmed window</p>
+                    <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Time between recorded timestamps</p>
                     <p className="mt-1 font-mono text-2xl font-bold tracking-tight text-foreground">{dur}</p>
+                    {!synthetic && <p className="mt-2 text-xs text-muted-foreground">The start is estimated from the detected commit. A recorded end does not independently confirm rotation.</p>}
                   </div>
                 </div>
               </div>
@@ -444,7 +516,7 @@ const IncidentDetail: React.FC = () => {
             {/* Stats Grid */}
             <div className="border-t bg-muted/20 p-4 sm:p-6">
               <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
-                <SummaryTile icon={Clock3} label={synthetic ? "Sample exposure start" : "Exposure start"}>
+                <SummaryTile icon={Clock3} label={synthetic ? "Sample exposure start" : "Estimated exposure start"}>
                   {fmtTime(incident.exposure_start)}
                 </SummaryTile>
                 <SummaryTile icon={Timer} label="Window closure">
@@ -463,6 +535,12 @@ const IncidentDetail: React.FC = () => {
                 )}
               </div>
 
+              {platform === 'azure' && <AzureSignIns incidentId={incident.incident_id} canManage={canManage} hasApplication={!!incident.principal_id} exposureStart={incident.exposure_start} exposureEnd={incident.exposure_end} />}
+              {platform === 'gcp' && <GCPKeyAttribution incident={incident} canManage={canManage} onChange={setIncident}/>}
+              {(incident.azure_secret_occurrences?.length ?? 0) > 1 && <section className="rounded-lg border border-amber-500/50 bg-card p-5 space-y-2" role="status"><h2 className="font-semibold flex items-center gap-2"><AlertTriangle size={18}/>Credential exposed again</h2><p className="text-sm text-muted-foreground">The same Azure secret was detected in {incident.azure_secret_occurrences?.length} commits in this project. Review each occurrence; activity remains scoped to the application unless key-specific evidence is available.</p><ul className="text-sm space-y-1">{incident.azure_secret_occurrences?.map(item => <li key={item.commit_hash}><code>{item.commit_hash.slice(0, 7)}</code> · {fmtTime(item.observed_at)} (commit time)</li>)}</ul></section>}
+              <ExposureObservations key={`exposure-${incident.incident_id}`} incidentId={incident.incident_id} canManage={canManage} />
+              <RelatedCredentials key={incident.incident_id} incidentId={incident.incident_id} />
+
               {/* Leaked principal — named per platform. AWS reports an access key
                   ID, GCP a service account email, Azure a client ID; showing an
                   empty "Access Key ID" on a GCP incident reads as a bug. */}
@@ -480,52 +558,7 @@ const IncidentDetail: React.FC = () => {
               )}
             </div>
 
-            {(incident.gdpr_flag || incident.pcidss_flag || incident.soc2_flag) && (
-              <div className="border-t bg-orange-500/5 dark:bg-orange-500/10 border-orange-500/20 px-6 sm:px-8 py-5">
-                <div className="flex items-center gap-2 mb-4">
-                  <AlertTriangle className="text-orange-500" size={18} />
-                  <h3 className="text-sm font-semibold text-orange-700 dark:text-orange-400">Potential compliance relevance</h3>
-                </div>
-                <div className="grid sm:grid-cols-3 gap-4">
-                  {incident.gdpr_flag && (
-                    <div className="bg-background rounded-sm p-3 border shadow-sm">
-                      <div className="flex items-center gap-2 mb-1 text-orange-600 dark:text-orange-400">
-                        <ShieldAlert size={14} />
-                        <span className="text-xs font-bold uppercase">GDPR — Art. 33</span>
-                      </div>
-                      <p className="text-xs text-muted-foreground">Review the evidence with your privacy team. This flag does not establish a reportable breach.</p>
-                    </div>
-                  )}
-                  {incident.pcidss_flag && (
-                    <div className="bg-background rounded-sm p-3 border shadow-sm">
-                      <div className="flex items-center gap-2 mb-1 text-orange-600 dark:text-orange-400">
-                        <Scale size={14} />
-                        <span className="text-xs font-bold uppercase">PCI-DSS — Req 12</span>
-                      </div>
-                      <p className="text-xs text-muted-foreground">Review payment-data exposure and your incident response obligations with the responsible team.</p>
-                    </div>
-                  )}
-                  {incident.soc2_flag && (
-                    <div className="bg-background rounded-sm p-3 border shadow-sm">
-                      <div className="flex items-center gap-2 mb-1 text-orange-600 dark:text-orange-400">
-                        <Building2 size={14} />
-                        <span className="text-xs font-bold uppercase">SOC 2 — CC6/A1</span>
-                      </div>
-                      <p className="text-xs text-muted-foreground">Review the relevant security controls and incident evidence with your compliance team.</p>
-                    </div>
-                  )}
-                </div>
-                {incident.compliance_reasons && incident.compliance_reasons.length > 0 && (
-                  <div className="mt-4 pt-3 border-t border-orange-500/10">
-                    <ul className="list-inside list-disc space-y-1">
-                      {incident.compliance_reasons.map((reason, i) => (
-                        <li key={i} className="text-xs text-orange-700/80 dark:text-orange-300/80 pl-2">{reason}</li>
-                      ))}
-                    </ul>
-                  </div>
-                )}
-              </div>
-            )}
+            <ComplianceReview incident={incident} />
 
             {/* Financial impact moved to FinancialImpactPanel in the sidebar.
                 It renders one figure per currency and separates money that
@@ -543,13 +576,14 @@ const IncidentDetail: React.FC = () => {
                 Incident Report
                 <ReportSourceBadge source={incident.report_source} />
               </h2>
+              {platform === 'gcp' && <p className="mb-4 text-sm text-muted-foreground">Older reports may contain unsupported cost estimates. Refresh logs to regenerate the report; Cloud Audit Logs do not establish billing charges or loss.</p>}
               <div className="prose prose-sm xl:prose-base dark:prose-invert max-w-none prose-p:leading-relaxed prose-headings:font-semibold">
                 <MarkdownReport text={incident.report_text} />
               </div>
             </div>
           )}
 
-          {incident.status === 'complete' && <AskAboutIncident incidentId={incident.incident_id} />}
+          {canManage && incident.status === 'complete' && <AskAboutIncident incidentId={incident.incident_id} />}
 
           {/* Timeline, or an explanation of why there cannot be one.
               Tier-2 platforms expose no queryable audit log, so rendering an
@@ -563,31 +597,76 @@ const IncidentDetail: React.FC = () => {
                 </div>
                 Forensic Timeline
               </h2>
-              <ForensicTimeline events={incident.events} />
+              <p className="mb-4 text-sm text-muted-foreground">Shows up to 30 days of available provider history. Events before detected exposure are context and are excluded from incident severity, impact and report calculations. Refresh logs to retrieve recent history.</p>
+              {platform === 'aws' && <p className="mb-4 text-sm text-muted-foreground">CloudTrail is queried by access key ID. Available records depend on logging and retention; related temporary credentials may use different key IDs.</p>}
+              {platform === 'gcp' && <p className="mb-4 text-sm text-muted-foreground">Cloud Audit Logs are matched to the service account, not necessarily the individual leaked key. Results depend on enabled logs and permissions.</p>}
+              {platform === 'gcp' && incident.gcp_classification_coverage && <p className="mb-4 text-sm text-muted-foreground">Classification coverage across stored history: {incident.gcp_classification_coverage.classified_count} classified · {incident.gcp_classification_coverage.unclassified_count} unclassified. This does not measure whether all provider logs were collected.</p>}
+              {platform === 'twilio' && <p className="mb-4 text-sm text-muted-foreground">Messages, calls and Monitor Events describe account activity. The current collector cannot attribute these records to a particular API key.</p>}
+              {incident.credential_type === 'stripe_secret_key' && <div className="mb-4 space-y-2 text-sm text-muted-foreground">
+                <p>BreachTrace queries Stripe Events directly through the backend, using up to the Events API’s 30-day retention window. These records show account-level state changes, not every API request, and do not identify which key caused them. Read-only requests are not included.</p>
+              </div>}
+              {(incident.credential_type === 'azure_service_principal' || incident.credential_type === 'azure_client_secret') && <p className="mb-4 text-sm text-muted-foreground">Azure Activity Log events are matched to the application identity. They do not identify which client secret was used, and Activity Log does not include every data-plane action.</p>}
+              {incident.status === 'error' && <p role="alert" className="mb-4 text-sm text-destructive">{incident.collection_error || 'Forensic collection failed. Check your provider access and refresh the logs.'}</p>}
+              {platform === 'gcp' && <GCPRecordCorrelation incident={incident} />}
+              <ForensicTimeline events={incident.events} exposureStart={incident.exposure_start} />
             </div>
           ) : (
-            <ForensicsUnavailable incident={incident} />
+            <>
+              <ForensicsUnavailable incident={incident} />
+              {canManage && !USE_MOCK && !synthetic && incident.credential_type === 'azure_client_secret' && <form
+                className="border rounded-sm p-5 space-y-3"
+                onSubmit={e => { e.preventDefault(); void handleAzureApplication() }}>
+                <h3 className="font-semibold">Associate Azure application</h3>
+                <p className="text-sm text-muted-foreground">Enter the application (client) ID that owns this secret. The backend reader needs Activity Log access to the correct subscription. Activity is associated with the application, not a specific secret.</p>
+                <label className="block text-sm">Application (client) ID
+                  <input className="block mt-1 w-full border rounded p-2 bg-transparent font-mono" value={azureClientId}
+                    onChange={e => setAzureClientId(e.target.value)} pattern="[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}" required placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" />
+                </label>
+                <label className="flex items-start gap-2 text-sm"><input type="checkbox" checked={azureOwnershipConfirmed} onChange={e => setAzureOwnershipConfirmed(e.target.checked)} required /> I confirmed this secret belongs to this application.</label>
+                <Button disabled={refreshing || !azureOwnershipConfirmed} type="submit">{refreshing ? 'Starting…' : 'Collect Azure activity'}</Button>
+              </form>}
+              {canManage && !USE_MOCK && incident.credential_type === 'twilio_api_key' && <form
+                className="border rounded-sm p-5 space-y-3"
+                onSubmit={e => { e.preventDefault(); void handleTwilioAccount() }}>
+                <p className="text-sm">Confirm the owning Twilio Account SID to collect account activity. It must match this project’s Twilio wallet connection.</p>
+                <label className="block text-sm">Twilio Account SID
+                  <input className="block mt-1 w-full border rounded p-2 bg-transparent font-mono" value={twilioAccount}
+                    onChange={e => setTwilioAccount(e.target.value)} pattern="AC[0-9a-fA-F]{32}" required placeholder="AC…" />
+                </label>
+                <Button disabled={refreshing} type="submit">{refreshing ? 'Starting…' : 'Collect Twilio activity'}</Button>
+              </form>}
+            </>
           )}
 
         </div>
 
         {/* Right Column (Sidebar) */}
-        <div className="xl:col-span-4 space-y-6">
+        <div className="xl:col-span-4 min-w-0 space-y-6">
           <div className="xl:sticky xl:top-24 space-y-6">
             {/* First in the stack: on a Stripe incident this is real money
                 moved, which should not sit below three other cards. Self-hides
                 when there is nothing to report. */}
             {forensic ? <>
-              <FinancialImpactPanel incident={incident} />
               <BlastRadiusSummary incident={incident} />
-              <SourceIPs events={incident.events} />
-              <AffectedResources events={incident.events} />
-            </> : <div className="rounded-sm border bg-card p-5 space-y-3 text-sm">
+            </> : <><BlastRadiusSummary incident={incident} /><div className="rounded-sm border bg-card p-5 space-y-3 text-sm">
               <h2 className="font-semibold">Detection evidence</h2>
               <p>Credential candidate found · validity not verified</p>
               <p className="text-muted-foreground">Usage, billing impact and severity have not been assessed by BreachTrace. Review available records in the provider console.</p>
               {synthetic && <p className="text-muted-foreground">This example uses a fabricated key. No provider request was made.</p>}
-            </div>}
+            </div></>}
+            <div className="forensic-range">
+              <p className="forensic-range-title">Evidence time range</p>
+              <p className="forensic-range-intro">Applies to financial activity, source IPs and resources below.</p>
+              <div className="forensic-range-options" role="group" aria-label="Event time range">
+                <button type="button" aria-pressed={activeEvidenceScope === 'window'} onClick={() => setEvidenceScope('window')}>Exposure window <span>{windowEvents.length}</span></button>
+                <button type="button" aria-pressed={activeEvidenceScope === 'history'} onClick={() => setEvidenceScope('history')}>All history <span>{incident.events.length}</span></button>
+              </div>
+              <p className="forensic-range-help">{activeEvidenceScope === 'window' ? windowEvents.length === 0 && incident.events.length > 0 ? 'No events fall within the estimated exposure window. Select All history to see the available context.' : 'From the estimated exposure start through the recorded end, if present.' : windowEvents.length === 0 ? 'Showing history because no events fall within the estimated exposure window. Historical events are context, not evidence of activity caused by this exposure.' : 'Includes events outside the exposure window. These are context, not evidence of activity caused by this exposure.'}</p>{platform === 'azure' && <p className="forensic-range-help">Azure Activity Log is matched to the application, so incidents for different secrets in the same application can show the same events. The log does not identify which secret was used.</p>}
+              {!forensic && <p className="forensic-range-help">This credential type is detection only; provider activity is not collected for this finding.</p>}
+            </div>
+            {forensic && <FinancialImpactPanel incident={incident} scope={activeEvidenceScope} />}
+            <SourceIPs events={evidenceEvents} platform={platform} collecting={collectionInProgress} error={collectionFailed} />
+            <AffectedResources events={evidenceEvents} collecting={collectionInProgress} error={collectionFailed} />
             <RemediationChecklist steps={incident.remediation_steps} />
           </div>
         </div>
@@ -595,9 +674,9 @@ const IncidentDetail: React.FC = () => {
       </div>
 
       {/* Event Analytics */}
-      {incident.events.length > 0 && (
+      {exposureEvents.length > 0 && (
         <div className="mt-8">
-          <EventAnalytics events={incident.events} />
+          <EventAnalytics events={exposureEvents} />
         </div>
       )}
 

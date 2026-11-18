@@ -1,117 +1,27 @@
-import { useState } from 'react'
-import { Search as SearchIcon, Loader2 } from 'lucide-react'
+import { useCallback, useEffect, useRef, useState } from 'react'
+import { Search as SearchIcon, X } from 'lucide-react'
 import client from '@/api/client'
 import type { SearchResult } from '@/types'
 import SearchResults from '@/components/SearchResults'
 import { Button } from '@/components/ui/button'
+import './search.css'
 
-const EXAMPLES = [
-  'Sarvam incidents',
-  'Claude incidents',
-  'what happened at 2026-10-01T14:23:30Z',
-  'critical incidents this week',
-  'stripe incidents in the last 7 days',
-  'how do I rotate a Twilio auth token',
-  'why is there no timeline for a GitHub token',
-  'what does CreateAccessKey mean',
-  'when do I need to notify under GDPR',
-]
-
+const EXAMPLES = ['Sarvam incidents', 'critical incidents this week', 'stripe incidents in the last 7 days', 'how do I rotate a Twilio auth token', 'why is there no timeline for a GitHub token']
 export default function Search() {
-  const [question, setQuestion] = useState('')
-  const [result, setResult] = useState<SearchResult | null>(null)
-  const [loading, setLoading] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-  const [generateAnswer, setGenerateAnswer] = useState(false)
-
-  async function run(q: string) {
-    const trimmed = q.trim()
-    if (trimmed.length < 2) return
-    setQuestion(trimmed)
-    setLoading(true)
-    setError(null)
-    setResult(null)
-    try {
-      const { data } = await client.post<SearchResult>('/assistant/search', { question: trimmed, generate_answer: generateAnswer }, { timeout: generateAnswer ? 310_000 : 30_000 })
-      setResult(data)
-    } catch {
-      setError('Search failed. Is the backend running?')
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  return (
-    <div className="mx-auto max-w-3xl px-6 py-10 space-y-6">
-      <div className="space-y-1">
-        <h1 className="text-xl font-bold tracking-tight">Search</h1>
-        <p className="text-sm" style={{ color: 'var(--color-muted-foreground)' }}>
-          Search forensic timelines, long reports and response guidance. For exact event times,
-          include an ISO timestamp with a zone, such as 2026-10-01T14:23:30Z. Retrieval runs locally; model answers are optional.
-        </p>
-      </div>
-
-      <p className="text-sm border rounded p-3" role="note">
-        Report prose quality depends on your selected model. Verify conclusions against cited events.
-        Missing logs do not prove no activity. Cloud report or answer generation sends incident facts or selected passages to the provider chosen in Settings.
-      </p>
-
-      <form
-        onSubmit={(e) => {
-          e.preventDefault()
-          void run(question)
-        }}
-        className="flex gap-2"
-      >
-        <div className="relative flex-1">
-          <SearchIcon
-            size={15}
-            className="absolute left-3 top-1/2 -translate-y-1/2"
-            style={{ color: 'var(--color-muted-foreground)' }}
-          />
-          <input
-            value={question}
-            onChange={(e) => setQuestion(e.target.value)}
-            placeholder="e.g. stripe incidents this week"
-            maxLength={500}
-            className="w-full h-10 pl-9 pr-3 text-sm border rounded-sm bg-transparent outline-none focus:ring-2"
-            style={{ borderColor: 'var(--color-border)' }}
-            aria-label="Search question"
-          />
-        </div>
-        <Button type="submit" disabled={loading || question.trim().length < 2}>
-          {loading ? <Loader2 size={15} className="animate-spin" /> : 'Search'}
-        </Button>
-      </form>
-
-      <label className="flex items-start gap-2 text-sm">
-        <input type="checkbox" checked={generateAnswer} onChange={e => setGenerateAnswer(e.target.checked)} className="mt-1" />
-        <span>Generate a concise answer from retrieved evidence using the model selected in Settings.
-          <span className="block text-xs text-muted-foreground">When a cloud model is selected, your question and matching passages are sent to that provider. The retrieved sources remain visible for review.</span>
-        </span>
-      </label>
-
-      {!result && !loading && (
-        <div className="flex flex-wrap gap-2">
-          {EXAMPLES.map((q) => (
-            <button
-              key={q}
-              type="button"
-              onClick={() => void run(q)}
-              className="text-xs border rounded-full px-2.5 py-1 hover:bg-[var(--color-secondary)]"
-              style={{ borderColor: 'var(--color-border)' }}
-            >
-              {q}
-            </button>
-          ))}
-        </div>
-      )}
-
-      {error && <p className="text-sm" style={{ color: 'var(--color-sev-critical)' }}>{error}</p>}
-
-      {result && !loading && (
-        <SearchResults result={result} onSuggestion={(q) => void run(q)} />
-      )}
-    </div>
-  )
+  const [question, setQuestion] = useState(''); const [result, setResult] = useState<SearchResult | null>(null); const [loading, setLoading] = useState(false); const [error, setError] = useState(''); const [answering, setAnswering] = useState(false); const sequence = useRef(0); const input = useRef<HTMLInputElement>(null)
+  const run = useCallback(async (query: string, generate = false) => {
+    const trimmed = query.trim(); const request = ++sequence.current
+    if (trimmed.length < 2) { setResult(null); setLoading(false); setAnswering(false); setError(''); return }
+    setLoading(true); setAnswering(generate); setError('')
+    try { const { data } = await client.post<SearchResult>('/assistant/search', { question: trimmed, generate_answer: generate }, { timeout: generate ? 310_000 : 30_000 }); if (sequence.current === request) setResult(data) }
+    catch { if (sequence.current === request) { setResult(null); setError('Search is unavailable. Check the backend connection and try again.') } }
+    finally { if (sequence.current === request) { setLoading(false); setAnswering(false) } }
+  }, [])
+  useEffect(() => { const requests = sequence; const timer = window.setTimeout(() => void run(question), 300); return () => { window.clearTimeout(timer); requests.current++ } }, [question, run])
+  useEffect(() => { const focus = () => input.current?.focus(); window.addEventListener('bt-focus-search', focus); return () => window.removeEventListener('bt-focus-search', focus) }, [])
+  const choose = (q: string) => { sequence.current++; setResult(null); setError(''); if (q === question) void run(q); else setQuestion(q); input.current?.focus() }
+  return <div className="search-page"><header><h1>Search</h1><p>Search incidents, timelines, reports and response guidance across the organisation.</p></header><div className="search-bar"><SearchIcon size={18}/><input ref={input} autoFocus aria-label="Search incidents, events and reports" placeholder="Search incidents, events, reports..." maxLength={500} value={question} onChange={e => { sequence.current++; setResult(null); setLoading(false); setAnswering(false); setError(''); setQuestion(e.target.value) }}/>{question && <button type="button" aria-label="Clear search" onClick={() => { sequence.current++; setResult(null); setLoading(false); setAnswering(false); setError(''); setQuestion(''); input.current?.focus() }}><X size={16}/></button>}<kbd>⌘K</kbd></div>
+    <p className="search-note">Retrieval runs locally. Exact event times can be searched using an ISO timestamp with a time zone. Review conclusions against the cited evidence; missing logs do not prove no activity.</p>
+    <div className="search-answer-action"><Button variant="outline" loading={answering} disabled={question.trim().length < 2 || loading} onClick={() => void run(question, true)}>Generate an evidence-based answer</Button><p>When a cloud model is selected, your question and matching passages are sent to that provider.</p></div>
+    {error && <p role="alert" className="search-error">{error}</p>}{loading && <p role="status" className="search-loading">{answering ? 'Generating answer…' : 'Searching…'}</p>}{!question.trim() && <div className="search-examples"><p>Try a search</p>{EXAMPLES.map(example => <button key={example} type="button" onClick={() => choose(example)}>{example}</button>)}</div>}{result && !loading && <SearchResults result={result} onSuggestion={choose}/>}</div>
 }

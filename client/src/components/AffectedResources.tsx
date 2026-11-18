@@ -1,100 +1,17 @@
 import type { ForensicEvent } from '../types'
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
-import { Database, Server, Key, Box } from 'lucide-react'
+import { Box, Layers3 } from 'lucide-react'
 
-interface Props {
-  events: ForensicEvent[]
-}
-
-type GroupedResource = {
-  type: string
-  resources: string[]
-  count: number
-}
-
-const RESOURCE_ICONS: Record<string, React.ReactNode> = {
-  bucket: <Database size={13} strokeWidth={2} />,
-  instance: <Server size={13} strokeWidth={2} />,
-  key: <Key size={13} strokeWidth={2} />,
-}
-
-function getIcon(type: string | null) {
-  if (!type) return <Box size={13} strokeWidth={2} />
-  const lower = type.toLowerCase()
-  for (const [key, icon] of Object.entries(RESOURCE_ICONS)) {
-    if (lower.includes(key)) return icon
+export default function AffectedResources({ events, collecting, error }: { events: ForensicEvent[]; collecting: boolean; error: boolean }) {
+  const groups = new Map<string, { resources: Set<string>; count: number }>()
+  for (const event of events) {
+    if (!event.affected_resource) continue
+    const type = event.resource_type || 'Other resources'
+    const group = groups.get(type) ?? { resources: new Set<string>(), count: 0 }
+    group.resources.add(event.affected_resource); group.count++; groups.set(type, group)
   }
-  return <Box size={13} strokeWidth={2} />
+  const total = [...groups.values()].reduce((sum, group) => sum + group.resources.size, 0)
+  return <Card className="forensic-card"><CardHeader className="forensic-card-header"><div className="forensic-card-heading"><span className="forensic-icon"><Layers3 size={17}/></span><div><CardTitle>Affected resources</CardTitle><p>Resources named in selected events</p></div></div>{total > 0 && <span className="forensic-count">{total} {total === 1 ? 'resource' : 'resources'}</span>}</CardHeader><CardContent className="forensic-card-content">
+    {!groups.size ? <div className="forensic-empty"><Box size={18}/><div><strong>No resources identified</strong><p>{collecting ? 'Collection is in progress.' : error ? 'Collection failed; resources could not be assessed.' : events.length ? 'The selected events do not identify a resource.' : 'No events in the selected time range. Affected resources are unknown.'}</p></div></div> : <><div className="forensic-resource-groups">{[...groups].map(([type,group]) => <section key={type}><div className="forensic-resource-title"><span>{type.replace(/_/g, ' ')}</span><span>{group.count} {group.count === 1 ? 'event' : 'events'}</span></div><ul className="forensic-list">{[...group.resources].map(resource => <li key={resource}><code>{resource}</code></li>)}</ul></section>)}</div><p className="forensic-meta">A listed resource does not by itself prove impact or attribution to this credential.</p></>}
+  </CardContent></Card>
 }
-
-const AffectedResources: React.FC<Props> = ({ events }) => {
-  const grouped = events.reduce<Record<string, GroupedResource>>((acc, e) => {
-    if (!e.affected_resource) return acc
-    const type = e.resource_type ?? 'resource'
-    if (!acc[type]) acc[type] = { type, resources: [], count: 0 }
-    if (!acc[type].resources.includes(e.affected_resource)) {
-      acc[type].resources.push(e.affected_resource)
-    }
-    acc[type].count++
-    return acc
-  }, {})
-
-  const groups = Object.values(grouped)
-
-  return (
-    <Card>
-      <CardHeader className="pb-3">
-        <CardTitle className="flex items-center gap-2 text-sm">
-          Affected Resources
-          {groups.length > 0 && (
-            <span
-              className="ml-auto text-xs font-mono px-1.5 py-0.5 rounded"
-              style={{ backgroundColor: 'var(--color-muted)', color: 'var(--color-muted-foreground)' }}
-            >
-              {groups.reduce((s, g) => s + g.resources.length, 0)}
-            </span>
-          )}
-        </CardTitle>
-      </CardHeader>
-      <CardContent>
-        {groups.length === 0 ? (
-          <p className="text-sm" style={{ color: 'var(--color-muted-foreground)' }}>
-            No resources affected
-          </p>
-        ) : (
-          <div className="space-y-4">
-            {groups.map((g) => (
-              <div key={g.type}>
-                <div
-                  className="flex items-center gap-1.5 mb-2 text-xs font-semibold uppercase tracking-wider"
-                  style={{ color: 'var(--color-muted-foreground)' }}
-                >
-                  {getIcon(g.type)}
-                  {g.type}
-                  <span className="ml-auto">{g.count} events</span>
-                </div>
-                <ul className="space-y-1">
-                  {g.resources.map((r) => (
-                    <li
-                      key={r}
-                      className="font-mono text-xs py-1.5 px-2 border-l-2 truncate"
-                      style={{
-                        borderColor: 'var(--color-border)',
-                        color: 'var(--color-foreground)',
-                      }}
-                      title={r}
-                    >
-                      {r}
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            ))}
-          </div>
-        )}
-      </CardContent>
-    </Card>
-  )
-}
-
-export default AffectedResources

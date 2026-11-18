@@ -71,7 +71,8 @@ def test_resolves_gcp_match():
     # GCP has no access key ID; the identity is the service account email.
     assert resolved.access_key_id is None
     assert resolved.principal_id == resolved.credential
-    assert resolved.is_collectable is True
+    assert resolved.is_collectable is False
+    assert 'identifier alone' in resolved.unavailable_reason
 
 
 def test_firebase_keeps_its_label_but_collects_as_gcp():
@@ -82,7 +83,7 @@ def test_firebase_keeps_its_label_but_collects_as_gcp():
 
     assert resolved.credential_type == "firebase_service_account"
     assert resolved.platform == "gcp"
-    assert resolved.is_collectable is True
+    assert resolved.is_collectable is False
 
 
 # ==========================================================================

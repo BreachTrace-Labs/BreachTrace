@@ -30,7 +30,7 @@ _CATEGORY_STEPS: dict[tuple[str, str], str] = {
     ("aws", "resource_abuse"):
         "Terminate or delete resources created during the exposure window{resources}",
     ("gcp", "resource_abuse"):
-        "Delete Compute Engine instances and other resources created during the exposure window{resources}",
+        "Review resource changes during the exposure window{resources} and revert changes confirmed to be unauthorized",
     ("azure", "resource_abuse"):
         "Delete virtual machines and other resources created during the exposure window{resources}",
     ("stripe", "resource_abuse"):
@@ -68,7 +68,10 @@ def build_remediation(facts: dict) -> list[str]:
     """Ordered checklist: revoke first, then category-specific clean-up, then hygiene."""
     platform = facts.get("platform", "aws")
     profile = get_profile(platform)
-    steps = [f"Revoke the exposed credential now: {profile.revoke_command}"]
+    revoke = profile.revoke_command
+    if platform == "twilio" and facts.get("credential_type") == "twilio_api_key":
+        revoke = "Twilio Console → API keys & tokens → revoke the exposed API key and issue a replacement"
+    steps = [f"Revoke the exposed credential now: {revoke}"]
 
     resources_by_category: dict[str, list[str]] = {}
     for action in facts.get("actions", []):

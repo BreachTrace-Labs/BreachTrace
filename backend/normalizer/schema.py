@@ -9,6 +9,7 @@ from pydantic import BaseModel, Field
 
 class ForensicEvent(BaseModel):
     event_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    source_record_id: Optional[str] = None
     platform: str = "aws"
     timestamp: datetime
     api_action: str

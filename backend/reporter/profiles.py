@@ -57,7 +57,7 @@ PLATFORM_PROFILES: dict[str, _PlatformProfile] = {
         name="Google Cloud",
         audit_log="Cloud Audit Logs",
         blind_spot=(
-            "Admin Activity logs are always on, but Data Access logs — which cover object reads — must be explicitly enabled per service and are off by default."
+            "Activity is matched to a service account, not necessarily a particular key. Data Access logs depend on the service and logging configuration."
         ),
         identity_term="service account email",
         vocabulary=(
@@ -75,7 +75,7 @@ PLATFORM_PROFILES: dict[str, _PlatformProfile] = {
         name="Microsoft Azure",
         audit_log="Activity Log",
         blind_spot=(
-            "The Azure Activity Log records control-plane operations only. Data-plane reads, such as downloading a blob, do not appear unless diagnostic settings were configured in advance."
+            "Azure Activity Log records are matched to an application identity, not a particular client secret. Activity Log covers control-plane operations only; data-plane records require separate logging."
         ),
         identity_term="client ID (app registration)",
         vocabulary=(
@@ -85,7 +85,7 @@ PLATFORM_PROFILES: dict[str, _PlatformProfile] = {
             "buckets or service account keys."
         ),
         revoke_command="az ad app credential delete --id <CLIENT_ID> --key-id <KEY_ID>",
-        review_command="az monitor activity-log list --caller <CLIENT_ID>",
+        review_command="az monitor activity-log list (review caller and application identity claims)",
     ),
     # Without these two, a Stripe or Twilio incident fell back to the AWS
     # profile and told the developer to run `aws iam delete-access-key`.
@@ -93,7 +93,7 @@ PLATFORM_PROFILES: dict[str, _PlatformProfile] = {
         name="Stripe",
         audit_log="Stripe Events",
         blind_spot=(
-            "Stripe Events record state changes only — charges, refunds, payouts, account changes. Reading customer or payment records creates no event, so data that was only viewed or exported does not appear. Events also cover the whole account, so some may be the owner's own legitimate activity."
+            "Stripe Events cover account activity, not activity attributed to this key. They record state changes, not read-only access, and the API only returns events from the last 30 days. An empty timeline does not prove the key was unused."
         ),
         identity_term="secret API key",
         vocabulary=(
@@ -108,9 +108,9 @@ PLATFORM_PROFILES: dict[str, _PlatformProfile] = {
     ),
     "twilio": _PlatformProfile(
         name="Twilio",
-        audit_log="Twilio Messages and Calls logs",
+        audit_log="Twilio Messages, Calls and Monitor Events",
         blind_spot=(
-            "Twilio lists messages sent and calls placed, but reading message history leaves no record, so one-time passcodes or personal data in past messages may have been viewed without trace. Account configuration changes are not covered either."
+            "Twilio Messages and Calls show account activity, not proof of use by a particular key. Monitor Events cover supported administrative changes. Reads of message history may leave no record; log permissions and retention limit coverage."
         ),
         identity_term="Account SID",
         vocabulary=(

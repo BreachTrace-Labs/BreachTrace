@@ -1,10 +1,10 @@
 # BreachTrace FAQ
 
 ## What does BreachTrace do?
-BreachTrace watches GitHub pushes for leaked credentials. When a commit contains one, it records when the credential became public (the exposure window) and, where the platform allows it, reads the platform's audit log to reconstruct what the credential was used for: which actions, from which IP addresses, on which resources. It then classifies every action, scores the incident, estimates financial impact and writes a report with a remediation checklist.
+BreachTrace watches signed GitHub pushes for credential candidates. A commit timestamp is used as an estimated exposure start; it does not prove the repository was public or establish first exposure. When supported, BreachTrace collects available provider records, classifies events, scores the incident and writes a report. Records can describe an account or application rather than use of the detected credential.
 
 ## What is the difference between Tier 1 and Tier 2 credentials?
-Tier 1 credentials belong to platforms that expose a queryable audit log: AWS (CloudTrail), Google Cloud and Firebase (Cloud Audit Logs), Azure (Activity Log), Stripe (Events) and Twilio (Messages and Calls). For these BreachTrace reconstructs the blast radius. Tier 2 credentials (GitHub tokens, Slack webhooks and tokens, npm tokens, SendGrid keys, Hugging Face tokens, database connection strings) are detected, but the platform offers no per-credential audit log a third party can query, so BreachTrace reports the exposure and a remediation checklist and explains why no activity timeline exists.
+Tier 1 means BreachTrace has a supported collection path with enough identity and access information: AWS, Google Cloud and Firebase, Azure, Stripe or Twilio. Tier 2 means the current workflow only detects the candidate and cannot collect its activity. Available APIs, permissions and attribution differ by provider; a Tier 1 label does not prove the credential was used or that all activity can be reconstructed.
 
 ## Why is there no activity timeline for my incident?
 Either the credential is Tier 2 (its platform has no queryable audit log), or the audit log recorded nothing in the investigation window. Neither means the credential went unused. Audit logs have blind spots, can lag by several minutes, and some only record writes. Treat every leaked credential as compromised and rotate it.
@@ -13,7 +13,7 @@ Either the credential is Tier 2 (its platform has no queryable audit log), or th
 No. It means no activity was recorded. CloudTrail skips S3 data events unless they were enabled, Google Cloud Data Access logs are off by default, Azure Activity Log covers control-plane operations only, Stripe Events record state changes but not reads, and Twilio lists messages and calls but not reads of message history. Use the refresh button after a few minutes, since logs can arrive late.
 
 ## What is the exposure window?
-The exposure window starts at the commit timestamp, the moment the credential became public, and ends when the credential is revoked. While it is still open the end is "now". BreachTrace also looks back 120 minutes before the commit, because a credential is often used before the commit that leaked it is noticed.
+The triggering commit timestamp is an estimated exposure start, not proof of public visibility or first exposure. The live workflow does not automatically confirm the rotation time for ordinary incidents. Collection requests up to 30 days of recent history through collection time, subject to provider retention and access. Events before the estimated start are context and do not contribute to post-exposure scoring. Empty results do not establish non-use.
 
 ## How is the overall severity calculated?
 Every incident is scored Low, Medium, High or Critical. Each action is classified into an impact category with a weight from 1 (low) to 4 (critical). Any privilege escalation, data exfiltration or code compromise makes the incident Critical. Financial abuse makes it High, or Critical when any action weighs 3 or more. Otherwise the highest action weight decides: 4 Critical, 3 High, 2 Medium, 1 Low.
@@ -28,7 +28,7 @@ When the same read action is repeated from the same IP address at least 5 times 
 Stripe figures are real money: amounts actually charged, refunded or paid out, counted once per payment. Twilio uses the price Twilio billed when it is available, otherwise a list-price estimate. AWS, Google Cloud and Azure figures are order-of-magnitude estimates from public list prices for the resources created, labelled as estimates.
 
 ## When does BreachTrace flag GDPR, PCI-DSS or SOC 2?
-GDPR is flagged when data was read or exfiltrated from a resource whose name suggests personal data (users, customers, emails, patients and similar). PCI-DSS is flagged for any financial abuse, or for access to payment-related resources. SOC 2 is flagged for privilege escalation, exfiltration or resource abuse. These are prompts to check your obligations, not legal conclusions.
+GDPR review is suggested when an event classified as data access or exfiltration names a resource whose name suggests personal data (users, customers, emails, patients and similar). PCI DSS review is suggested for an event classified as financial abuse or involving a payment-related resource name. SOC 2 review is suggested for events classified as privilege escalation, exfiltration or resource abuse. A credential candidate also prompts review of OWASP NHI2 guidance if it is a non-human identity secret. These are evidence-based prompts, not determinations of framework scope, breach, or compliance; names and classifications can be wrong or incomplete.
 
 ## Who writes the incident report?
 Every report starts from verified facts computed in code: severity, counts, resources, money and the remediation checklist. A template writes the first version immediately. When the local BreachTrace report model is installed it rewrites the prose on this computer, and its output is only accepted if every name, IP address and amount it mentions is in the facts. The report badge shows which writer produced the text.

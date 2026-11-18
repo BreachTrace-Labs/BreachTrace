@@ -4,9 +4,9 @@ Structured financial impact tests (A1).
 `compute_financial_impact()` (the joined string, stored in the DB and quoted in
 reports) and `compute_financial_impact_lines()` (the structured form the UI
 renders) are two views of one computation. The most important test here is the
-drift invariant: joining the lines must reproduce the string exactly. If those
-ever diverge, the incident page and the incident report disagree about how much
-money moved, and nothing else would catch it.
+drift invariant: joining available lines must reproduce the string exactly.
+GCP is an exception because missing billing data is reported explicitly and
+does not produce a monetary line.
 """
 
 from datetime import datetime, timezone
@@ -16,6 +16,7 @@ import pytest
 from normalizer.schema import ForensicEvent
 from scorer.severity import (
     NO_FINANCIAL_IMPACT,
+    GCP_FINANCIAL_UNAVAILABLE,
     FinancialImpactLine,
     compute_financial_impact,
     compute_financial_impact_lines,
@@ -76,7 +77,7 @@ PLATFORM_FIXTURES = {
 # The drift invariant — the reason this module exists
 # ==========================================================================
 
-@pytest.mark.parametrize("platform", sorted(PLATFORM_FIXTURES))
+@pytest.mark.parametrize("platform", sorted(set(PLATFORM_FIXTURES) - {'gcp'}))
 def test_joined_lines_reproduce_the_string_exactly(platform):
     events = PLATFORM_FIXTURES[platform]
     lines = compute_financial_impact_lines(events)
@@ -99,10 +100,10 @@ def test_empty_input_yields_no_lines_and_the_sentinel_string():
 
 
 def test_events_with_no_cost_yield_no_lines():
-    """Reconnaissance is free; it must not produce an empty-amount line."""
+    """A missing GCP billing amount is unknown, not proof of zero cost."""
     events = [_event("storage.buckets.list", platform="gcp")]
     assert compute_financial_impact_lines(events) == []
-    assert compute_financial_impact(events) == NO_FINANCIAL_IMPACT
+    assert compute_financial_impact(events) == GCP_FINANCIAL_UNAVAILABLE
 
 
 # ==========================================================================

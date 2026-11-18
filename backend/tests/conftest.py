@@ -38,6 +38,14 @@ os.environ["REPORT_PROVIDER"] = "none"
 import pytest  # noqa: E402
 
 
+@pytest.fixture(autouse=True)
+def reset_login_limiter():
+    from rate_limit import limiter
+    limiter.reset()
+    yield
+    limiter.reset()
+
+
 @pytest.fixture
 def sqlite_factory():
     """

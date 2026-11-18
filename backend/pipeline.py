@@ -24,6 +24,7 @@ from datetime import datetime, timedelta, timezone
 from sqlalchemy.orm import Session
 
 from classifier.rules import classify_all_events
+from collection_credentials import ReaderConfigurationError, project_reader
 from collectors.aws import AWSCloudTrailCollector
 from collectors.azure import AzureActivityLogCollector
 from collectors.gcp import GCPAuditLogCollector
@@ -36,15 +37,14 @@ from db.crud import (
     update_status,
 )
 from db.database import SessionLocal
-from detector.patterns import mask_secret
 from db.models import IncidentRecord
+from normalizer.time_window import after_exposure
 from rag.index import index_incident
 from reporter.compose import deterministic_sections, render_report
 from reporter.facts import build_fact_sheet
 from reporter.writers import upgrade_report
 from scorer.severity import (
     check_gdpr_flag,
-    check_pcidss_flag,
     compute_financial_impact,
     score_incident,
 )
@@ -64,10 +64,9 @@ _COLLECTOR_MAP = {
     "twilio": TwilioUsageCollector,
 }
 
-# How far before the commit timestamp to look in CloudTrail.
-# 120 minutes covers the demo flow (API calls made up to ~1h before pushing)
-# and real incidents where the key was in use before it was detected in a commit.
-_COLLECTION_LOOKBACK_MINUTES = 120
+# Query recent provider history through collection time, subject to each
+# provider's retention, access and collector limits.
+_COLLECTION_HISTORY_DAYS = 30
 
 # Map human-readable severity labels → DB integer (1–4)
 _SEVERITY_TO_INT: dict[str, int] = {
@@ -177,7 +176,7 @@ def run_collection_pipeline(
     pipeline_start = time.monotonic()
     try:
         if refresh_existing:
-            incident = reset_incident_for_refresh(db, incident_id)
+            incident = db.get(IncidentRecord, incident_id)
             if incident is None:
                 logger.warning("Refresh requested for missing incident %s", incident_id)
                 return
@@ -186,21 +185,18 @@ def run_collection_pipeline(
         exposure_end = datetime.now(tz=timezone.utc)
 
         logger.info(
-            "%s pipeline started for incident %s (platform=%s credential=%s)",
+            "%s pipeline started for incident %s (platform=%s)",
             "Refresh" if refresh_existing else "Collection",
             incident_id,
             platform,
-            # A Stripe credential is the secret key itself; never log it whole.
-            mask_secret(credential) if platform == "stripe" else credential[:30],
         )
 
         # ── STAGE 1: Collect events ────────────────────────────────────────
-        # Extend the window back from the commit timestamp so that API calls
-        # made just before the commit (pre-exposure recon) are included.
+        # Provider history supplies context from before detected exposure.
         if exposure_start.tzinfo is None:
             exposure_start = exposure_start.replace(tzinfo=timezone.utc)
         exposure_start = exposure_start.astimezone(timezone.utc)
-        collection_start = exposure_start - timedelta(minutes=_COLLECTION_LOOKBACK_MINUTES)
+        collection_start = exposure_end - timedelta(days=_COLLECTION_HISTORY_DAYS)
 
         collector_cls = _COLLECTOR_MAP.get(platform)
         if collector_cls is None:
@@ -221,27 +217,100 @@ def run_collection_pipeline(
             return
 
         t0 = time.monotonic()
+        collector = None
         try:
-            collector = collector_cls()
+            incident = db.get(IncidentRecord, incident_id)
+            if incident is None:
+                logger.warning("Incident %s disappeared before collection", incident_id)
+                return
+            reader = project_reader(db, incident, platform)
+            if reader is None:
+                collector = collector_cls()
+            elif platform == 'stripe':
+                collector = collector_cls(api_key=reader['api_key'])
+                # A wallet reader must be used even if the detected key is still
+                # in memory. Preserve the mode prefix without passing the secret.
+                credential = incident.credential_hint or ''
+            else:
+                collector = collector_cls(reader=reader)
             events = collector.collect(
                 credential=credential,
                 start_time=collection_start,
                 end_time=exposure_end,
             )
-        except Exception:
-            logger.exception(
-                "%s event collection failed for incident %s", platform.upper(), incident_id
-            )
+        except Exception as exc:
+            if isinstance(exc, ReaderConfigurationError):
+                error_message = str(exc)
+            elif platform == "stripe":
+                # Provider exceptions can include request data or credentials.
+                if isinstance(exc, ModuleNotFoundError) and exc.name == "stripe":
+                    error_message = "The Stripe SDK is not installed in the backend environment."
+                elif type(exc).__name__ == "AuthenticationError":
+                    provider_message = str(getattr(exc, "user_message", "") or "").lower()
+                    if "expired api key" in provider_message:
+                        key_label = "configured Stripe reader key" if refresh_existing else "detected Stripe key"
+                        error_message = (
+                            f"The {key_label} has expired. Configure an active "
+                            "Events reader for the same account and test/live mode, then refresh."
+                        )
+                    else:
+                        error_message = (
+                            "Stripe rejected authentication (HTTP 401). Check that the key is active "
+                            "and copied correctly. Configure a valid reader "
+                            "for the same account and test/live mode."
+                        )
+                elif type(exc).__name__ == "PermissionError":
+                    error_message = (
+                        "Stripe accepted the key but denied Events access. Configure an Events "
+                        "reader for the same account and test/live mode, then refresh."
+                    )
+                elif isinstance(exc, ValueError):
+                    error_message = str(exc) if str(exc).startswith(("No Stripe API key", "Configured Stripe key mode", "Stripe event limit", "Stripe pagination", "Stripe event is missing")) else "Stripe returned invalid event data."
+                else:
+                    error_message = "Stripe event collection failed. Check provider access and backend logs."
+                logger.warning("Stripe collection failed for incident %s (%s)", incident_id, type(exc).__name__)
+            elif platform == "gcp":
+                if type(exc).__name__ in ('Forbidden', 'PermissionDenied', 'Unauthenticated', 'DefaultCredentialsError', 'RefreshError'):
+                    error_message = 'Google Cloud authentication or log access failed. Check the reader credentials and Cloud Logging permissions, then refresh.'
+                elif type(exc).__name__ in ('TooManyRequests', 'ResourceExhausted', 'ServiceUnavailable', 'DeadlineExceeded'):
+                    error_message = 'Google Cloud Logging was unavailable, timed out or exceeded quota. Retry collection later.'
+                elif isinstance(exc, ValueError) and str(exc).startswith(('GCP audit log collection limit', 'GCP audit log contains an invalid status', 'GCP collection window', 'GCP collection end', 'The GCP log reader', 'The GCP impersonation source', 'A valid GCP service-account')):
+                    error_message = str(exc)
+                else:
+                    error_message = 'Google Cloud audit log collection failed. Check provider access and backend logs.'
+                logger.warning('GCP collection failed for incident %s (%s)', incident_id, type(exc).__name__)
+            elif platform == "azure":
+                status_code = getattr(exc, 'status_code', None)
+                if status_code in (401, 403) or type(exc).__name__ in ('ClientAuthenticationError', 'CredentialUnavailableError'):
+                    error_message = ('Azure authentication or Activity Log access failed. Check the configured reader '
+                                     'credentials and subscription permissions, then refresh.')
+                elif isinstance(exc, ValueError) and str(exc).startswith('Azure Activity Log collection limit'):
+                    error_message = str(exc)
+                else:
+                    error_message = 'Azure Activity Log collection failed. Check provider access and backend logs.'
+                logger.warning("Azure collection failed for incident %s (%s)", incident_id, type(exc).__name__)
+            else:
+                logger.warning("%s event collection failed for incident %s (%s)", platform.upper(), incident_id, type(exc).__name__)
+                error_message = f"{platform.upper()} event collection failed after retries"
             save_collection_status(
                 db,
                 incident_id=incident_id,
                 platform=platform,
                 status="error",
                 event_count=0,
-                error_message=f"{platform.upper()} event collection failed after retries",
+                error_message=error_message,
             )
             update_status(db, incident_id, "error")
             return
+        finally:
+            if platform == 'gcp' and collector is not None:
+                close = getattr(collector, 'close', None)
+                if close:
+                    try:
+                        close()
+                    except Exception as exc:
+                        # Provider exceptions can contain credentials or request data.
+                        logger.warning('GCP collector cleanup failed for incident %s (%s)', incident_id, type(exc).__name__)
 
         logger.info(
             "Stage 1 (collect): %d events in %.1fs",
@@ -250,6 +319,10 @@ def run_collection_pipeline(
         )
 
         # ── STAGE 2: Persist events ────────────────────────────────────────
+        # Deletion and insertion share a transaction: an unsuccessful query or
+        # database write must not erase the prior investigation evidence.
+        if refresh_existing:
+            reset_incident_for_refresh(db, incident_id, commit=False)
         if events:
             save_forensic_events(db, incident_id, events)
             save_collection_status(
@@ -260,6 +333,8 @@ def run_collection_pipeline(
                 event_count=len(events),
             )
         else:
+            if refresh_existing:
+                db.commit()
             save_collection_status(
                 db,
                 incident_id=incident_id,
@@ -284,6 +359,7 @@ def run_collection_pipeline(
             len(classified_events),
             time.monotonic() - t0,
         )
+        exposure_events = after_exposure(classified_events, exposure_start)
         update_status(db, incident_id, "scoring")
 
         # ── STAGE 4: Score incident ────────────────────────────────────────
@@ -292,14 +368,18 @@ def run_collection_pipeline(
         # required attribute contract.
         t0 = time.monotonic()
         try:
-            overall_severity = score_incident(classified_events)
-            financial_impact = compute_financial_impact(classified_events)
-            # gdpr_flag covers both GDPR and PCI-DSS — either triggers the flag
-            gdpr_flag = check_gdpr_flag(classified_events) or check_pcidss_flag(classified_events)
+            overall_severity = score_incident(exposure_events)
+            if (platform == 'gcp' and exposure_events and not any(
+                    event.success is True and event.impact_category and event.severity_weight is not None
+                    for event in exposure_events)):
+                overall_severity = 'Unknown'
+            financial_impact = compute_financial_impact(exposure_events)
+            # The GDPR indicator is distinct from payment-related indicators.
+            gdpr_flag = check_gdpr_flag(exposure_events)
 
             incident_record: IncidentRecord | None = db.get(IncidentRecord, incident_id)
             if incident_record is not None:
-                incident_record.overall_severity = _SEVERITY_TO_INT.get(overall_severity, 1)
+                incident_record.overall_severity = _SEVERITY_TO_INT.get(overall_severity)
                 incident_record.financial_impact = financial_impact
                 incident_record.gdpr_flag = gdpr_flag
                 db.commit()
@@ -336,7 +416,7 @@ def run_collection_pipeline(
 
             # Facts are computed once; every writer works from the same sheet.
             facts = build_fact_sheet(
-                classified_events,
+                exposure_events,
                 platform=platform,
                 overall_severity=overall_severity,
                 exposure_duration_seconds=exposure_duration_s,
@@ -389,6 +469,7 @@ def run_collection_pipeline(
             _index_incident_safely(db, incident_id)
 
     except Exception:
+        db.rollback()
         logger.exception("Unexpected error in pipeline for %s", incident_id)
         try:
             update_status(db, incident_id, "error")

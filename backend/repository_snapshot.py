@@ -13,7 +13,6 @@ from urllib.parse import urlsplit
 
 import requests
 
-import config
 from detector.repository import EXCLUDED_DIRS, ScanLimits, scan_repository
 
 
@@ -89,11 +88,11 @@ def unpack(archive: Path, target: Path, limits: ScanLimits) -> dict:
     return {"archive_entries": count, "expanded_bytes": total, "archive_skipped": dict(skipped)}
 
 
-def scan_github(url: str) -> dict:
+def scan_github(url: str, token: str | None = None) -> dict:
     name = repository_name(url)
     headers = {"Accept": "application/vnd.github+json", "X-GitHub-Api-Version": "2026-03-10"}
-    if config.GITHUB_TOKEN:
-        headers["Authorization"] = f"Bearer {config.GITHUB_TOKEN}"
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
 
     def metadata(path):
         response = requests.get("https://api.github.com/repos/" + name + path,

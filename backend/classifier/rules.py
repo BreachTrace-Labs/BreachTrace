@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 
 from classifier.taxonomy_aws import AWS_API_TAXONOMY
 from classifier.taxonomy_azure import AZURE_API_TAXONOMY
-from classifier.taxonomy_gcp import GCP_API_TAXONOMY
+from classifier.taxonomy_gcp import GCP_API_TAXONOMY, gcp_taxonomy_entry
 from classifier.taxonomy_stripe import STRIPE_API_TAXONOMY
 from classifier.taxonomy_twilio import TWILIO_API_TAXONOMY, TWILIO_BULK_THRESHOLD
 from db.models import ForensicEvent as ORMForensicEvent
@@ -134,30 +134,13 @@ def _heuristic_classification(api_action: str) -> tuple[str, int]:
 # ────────────────────────────────────────────────────────────────────────────
 # GCP heuristics (dot-separated action suffix)
 # ────────────────────────────────────────────────────────────────────────────
-_GCP_SUFFIX_MAP: dict[str, tuple[str, int]] = {
-    "list":          (RECONNAISSANCE, 1),
-    "get":           (DATA_ACCESS, 2),
-    "create":        (RESOURCE_ABUSE, 3),
-    "insert":        (RESOURCE_ABUSE, 3),
-    "update":        (RESOURCE_ABUSE, 3),
-    "patch":         (RESOURCE_ABUSE, 3),
-    "delete":        (RESOURCE_ABUSE, 3),
-    "setIamPolicy":  (PRIVILEGE_ESCALATION, 4),
-    "signJwt":       (PRIVILEGE_ESCALATION, 4),
-    "signBlob":      (PRIVILEGE_ESCALATION, 4),
-    "getAccessToken": (PRIVILEGE_ESCALATION, 4),
-}
-
-
-def _gcp_classify(event: ForensicEvent) -> tuple[str, int]:
-    """Classify a GCP event: taxonomy first, then dot-suffix heuristic."""
-    taxonomy_entry = GCP_API_TAXONOMY.get(event.api_action)
+def _gcp_classify(event: ForensicEvent) -> tuple[str | None, int | None]:
+    """Only map known GCP audit methods; preserve unknowns without guessing."""
+    taxonomy_entry = gcp_taxonomy_entry(event.api_action, event.event_source)
     if taxonomy_entry:
         return taxonomy_entry["category"], taxonomy_entry["severity"]
 
-    # Heuristic: use the last dot-segment as the verb
-    verb = event.api_action.rsplit(".", 1)[-1] if "." in event.api_action else event.api_action
-    return _GCP_SUFFIX_MAP.get(verb, (RECONNAISSANCE, 1))
+    return None, None
 
 
 # ────────────────────────────────────────────────────────────────────────────
@@ -210,6 +193,11 @@ _STRIPE_MONEY_PREFIXES = (
 
 
 def _stripe_classify(event: ForensicEvent) -> tuple[str, int]:
+    if event.event_source == "stripe-cli-request-log":
+        if (event.api_action or "").startswith("GET "):
+            return DATA_ACCESS, 2
+        return RESOURCE_ABUSE, 2
+
     taxonomy_entry = STRIPE_API_TAXONOMY.get(event.api_action)
     if taxonomy_entry:
         return taxonomy_entry["category"], taxonomy_entry["severity"]
@@ -239,7 +227,7 @@ def _twilio_classify(event: ForensicEvent) -> tuple[str, int]:
 # Unified dispatch
 # ────────────────────────────────────────────────────────────────────────────
 
-def _classify_action(event: ForensicEvent) -> tuple[str, int]:
+def _classify_action(event: ForensicEvent) -> tuple[str | None, int | None]:
     if event.platform == "gcp":
         return _gcp_classify(event)
     if event.platform == "azure":
@@ -272,16 +260,32 @@ def classify_events(events: list[ForensicEvent]) -> list[ForensicEvent]:
     for event in events:
         classify_event(event)
 
+    # Outbound records have no source IP and are account activity, not proof of
+    # a campaign or attribution to a particular credential. Flag their volume
+    # without inventing an actor or changing their communication category.
+    messages: dict[str, set[str]] = {}
+    for event in events:
+        raw = getattr(event, "raw_data", None)
+        if (event.platform == "twilio" and event.api_action.startswith("message.")
+                and isinstance(raw, dict) and raw.get("sid") and raw.get("direction", "").startswith("outbound")):
+            messages.setdefault(str(getattr(event, "principal_id", "") or ""), set()).add(str(raw["sid"]))
+    for event in events:
+        if (event.platform == "twilio" and event.impact_category == COMMUNICATION_ABUSE
+                and event.api_action.startswith("message.")
+                and len(messages.get(str(getattr(event, "principal_id", "") or ""), set())) >= TWILIO_BULK_THRESHOLD):
+            event.severity_weight = 4
+
     counts = Counter(
         (event.api_action, event.source_ip)
         for event in events
-        if event.source_ip
+        if event.source_ip and event.platform != 'gcp'
     )
 
     for event in events:
         key = (event.api_action, event.source_ip)
         if (
             event.source_ip
+            and event.platform != 'gcp'
             and event.impact_category == DATA_ACCESS
             and counts[key] >= _bulk_threshold(event.platform)
         ):
@@ -304,7 +308,13 @@ def classify_all_events(incident_id: str, db: Session) -> list[ORMForensicEvent]
     if not events:
         return events
 
-    classify_events(events)
+    # Classify the two periods separately so older activity cannot inflate
+    # bulk-access escalation during the exposure window.
+    from normalizer.time_window import after_exposure
+    current = after_exposure(events, incident.exposure_start)
+    current_ids = {event.event_id for event in current}
+    classify_events([event for event in events if event.event_id not in current_ids])
+    classify_events(current)
     db.commit()
     # Refresh events so that returned ORM instances are not expired after commit.
     for event in events:

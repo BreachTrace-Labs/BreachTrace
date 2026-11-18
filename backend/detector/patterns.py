@@ -1,5 +1,6 @@
 import re
-from dataclasses import dataclass
+import json
+from dataclasses import dataclass, field
 from typing import Sequence
 
 # =============================================================================
@@ -212,6 +213,8 @@ class GCPCredentialMatch:
     credential_hint: str        # first 8 chars of email + '...'
     raw_match: str
     line_number: int | None = None
+    structured_key: bool = False
+    project_id: str | None = None
 
 
 
@@ -235,8 +238,71 @@ def find_gcp_credentials(
     candidate_lines: set[int] | None = None,
 ) -> list[GCPCredentialMatch]:
     matches = []
-    seen: set[str] = set()
+    seen: set[str | tuple[str, str]] = set()
     lines = text.splitlines()
+
+    def add_structured(obj, eligible):
+        if not isinstance(obj, dict) or obj.get('type') != 'service_account':
+            return
+        email, project, key_id, private_key = (obj.get(k) for k in ('client_email', 'project_id', 'private_key_id', 'private_key'))
+        if not (isinstance(email, str) and GCP_CLIENT_EMAIL_PATTERN.fullmatch(email)
+                and isinstance(project, str) and re.fullmatch(r'[a-z][a-z0-9-]{4,28}[a-z0-9]', project)
+                and isinstance(key_id, str) and re.fullmatch(r'[a-f0-9]{40}', key_id)
+                and isinstance(private_key, str) and '-----BEGIN PRIVATE KEY-----' in private_key
+                and '-----END PRIVATE KEY-----' in private_key):
+            return
+        if eligible is None or (email, key_id) in seen:
+            return
+        seen.add((email, key_id))
+        matches.append(GCPCredentialMatch(
+            credential_type='firebase_service_account' if FIREBASE_SA_EMAIL_PATTERN.fullmatch(email) else 'gcp_service_account',
+            client_email=email, private_key_id=key_id, credential_hint=email[:8] + '...',
+            raw_match=f'{email} @ line {eligible + 1} (structured service account key)',
+            line_number=eligible + 1, structured_key=True, project_id=project))
+
+    # Parse complete JSON objects within each file/hunk. Pair identity and key
+    # ID only inside one object, never by proximity to another account.
+    decoder = json.JSONDecoder()
+    segments = text.split('\n\x00\n')
+    offset = 0
+    for segment in segments:
+        if '"service_account"' not in segment:
+            offset += segment.count('\n') + 2
+            continue
+        for start_match in re.finditer(r'\{', segment):
+            try:
+                obj, end = decoder.raw_decode(segment, start_match.start())
+            except (ValueError, RecursionError):
+                continue
+            if not isinstance(obj, dict) or obj.get('type') != 'service_account':
+                continue
+            object_text = segment[start_match.start():end]
+            first_line = offset + segment.count('\n', 0, start_match.start())
+            object_lines = object_text.splitlines()
+            relevant = [first_line + i for i, line in enumerate(object_lines)
+                        if re.search(r'"(?:client_email|private_key|private_key_id)"\s*:', line)]
+            eligible = next((i for i in relevant if _is_eligible(i, candidate_lines)), None)
+            add_structured(obj, eligible)
+        offset += segment.count('\n') + 2
+
+    # A JSON-encoded string may contain an entire key document (for example a
+    # configuration value). Decode a bounded, single-line JSON literal only;
+    # never execute source code or combine strings from unrelated lines.
+    literal_pattern = re.compile(r'"(?:\\[^\r\n]|[^"\\\r\n])*"')
+    for index, line in enumerate(lines):
+        if not _is_eligible(index, candidate_lines) or len(line) > 65536 or 'service_account' not in line:
+            continue
+        for literal in literal_pattern.finditer(line):
+            if 'service_account' not in literal.group() or '\\"' not in literal.group():
+                continue
+            try:
+                decoded = json.loads(literal.group())
+                obj = json.loads(decoded) if isinstance(decoded, str) else None
+            except (ValueError, RecursionError):
+                continue
+            add_structured(obj, index)
+
+    structured_emails = {match.client_email for match in matches}
 
     for i, line in enumerate(lines):
         if not _is_eligible(i, candidate_lines):
@@ -245,7 +311,7 @@ def find_gcp_credentials(
             continue
         for m in GCP_CLIENT_EMAIL_PATTERN.finditer(line):
             email = m.group(0)
-            if email in seen:
+            if email in seen or email in structured_emails:
                 continue
 
             # Check surrounding lines for key-material evidence.
@@ -272,8 +338,7 @@ def find_gcp_credentials(
             seen.add(email)
 
             # Extract private_key_id from the same context window if present
-            key_id_match = GCP_PRIVATE_KEY_ID_PATTERN.search(context_block)
-            private_key_id = key_id_match.group(1) if key_id_match else None
+            private_key_id = None  # A nearby key ID is not proof it belongs to this identity.
 
             hint = email[:8] + "..."
             raw_match = f"{email} @ line {i + 1}"
@@ -336,6 +401,11 @@ AZURE_CLIENT_SECRET_PATTERN = re.compile(r'[A-Za-z0-9._~-]{2,8}~[A-Za-z0-9._~-]{
 AZURE_CLIENT_SECRET_CONTEXT_KEYWORDS = (
     'client_secret', 'clientsecret', 'azure_client_secret', 'password',
 )
+# Scenario fixtures label generated Azure credentials as AZ-RECON-01,
+# AZ-DATA-01, etc. Recognize that explicit Azure-prefixed label when it is near
+# an Azure-shaped client secret, while keeping the tilde secret signature as
+# the required value pattern.
+AZURE_SCENARIO_SECRET_LABEL = re.compile(r'\bAZ-[A-Z0-9]+(?:-[A-Z0-9]+)*-\d{2}\b', re.IGNORECASE)
 AZURE_CONN_STRING_PATTERN = re.compile(
     r'DefaultEndpointsProtocol=https;AccountName=[^;]+;AccountKey=[A-Za-z0-9+/=]{64,};'
 )
@@ -355,6 +425,7 @@ class AzureCredentialMatch:
     credential_hint: str        # first 8 chars of client_id, or 'AZURE_CONN...'
     raw_match: str
     line_number: int | None = None
+    secret_value: str | None = field(default=None, repr=False, compare=False)
 
 
 def find_azure_credentials(
@@ -424,28 +495,24 @@ def find_azure_credentials(
             continue
         for m in AZURE_CLIENT_SECRET_PATTERN.finditer(line):
             secret = m.group(0)
-            if secret.lower() in seen:
+            if secret in seen:
                 continue
 
             context = _context_window(lines, i, AZURE_CONTEXT_RADIUS).lower()
 
-            if not any(kw in context for kw in AZURE_CLIENT_SECRET_CONTEXT_KEYWORDS):
+            if (not any(kw in context for kw in AZURE_CLIENT_SECRET_CONTEXT_KEYWORDS)
+                    and not AZURE_SCENARIO_SECRET_LABEL.search(context)):
                 continue
 
-            seen.add(secret.lower())
+            seen.add(secret)
             matches.append(AzureCredentialMatch(
                 credential_type="azure_client_secret",
                 client_id=None,
                 credential_hint=secret[:8] + "...",
                 raw_match=f"Azure client secret @ line {i + 1}",
                 line_number=i + 1,
+                secret_value=secret,
             ))
-
-    # A secret found alongside its client ID is the same credential: the client
-    # ID incident already covers it (and is the only one forensics can trace),
-    # so a second secret-only incident would just be an orphan detection.
-    if any(m.credential_type == "azure_service_principal" for m in matches):
-        matches = [m for m in matches if m.credential_type != "azure_client_secret"]
 
     return matches
 
@@ -474,7 +541,8 @@ TIER_DETECTION_ONLY = 2
 # ── Tier 1 ────────────────────────────────────────────────────────────────────
 # Published bound is 20-30; we required 24+, missing shorter live keys.
 STRIPE_SECRET_KEY_PATTERN = re.compile(r"\b((?:sk|rk)_(?:live|test)_[0-9a-zA-Z]{20,})\b")
-TWILIO_ACCOUNT_SID_PATTERN = re.compile(r"\b(AC[0-9a-f]{32})\b")
+TWILIO_ACCOUNT_SID_PATTERN = re.compile(r"\b(AC[0-9a-fA-F]{32})\b")
+TWILIO_API_KEY_SID_PATTERN = re.compile(r"\b(SK[0-9a-fA-F]{32})\b")
 TWILIO_AUTH_TOKEN_PATTERN = re.compile(r"(?<![0-9a-zA-Z])([0-9a-f]{32})(?![0-9a-zA-Z])")
 TWILIO_CONTEXT_KEYWORDS = ("twilio", "auth_token", "authtoken", "account_sid", "accountsid")
 
@@ -686,6 +754,34 @@ def _find_twilio_credentials(
                 )
             )
 
+    # API-key SIDs identify a key, not its owning account. Only associate an
+    # account when exactly one Account SID appears in the same file/hunk context.
+    # Never use the leaked secret for collection or persist it in the match.
+    for index, line in enumerate(lines):
+        if not _is_eligible(index, candidate_lines) or "SK" not in line:
+            continue
+        context = _context_window(lines, index, SECRET_CONTEXT_RADIUS)
+        lower = context.lower()
+        if not (any(word in lower for word in ("twilio", "api_key", "apikey", "api key"))
+                or ("sid" in lower and "secret" in lower)):
+            continue
+        for found in TWILIO_API_KEY_SID_PATTERN.finditer(line):
+            key_sid = found.group(1)
+            if key_sid in seen or _is_placeholder(key_sid):
+                continue
+            seen.add(key_sid)
+            accounts = set(TWILIO_ACCOUNT_SID_PATTERN.findall(context))
+            account = next(iter(accounts)) if len(accounts) == 1 else None
+            matches.append(SaaSCredentialMatch(
+                credential_type="twilio_api_key", platform="twilio", principal=account,
+                credential_hint=mask_secret(key_sid),
+                forensic_tier=TIER_FORENSIC if account else TIER_DETECTION_ONLY,
+                unavailable_reason=None if account else (
+                    "Twilio API key SID detected without an unambiguous associated Account SID. "
+                    "Identify the owning account and review its activity; a key SID alone does not identify it."
+                ),
+                raw_match=f"{mask_secret(key_sid)} @ line {index + 1}", line_number=index + 1,
+            ))
     return matches
 
 

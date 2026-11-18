@@ -131,7 +131,7 @@ def _build_prompt(
     stats = [
         f"Platform: {profile.name} ({profile.audit_log})",
         f"Overall severity: {overall_severity or 'UNKNOWN'}",
-        f"Exposure duration: {exposure_duration_seconds}s",
+        f"Elapsed time from estimated start to recorded end or report time: {exposure_duration_seconds}s (rotation not independently confirmed)",
         f"Unique affected resources: {', '.join(affected_resources) if affected_resources else 'none recorded'}",
         f"Source IPs observed: {', '.join(source_ips) if source_ips else 'none recorded'}",
     ]
@@ -167,13 +167,13 @@ def _build_prompt(
 You are a forensic incident responder. The audience is a developer with no security background. Avoid acronyms.
 Keep the entire report under 400 words. Use exact resource names provided.
 
-The leaked credential is identified by its {profile.identity_term}.
+The detected credential is identified by its {profile.identity_term}. A commit timestamp estimates the exposure start; repository visibility, rotation and exact-key causation are not established by that timestamp. {profile.blind_spot}
 
 {vocabulary_rule}
 
 Generate a forensic incident report in four sections:
 1) Executive Summary — 1 paragraph, plain English, no jargon.
-2) Chronological Narrative — what the attacker did step by step.
+2) Chronological Narrative — what the available provider records show, within their attribution limits.
 3) Business Impact Assessment.
 4) Remediation Checklist — number each item, start with ☐, be specific and include exact resource names.
    {remediation_rule}
@@ -205,7 +205,7 @@ def _fallback_report(
         f"Automated summary — {profile.name} credential exposure.",
         "",
         f"Severity: {overall_severity or 'UNKNOWN'}",
-        f"Exposure duration: {exposure_duration_seconds}s",
+        f"Elapsed time from estimated start to recorded end or report time: {exposure_duration_seconds}s (rotation not independently confirmed)",
         f"Events recorded in {profile.audit_log}: {len(events)}",
     ]
 

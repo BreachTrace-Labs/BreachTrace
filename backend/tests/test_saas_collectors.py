@@ -45,6 +45,7 @@ def twilio_sdk(monkeypatch):
     scoped = client_instance.api.v2010.accounts.return_value
     client_instance.messages = scoped.messages
     client_instance.calls = scoped.calls
+    client_instance.monitor.v1.events.list.return_value = []
     rest_module.Client = MagicMock(return_value=client_instance)
     twilio_module.rest = rest_module
     monkeypatch.setitem(sys.modules, "twilio", twilio_module)
@@ -252,7 +253,7 @@ def test_twilio_maps_message_fields(twilio_sdk):
     twilio_sdk.messages.list.return_value = [_twilio_message()]
     twilio_sdk.calls.list.return_value = []
 
-    collector = TwilioUsageCollector(account_sid=CONFIGURED_SID, auth_token="tok")
+    collector = TwilioUsageCollector(account_sid=LEAKED_SID, auth_token="tok")
     events = collector.collect(LEAKED_SID, datetime(2026, 8, 1), datetime(2026, 8, 2))
 
     assert len(events) == 1
@@ -278,11 +279,11 @@ def test_twilio_does_not_store_message_bodies(twilio_sdk):
     twilio_sdk.messages.list.return_value = [_twilio_message(body=secret_body)]
     twilio_sdk.calls.list.return_value = []
 
-    collector = TwilioUsageCollector(account_sid=CONFIGURED_SID, auth_token="tok")
+    collector = TwilioUsageCollector(account_sid=LEAKED_SID, auth_token="tok")
     event = collector.collect(LEAKED_SID, datetime(2026, 8, 1), datetime(2026, 8, 2))[0]
 
     assert secret_body not in str(event.raw_data)
-    assert event.raw_data["body_length"] == len(secret_body)
+    assert "body_length" not in event.raw_data
 
 
 def test_twilio_price_normalised_to_positive(twilio_sdk):
@@ -292,7 +293,7 @@ def test_twilio_price_normalised_to_positive(twilio_sdk):
     twilio_sdk.messages.list.return_value = [_twilio_message(price="-0.0079")]
     twilio_sdk.calls.list.return_value = []
 
-    collector = TwilioUsageCollector(account_sid=CONFIGURED_SID, auth_token="tok")
+    collector = TwilioUsageCollector(account_sid=LEAKED_SID, auth_token="tok")
     event = collector.collect(LEAKED_SID, datetime(2026, 8, 1), datetime(2026, 8, 2))[0]
 
     assert event.raw_data["price"] == pytest.approx(0.0079)
@@ -304,7 +305,7 @@ def test_twilio_failed_message_marked_unsuccessful(twilio_sdk):
     twilio_sdk.messages.list.return_value = [_twilio_message(status="failed")]
     twilio_sdk.calls.list.return_value = []
 
-    collector = TwilioUsageCollector(account_sid=CONFIGURED_SID, auth_token="tok")
+    collector = TwilioUsageCollector(account_sid=LEAKED_SID, auth_token="tok")
     event = collector.collect(LEAKED_SID, datetime(2026, 8, 1), datetime(2026, 8, 2))[0]
 
     assert event.success is False
@@ -317,7 +318,7 @@ def test_twilio_collects_messages_and_calls_sorted(twilio_sdk):
     twilio_sdk.messages.list.return_value = [_twilio_message()]
     twilio_sdk.calls.list.return_value = [_twilio_call()]
 
-    collector = TwilioUsageCollector(account_sid=CONFIGURED_SID, auth_token="tok")
+    collector = TwilioUsageCollector(account_sid=LEAKED_SID, auth_token="tok")
     events = collector.collect(LEAKED_SID, datetime(2026, 8, 1), datetime(2026, 8, 2))
 
     assert [e.api_action for e in events] == ["message.sent", "call.completed"]
@@ -330,7 +331,7 @@ def test_twilio_requires_credentials(twilio_sdk, monkeypatch):
 
     monkeypatch.setattr(config, "TWILIO_ACCOUNT_SID", "", raising=False)
     monkeypatch.setattr(config, "TWILIO_AUTH_TOKEN", "", raising=False)
-    with pytest.raises(ValueError, match="Twilio credentials"):
+    with pytest.raises(ValueError, match="Account SID"):
         TwilioUsageCollector()
 
 
@@ -340,7 +341,7 @@ def test_twilio_empty_window_returns_empty_list(twilio_sdk):
     twilio_sdk.messages.list.return_value = []
     twilio_sdk.calls.list.return_value = []
 
-    collector = TwilioUsageCollector(account_sid=CONFIGURED_SID, auth_token="tok")
+    collector = TwilioUsageCollector(account_sid=LEAKED_SID, auth_token="tok")
     assert collector.collect(LEAKED_SID, datetime(2026, 8, 1), datetime(2026, 8, 2)) == []
 
 
@@ -356,9 +357,9 @@ def test_twilio_queries_the_leaked_account_not_the_configured_one(twilio_sdk):
     twilio_sdk.calls.list.return_value = []
 
     collector = TwilioUsageCollector(account_sid=CONFIGURED_SID, auth_token="tok")
-    collector.collect(LEAKED_SID, datetime(2026, 8, 1), datetime(2026, 8, 2))
-
-    twilio_sdk.api.v2010.accounts.assert_called_with(LEAKED_SID)
+    with pytest.raises(ValueError, match="different account"):
+        collector.collect(LEAKED_SID, datetime(2026, 8, 1), datetime(2026, 8, 2))
+    twilio_sdk.api.v2010.accounts.assert_not_called()
 
 
 def test_twilio_skips_inbound_traffic(twilio_sdk):
@@ -372,7 +373,7 @@ def test_twilio_skips_inbound_traffic(twilio_sdk):
     twilio_sdk.messages.list.return_value = [inbound_message, _twilio_message()]
     twilio_sdk.calls.list.return_value = [inbound_call]
 
-    collector = TwilioUsageCollector(account_sid=CONFIGURED_SID, auth_token="tok")
+    collector = TwilioUsageCollector(account_sid=LEAKED_SID, auth_token="tok")
     events = collector.collect(LEAKED_SID, datetime(2026, 8, 1), datetime(2026, 8, 2))
 
     assert [e.api_action for e in events] == ["message.sent"]
@@ -388,7 +389,7 @@ def test_twilio_unsent_message_uses_creation_time(twilio_sdk):
     twilio_sdk.messages.list.return_value = [queued]
     twilio_sdk.calls.list.return_value = []
 
-    collector = TwilioUsageCollector(account_sid=CONFIGURED_SID, auth_token="tok")
+    collector = TwilioUsageCollector(account_sid=LEAKED_SID, auth_token="tok")
     event = collector.collect(LEAKED_SID, datetime(2026, 8, 1), datetime(2026, 8, 2))[0]
 
     assert event.timestamp == queued.date_created
@@ -401,7 +402,7 @@ def test_twilio_whatsapp_read_status_is_not_a_body_read(twilio_sdk):
     twilio_sdk.messages.list.return_value = [_twilio_message(status="read")]
     twilio_sdk.calls.list.return_value = []
 
-    collector = TwilioUsageCollector(account_sid=CONFIGURED_SID, auth_token="tok")
+    collector = TwilioUsageCollector(account_sid=LEAKED_SID, auth_token="tok")
     event = collector.collect(LEAKED_SID, datetime(2026, 8, 1), datetime(2026, 8, 2))[0]
 
     assert event.api_action == "message.read_by_recipient"
@@ -423,21 +424,20 @@ def test_stripe_queries_with_the_leaked_key_first(stripe_sdk):
     assert stripe_sdk.Event.list.call_args.kwargs["api_key"] == "sk_live_leakedKey123"
 
 
-def test_stripe_falls_back_when_leaked_key_is_revoked(stripe_sdk):
+def test_stripe_never_falls_back_to_an_unverified_account(stripe_sdk):
     from collectors.stripe import StripeEventsCollector
 
     stripe_sdk.Event.list.side_effect = [
         stripe_sdk.AuthenticationError("expired key"),
         _page([_stripe_event()]),
     ]
-    events = StripeEventsCollector(api_key="sk_test_configured").collect(
-        "sk_live_leakedKey123", datetime(2026, 8, 1), datetime(2026, 8, 2)
-    )
-
-    assert len(events) == 1
+    with pytest.raises(stripe_sdk.AuthenticationError):
+        StripeEventsCollector(api_key="sk_test_configured").collect(
+            "sk_live_leakedKey123", datetime(2026, 8, 1), datetime(2026, 8, 2)
+        )
     # One failed call with the leaked key — auth errors must not be retried.
     keys = [c.kwargs["api_key"] for c in stripe_sdk.Event.list.call_args_list]
-    assert keys == ["sk_live_leakedKey123", "sk_test_configured"]
+    assert keys == ["sk_live_leakedKey123"]
 
 
 def test_stripe_masked_hint_uses_configured_key(stripe_sdk):
@@ -446,10 +446,60 @@ def test_stripe_masked_hint_uses_configured_key(stripe_sdk):
 
     stripe_sdk.Event.list.return_value = _page([])
     StripeEventsCollector(api_key="sk_test_configured").collect(
-        "sk_live_****abcd", datetime(2026, 8, 1), datetime(2026, 8, 2)
+        "sk_test_****abcd", datetime(2026, 8, 1), datetime(2026, 8, 2)
     )
 
     assert stripe_sdk.Event.list.call_args.kwargs["api_key"] == "sk_test_configured"
+
+
+def test_stripe_refresh_rejects_cross_mode_key(stripe_sdk):
+    from collectors.stripe import StripeEventsCollector
+    with pytest.raises(ValueError, match="mode"):
+        StripeEventsCollector(api_key="sk_test_configured").collect(
+            "sk_live_****abcd", datetime(2026, 8, 1), datetime(2026, 8, 2))
+    stripe_sdk.Event.list.assert_not_called()
+
+
+def test_stripe_event_snapshot_removes_secrets_and_customer_details(stripe_sdk):
+    from collectors.stripe import StripeEventsCollector
+    event = _stripe_event(data={"object": {"id": "pi_1", "object": "payment_intent", "amount": 123,
+                                               "currency": "usd", "client_secret": "secret_value",
+                                               "metadata": {"email": "private@example.com"}}})
+    mapped = StripeEventsCollector(api_key="sk_test_configured")._map_event(event)
+    assert mapped.raw_data["data"]["object"]["amount"] == 123
+    assert "secret_value" not in str(mapped.raw_data)
+    assert "private@example.com" not in str(mapped.raw_data)
+    assert "idempotency_key" not in str(mapped.raw_data)
+
+
+def test_stripe_failed_payment_is_not_marked_successful(stripe_sdk):
+    from collectors.stripe import StripeEventsCollector
+    event = StripeEventsCollector(api_key="sk_test_configured")._map_event(_stripe_event(event_type="charge.failed"))
+    assert event.success is False
+
+
+def test_real_stripe_sdk_event_maps_without_sensitive_fields():
+    stripe = pytest.importorskip("stripe")
+    from collectors.stripe import StripeEventsCollector
+    event = stripe.Event.construct_from({
+        "id": "evt_example", "type": "charge.succeeded", "created": 1775000000,
+        "data": {"object": {"id": "ch_example", "object": "charge", "amount": 100,
+                            "currency": "usd", "client_secret": "synthetic_secret"}},
+        "request": {"id": "req_example"},
+    }, None)
+    result = StripeEventsCollector(api_key="sk_test_example")._map_event(event)
+    assert result.principal_id == "req_example"
+    assert result.raw_data["data"]["object"]["amount"] == 100
+    assert "synthetic_secret" not in str(result.raw_data)
+
+
+def test_stripe_excess_events_fail_instead_of_silent_truncation(stripe_sdk, monkeypatch):
+    import collectors.stripe as stripe_collector
+    monkeypatch.setattr(stripe_collector, "_MAX_EVENTS", 1)
+    stripe_sdk.Event.list.return_value = _page([_stripe_event(), _stripe_event()])
+    with pytest.raises(ValueError, match="limit exceeded"):
+        stripe_collector.StripeEventsCollector(api_key="sk_test_x").collect(
+            "sk_test_x", datetime(2026, 8, 1), datetime(2026, 8, 2))
 
 
 # ==========================================================================

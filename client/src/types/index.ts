@@ -12,6 +12,8 @@ export interface ForensicEvent {
   resource_type: string | null
   success: boolean
   error_code: string | null
+  is_denied?: boolean
+  gcp_key_attribution?: 'matched' | 'different_key' | 'unavailable' | null
   raw_data: Record<string, unknown>
   impact_category: string | null
   severity_weight: 1 | 2 | 3 | 4 | null
@@ -24,10 +26,9 @@ export interface ForensicEvent {
  * One costed finding on an incident. Mirrors `FinancialImpactLine` in
  * backend/scorer/severity.py.
  *
- * `actual` is the field that carries the weight: it is true only where money
- * demonstrably moved (Stripe transactions). Every other platform is an
- * order-of-magnitude estimate from public list prices, and the panel must not
- * present the two with the same confidence.
+ * `actual` marks a provider-reported amount, including Stripe transactions and
+ * Twilio resource charges. Account charges do not attribute an action to a
+ * particular credential. Other amounts may be estimates from list prices.
  */
 export interface FinancialImpactLine {
   platform: string
@@ -48,8 +49,28 @@ export interface FinancialImpactLine {
   actual: boolean
 }
 
+export interface DynamicBlastRadius {
+  status: 'unavailable' | 'collecting' | 'error' | 'observed' | 'no_observed_activity'
+  severity: IncidentRecord['overall_severity']
+  event_count: number
+  successful_count: number
+  failed_count: number
+  resource_count: number
+  last_observed_at: string | null
+  platforms: { platform: string; event_count: number; successful_count: number; failed_count: number; resource_count: number; categories: { category: string; count: number }[]; actions: { action: string; count: number }[] }[]
+}
+
 export interface IncidentRecord {
   incident_id: string
+  project_id?: string | null
+  assigned_to?: string | null
+  assigned_to_name?: string | null
+  dismissed?: boolean
+  dismissed_by?: string | null
+  dismissed_by_name?: string | null
+  dismissed_at?: string | null
+  dismissal_reason?: string | null
+  dismissal_type?: string | null
   credential_type: string
   credential_hint: string
   // Null for GCP/Azure/SaaS incidents — only AWS has an access key ID.
@@ -70,6 +91,14 @@ export interface IncidentRecord {
   report_text: string | null
   /** Who wrote the report prose. The facts and checklist are the same either way. */
   report_source?: ReportSource | null
+  collection_status?: string | null
+  collection_error?: string | null
+  azure_repeat_count?: number
+  azure_secret_occurrences?: { commit_hash: string; observed_at: string }[]
+  gcp_key_association?: { key_hint: string; recorded_by: string | null; recorded_at: string; verification: string } | null
+  gcp_record_correlation?: { raw_record_count: number; group_count: number; grouped_record_count: number; ungrouped_record_count: number; groups: { kind: 'provider_operation' | 'client_invocation'; confidence: 'high' | 'medium'; record_count: number; successful_count: number; failed_count: number; first_seen: string; last_seen: string; actions: { action: string; count: number }[]; event_ids: string[] }[] } | null
+  gcp_classification_coverage?: { record_count: number; classified_count: number; unclassified_count: number } | null
+  dynamic_blast_radius?: DynamicBlastRadius | null
   remediation_steps: string[]
   gdpr_flag: boolean
   estimated_financial_impact: string | null
@@ -91,10 +120,12 @@ export interface IncidentRecord {
   // endpoint only. Optional: an older backend omits it, and
   // FinancialImpactPanel falls back to rendering the string.
   financial_impact_lines?: FinancialImpactLine[]
+  financial_history_lines?: FinancialImpactLine[]
   // Computed by the detail endpoint — may be absent on list responses
   pcidss_flag?: boolean
   soc2_flag?: boolean
   compliance_reasons?: string[]
+  compliance_review_flags?: { id: string; reason: string }[]
 }
 
 // IncidentSummary matches the list endpoint response (no events/report fields)
@@ -164,7 +195,7 @@ export interface PlatformComparison {
 }
 
 /** deterministic = template from verified facts; local_model = the on-device report model. */
-export type ReportSource = 'deterministic' | 'local_model' | 'gemini' | 'openai' | 'anthropic' | 'ollama'
+export type ReportSource = 'deterministic' | 'local_model' | 'gemini' | 'openai' | 'anthropic' | 'ollama' | 'groq'
 
 /* ─── Natural-language search (POST /assistant/search) ─────────────────── */
 

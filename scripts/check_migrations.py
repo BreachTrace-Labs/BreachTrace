@@ -31,7 +31,7 @@ def main():
     config = Config(str(ROOT / "backend" / "alembic.ini"))
     config.set_main_option("script_location", str(ROOT / "backend" / "migrations"))
     results = {}
-    for scenario in ("fresh", "populated"):
+    for scenario in ("fresh", "populated", "multiple_organisations"):
         # Only this newly generated name is ever created/dropped by the check.
         name = "breachtrace_migration_check_" + uuid.uuid4().hex
         engine = None
@@ -41,6 +41,23 @@ def main():
             target = url.set(database=name)
             os.environ["DATABASE_URL"] = target.render_as_string(hide_password=False)
             engine = create_engine(target)
+            if scenario == "multiple_organisations":
+                command.upgrade(config, "f2b31ad59101")
+                with engine.begin() as connection:
+                    connection.execute(text("INSERT INTO organisations (id, name, slug) VALUES "
+                                            "('org-a', 'First', 'first'), ('org-b', 'Second', 'second')"))
+                try:
+                    command.upgrade(config, "head")
+                except RuntimeError as error:
+                    assert "multiple organisations" in str(error)
+                else:
+                    raise AssertionError("Migration must refuse multiple organisations")
+                with engine.connect() as connection:
+                    assert connection.execute(text("SELECT COUNT(*) FROM organisations")).scalar() == 2
+                    assert connection.execute(text("SELECT version_num FROM alembic_version")).scalar() == "f2b31ad59101"
+                assert 'uq_organisation_singleton' not in {index['name'] for index in inspect(engine).get_indexes('organisations')}
+                results[scenario] = "passed: upgrade refused and existing organisations preserved"
+                continue
             if scenario == "populated":
                 command.upgrade(config, "c4d5e6f7a8b9")
                 with engine.begin() as connection:
@@ -65,7 +82,7 @@ def main():
                 else:
                     raise AssertionError("Populated rollback must preserve current research rows")
                 with engine.connect() as connection:
-                    assert connection.execute(text("SELECT version_num FROM alembic_version")).scalar() == "e8f9a0b1c2d3"
+                    assert connection.execute(text("SELECT version_num FROM alembic_version")).scalar() == "7a1f43d9c208"
             with Session(engine) as db:
                 if scenario == "populated":
                     legacy = db.get(ExperimentRun, "legacy-research-run")

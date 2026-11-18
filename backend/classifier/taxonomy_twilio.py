@@ -49,6 +49,7 @@ TWILIO_API_TAXONOMY: dict[str, dict] = {
     # ================= PRIVILEGE ESCALATION (4) =================
     "api_key.created": {"category": "privilege_escalation", "severity": 4, "label": "API Key Created"},
     "api_key.deleted": {"category": "resource_abuse", "severity": 3, "label": "API Key Deleted"},
+    "api_key.updated": {"category": "resource_abuse", "severity": 3, "label": "API Key Updated"},
     "subaccount.created": {"category": "privilege_escalation", "severity": 4, "label": "Subaccount Created"},
     "account.updated": {"category": "privilege_escalation", "severity": 4, "label": "Account Settings Changed"},
 

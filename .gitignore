@@ -35,7 +35,7 @@ dist/
 *.sqlite3
 
 # ── Data files (SecretBench CSV and experiment outputs) ────────────────────────
-data/
+/data/
 
 # ── OS ─────────────────────────────────────────────────────────────────────────
 .DS_Store

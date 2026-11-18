@@ -48,6 +48,10 @@ def test_model():
             text = generate(settings, [{"role": "user", "content": "Reply with OK."}])
             if not text.strip():
                 raise ValueError("The model returned no text")
+            if settings.provider == 'ollama' and settings.answer_model.strip() and settings.answer_model.strip() != settings.model:
+                answer_settings = settings.model_copy(update={'model': settings.answer_model.strip()})
+                if not generate(answer_settings, [{"role": "user", "content": "Reply with OK."}]).strip():
+                    raise ValueError("The answer model returned no text")
         return {"ok": True, "message": "Selected model is available"}
     except Exception:
         raise HTTPException(502, "Model check failed. Check credentials, model name, runtime and provider access.") from None

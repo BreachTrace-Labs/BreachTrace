@@ -18,7 +18,7 @@ from typing import Any, Iterable
 
 from classifier.taxonomy_aws import AWS_API_TAXONOMY
 from classifier.taxonomy_azure import AZURE_API_TAXONOMY
-from classifier.taxonomy_gcp import GCP_API_TAXONOMY
+from classifier.taxonomy_gcp import GCP_API_TAXONOMY, gcp_taxonomy_entry
 from classifier.taxonomy_stripe import STRIPE_API_TAXONOMY
 from classifier.taxonomy_twilio import TWILIO_API_TAXONOMY
 from reporter.profiles import get_profile
@@ -28,6 +28,7 @@ from scorer.severity import (
     check_pcidss_flag,
     check_soc2_flag,
     compute_financial_impact_lines,
+    impact_evidence,
 )
 
 _TAXONOMIES: dict[str, dict[str, dict]] = {
@@ -65,10 +66,10 @@ _MAX_ACTIONS = 8
 _MAX_LISTED = 5
 
 
-def action_label(platform: str, action: str) -> str | None:
+def action_label(platform: str, action: str, service: str | None = None) -> str | None:
     """Human-readable label for an audit-log action, when the taxonomy has one."""
     taxonomy = _TAXONOMIES.get(platform, {})
-    entry = taxonomy.get(action)
+    entry = gcp_taxonomy_entry(action, service) if platform == 'gcp' else taxonomy.get(action)
     if entry is None and platform == "aws":
         # AWS taxonomy keys are `service:Action`; CloudTrail reports `Action`.
         suffix = [v for k, v in taxonomy.items() if k.endswith(f":{action}")]
@@ -130,10 +131,10 @@ def build_fact_sheet(
     for action, group in by_action.items():
         group.sort(key=lambda e: e.timestamp)
         category = group[0].impact_category
-        resources = Counter(e.affected_resource for e in group if e.affected_resource)
+        resources = Counter(e.affected_resource for e in impact_evidence(group) if e.affected_resource)
         actions.append({
             "action": action,
-            "label": action_label(platform, action),
+            "label": action_label(platform, action, group[0].event_source),
             "category": category,
             "severity_weight": max((e.severity_weight or 0) for e in group),
             "count": len(group),
@@ -143,8 +144,8 @@ def build_fact_sheet(
         })
     actions.sort(key=lambda a: (_category_rank(a["category"]), -a["severity_weight"], -a["count"]))
 
-    categories = Counter(e.impact_category for e in events if e.impact_category)
-    resources = Counter(e.affected_resource for e in events if e.affected_resource)
+    categories = Counter(e.impact_category for e in impact_evidence(events) if e.impact_category)
+    resources = Counter(e.affected_resource for e in impact_evidence(events) if e.affected_resource)
     source_ips = Counter(e.source_ip for e in events if e.source_ip)
     timestamps = sorted(e.timestamp for e in events)
 
@@ -172,6 +173,7 @@ def build_fact_sheet(
         "resources": [r for r, _ in resources.most_common(_MAX_LISTED)],
         "source_ips": [ip for ip, _ in source_ips.most_common(_MAX_LISTED)],
         "financial": [line.text for line in compute_financial_impact_lines(events)],
+        "financial_limit": "Cloud Audit Logs do not establish billing charges or financial loss." if platform == 'gcp' else None,
         "compliance": build_compliance_reasons(gdpr=gdpr, pcidss=pcidss, soc2=soc2, events=events),
         "blind_spot": profile.blind_spot,
     }

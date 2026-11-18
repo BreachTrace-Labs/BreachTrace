@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import json
 
-PROMPT_VERSION = 1
+PROMPT_VERSION = 4
 
 # What the writer must return. Everything else in a report is built in code.
 SECTIONS_SCHEMA: dict = {
@@ -31,9 +31,12 @@ You receive a JSON fact sheet. It is the ONLY source of truth.
 Rules:
 - Use only names, IPs, identifiers, amounts and times that appear in the fact sheet. Never invent any.
 - Use the vocabulary of the platform named in the fact sheet only.
+- A commit timestamp is an estimate; do not claim the repository was public, that exposure duration or rotation is confirmed, or that account-level or application-level activity was caused by the leaked key.
+- Treat failed operations as attempts, not successful access, creation, modification or data transfer. If all events failed, make that clear in the summary and narrative.
+- If a financial_limit is provided, explain that limit and do not infer charges, loss, or zero cost from audit activity.
 - If event_count is 0, say that no activity was RECORDED in the audit log, that this does not prove the credential went unused, and explain the blind_spot. Never say the credential was unused or that nothing happened.
 - Plain English, no acronyms, no markdown, no remediation steps (they are added separately).
-- executive_summary: 2-4 sentences: what leaked, for how long, what was done with it, and the severity.
+- executive_summary: 2-4 sentences: what was detected, what activity was recorded within the source's attribution limits, and the severity.
 - narrative: 1-8 short chronological steps, one per notable action, citing its time and resource when given.
 - business_impact: 2-4 sentences on money, data and compliance consequences, using the financial and compliance facts.
 

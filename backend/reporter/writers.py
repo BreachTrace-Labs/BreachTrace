@@ -128,6 +128,12 @@ def upgrade_report(facts: dict) -> tuple[str, str] | None:
     (report_text, report_source) from the first writer whose output validates,
     or None when no writer is available or none produced grounded prose.
     """
+    # The current prose validator cannot reliably prove that a model has kept
+    # failed GCP attempts separate from completed operations. Keep the
+    # outcome-aware template until that distinction can be validated.
+    if facts.get('platform') == 'gcp' and facts.get('failed_count', 0):
+        logger.info('Keeping deterministic report for GCP events with failures')
+        return None
     for name, writer in _writers():
         try:
             sections, violations = write_validated(writer, facts)

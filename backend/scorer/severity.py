@@ -96,6 +96,12 @@ _SOC2_TRIGGER_CATEGORIES = frozenset({
 CRITICAL_CATEGORIES = {"privilege_escalation", "exfiltration", "code_compromise"}
 
 
+def impact_evidence(events):
+    """Failed GCP operations are attempts, not evidence of completed impact."""
+    return [event for event in events
+            if getattr(event, 'platform', None) != 'gcp' or getattr(event, 'success', None) is True]
+
+
 def score_incident(events: list[ForensicEvent]) -> str:
     """
     Aggregate per-event severity weights into an overall incident severity label.
@@ -114,6 +120,7 @@ def score_incident(events: list[ForensicEvent]) -> str:
     Returns:
         str: One of 'Low', 'Medium', 'High', or 'Critical'
     """
+    events = impact_evidence(events)
     if not events:
         return "Low"
 
@@ -139,6 +146,7 @@ def score_incident(events: list[ForensicEvent]) -> str:
 
 
 NO_FINANCIAL_IMPACT = "No financial impact detected"
+GCP_FINANCIAL_UNAVAILABLE = "GCP billing data is not available from Cloud Audit Logs; charges and loss cannot be determined."
 
 
 @dataclass(frozen=True)
@@ -151,9 +159,9 @@ class FinancialImpactLine:
     never drift because one is derived from the other.
 
     The distinction that matters most is ``actual``. Stripe events carry a real
-    transacted amount, so that figure is money that actually moved. Every other
-    platform is an order-of-magnitude estimate from public list prices. A report
-    that blurs the two is worse than one that omits the estimate entirely.
+    transacted amount. Twilio may supply a recorded per-resource charge; neither
+    that charge nor the surrounding event is proof of use by a particular key.
+    Other amounts may be estimates from public list prices.
     """
 
     platform: str            # aws | gcp | azure | stripe | twilio
@@ -183,6 +191,8 @@ def compute_financial_impact_lines(
     by_platform: dict[str, list[ForensicEvent]] = {}
     for event in events:
         platform = (getattr(event, "platform", None) or "aws").lower()
+        if platform == 'gcp' and getattr(event, 'success', None) is not True:
+            continue
         by_platform.setdefault(platform, []).append(event)
 
     handlers = {
@@ -216,6 +226,8 @@ def compute_financial_impact(events: list[ForensicEvent]) -> str:
     """
     lines = compute_financial_impact_lines(events)
     if not lines:
+        if any(getattr(event, 'platform', None) == 'gcp' for event in events):
+            return GCP_FINANCIAL_UNAVAILABLE
         return NO_FINANCIAL_IMPACT
 
     return ". ".join(line.text for line in lines)
@@ -301,11 +313,6 @@ def _aws_impacts(events: list[ForensicEvent]) -> list[FinancialImpactLine]:
 # amounts and real per-message rates.
 # ---------------------------------------------------------------------------
 
-_GCP_E2_MICRO_HOURLY = 0.0084
-_GCP_EGRESS_PER_GB = 0.12
-_GCP_GKE_CLUSTER_HOURLY = 0.10
-_GCP_CLOUDSQL_DAILY = 1.50
-
 _AZURE_B1S_HOURLY = 0.0104
 _AZURE_EGRESS_PER_GB = 0.087
 _AZURE_AKS_CLUSTER_HOURLY = 0.10
@@ -324,54 +331,8 @@ def _count(events: list[ForensicEvent], *actions: str) -> int:
 
 
 def _gcp_impacts(events: list[ForensicEvent]) -> list[FinancialImpactLine]:
-    """GCP Cloud Audit Log method names are dot-separated: 'compute.instances.insert'."""
-    impacts: list[FinancialImpactLine] = []
-
-    vm_creates = _count(events, "compute.instances.insert", "v1.compute.instances.insert")
-    bulk_reads = sum(
-        1
-        for e in events
-        if e.api_action in ("storage.objects.get", "storage.objects.list")
-        and e.affected_resource
-        and _is_large_object(e.affected_resource)
-    )
-    gke_creates = _count(events, "container.clusters.create")
-    sql_creates = _count(events, "cloudsql.instances.create", "sqladmin.instances.create")
-
-    if vm_creates > 0:
-        cost = vm_creates * _GCP_E2_MICRO_HOURLY
-        impacts.append(FinancialImpactLine(
-            platform="gcp", kind="compute", label="Compute Engine",
-            text=f"Compute Engine: {vm_creates}x e2-micro at ${cost:.2f}/hr",
-            amount=cost, currency="USD", unit="hour",
-            quantity=vm_creates, actual=False,
-        ))
-    if bulk_reads > 0:
-        cost = bulk_reads * _ASSUMED_OBJECT_GB * _GCP_EGRESS_PER_GB
-        impacts.append(FinancialImpactLine(
-            platform="gcp", kind="egress", label="Cloud Storage egress",
-            text=f"Cloud Storage egress: estimated ${cost:.2f}",
-            amount=cost, currency="USD", unit=None,
-            quantity=bulk_reads, actual=False,
-        ))
-    if gke_creates > 0:
-        cost = gke_creates * _GCP_GKE_CLUSTER_HOURLY
-        impacts.append(FinancialImpactLine(
-            platform="gcp", kind="cluster", label="GKE",
-            text=f"GKE: {gke_creates} cluster(s) at ${cost:.2f}/hr",
-            amount=cost, currency="USD", unit="hour",
-            quantity=gke_creates, actual=False,
-        ))
-    if sql_creates > 0:
-        cost = sql_creates * _GCP_CLOUDSQL_DAILY
-        impacts.append(FinancialImpactLine(
-            platform="gcp", kind="database", label="Cloud SQL",
-            text=f"Cloud SQL: {sql_creates} instance(s) at ${cost:.2f}/day",
-            amount=cost, currency="USD", unit="day",
-            quantity=sql_creates, actual=False,
-        ))
-
-    return impacts
+    """Audit methods alone cannot establish machine sizes, transfer or bills."""
+    return []
 
 
 def _azure_impacts(events: list[ForensicEvent]) -> list[FinancialImpactLine]:
@@ -442,7 +403,8 @@ def _azure_impacts(events: list[ForensicEvent]) -> list[FinancialImpactLine]:
 _STRIPE_CHARGE_EVENTS = frozenset({
     "charge.succeeded", "charge.captured", "payment_intent.succeeded",
 })
-_STRIPE_PAYOUT_EVENTS = frozenset({"payout.created", "payout.paid"})
+_STRIPE_PAYOUT_EVENTS = frozenset({"payout.paid"})
+_STRIPE_ZERO_DECIMAL = frozenset({"BIF", "CLP", "DJF", "GNF", "JPY", "KMF", "KRW", "MGA", "PYG", "RWF", "VND", "VUV", "XAF", "XOF", "XPF"})
 
 
 def _stripe_object(event: ForensicEvent) -> dict | None:
@@ -456,11 +418,12 @@ def _stripe_object(event: ForensicEvent) -> dict | None:
 
 
 def _minor_units(obj: dict, *fields: str) -> float | None:
-    """First numeric amount among ``fields``, converted from minor units."""
+    """First numeric Stripe amount converted to the currency's major units."""
     for field in fields:
         value = obj.get(field)
         if isinstance(value, (int, float)) and not isinstance(value, bool):
-            return float(value) / 100.0
+            divisor = 1 if str(obj.get("currency") or "").upper() in _STRIPE_ZERO_DECIMAL else 100
+            return float(value) / divisor
     return None
 
 
@@ -583,6 +546,7 @@ def _twilio_impacts(events: list[ForensicEvent]) -> list[FinancialImpactLine]:
             e for e in events
             if (e.api_action or "").lower().startswith(prefix)
             and not (e.api_action or "").lower().endswith(_TWILIO_NON_BILLABLE_SUFFIXES)
+            and getattr(e, "event_source", None) != "monitor.twilio.com"
         ]
 
     message_events = _billable("message.")
@@ -590,24 +554,29 @@ def _twilio_impacts(events: list[ForensicEvent]) -> list[FinancialImpactLine]:
     actions = [(e.api_action or "").lower() for e in events]
     numbers = sum(1 for a in actions if "number" in a and ("purchase" in a or "create" in a))
 
-    if message_events:
-        messages = len(message_events)
-        cost = _twilio_cost(message_events, _TWILIO_SMS_COST)
-        impacts.append(FinancialImpactLine(
-            platform="twilio", kind="messaging", label="Twilio",
-            text=f"Twilio: {messages} message(s) at ${cost:.2f}",
-            amount=cost, currency="USD", unit=None,
-            quantity=messages, actual=False,
-        ))
-    if call_events:
-        calls = len(call_events)
-        cost = _twilio_cost(call_events, _TWILIO_CALL_COST)
-        impacts.append(FinancialImpactLine(
-            platform="twilio", kind="messaging", label="Twilio",
-            text=f"Twilio: {calls} call(s) at ${cost:.2f}",
-            amount=cost, currency="USD", unit=None,
-            quantity=calls, actual=False,
-        ))
+    for label, group in (("message", message_events), ("call", call_events)):
+        priced: dict[str, list[float]] = {}
+        pending = 0
+        for event in group:
+            raw = getattr(event, "raw_data", None) or {}
+            price, unit = raw.get("price"), raw.get("price_unit")
+            if isinstance(price, (int, float)) and not isinstance(price, bool) and isinstance(unit, str) and len(unit) == 3 and unit.isalpha():
+                priced.setdefault(unit.upper(), []).append(abs(float(price)))
+            else:
+                pending += 1
+        for currency, amounts in sorted(priced.items()):
+            total = sum(amounts)
+            impacts.append(FinancialImpactLine(
+                platform="twilio", kind="messaging", label="Twilio",
+                text=f"Twilio: {len(amounts)} {label}(s) with recorded charges of {currency} {total:.4f}",
+                amount=total, currency=currency, unit=None, quantity=len(amounts), actual=True,
+            ))
+        if pending:
+            impacts.append(FinancialImpactLine(
+                platform="twilio", kind="messaging", label="Twilio",
+                text=f"Twilio: {pending} {label}(s) with price unavailable or pending",
+                amount=None, currency=None, unit=None, quantity=pending, actual=False,
+            ))
     if numbers > 0:
         cost = numbers * _TWILIO_NUMBER_MONTHLY
         impacts.append(FinancialImpactLine(
@@ -635,7 +604,7 @@ def check_gdpr_flag(events: list[ForensicEvent]) -> bool:
     """
     sensitive_categories = {"data_access", "exfiltration"}
 
-    for event in events:
+    for event in impact_evidence(events):
         if (
             event.impact_category in sensitive_categories
             and event.affected_resource
@@ -661,7 +630,7 @@ def check_pcidss_flag(events: list[ForensicEvent]) -> bool:
     Returns:
         bool: True if a PCI-DSS reportable event was detected.
     """
-    for event in events:
+    for event in impact_evidence(events):
         if event.impact_category == "financial_abuse":
             return True
         if (
@@ -689,7 +658,7 @@ def check_soc2_flag(events: list[ForensicEvent]) -> bool:
     """
     return any(
         event.impact_category in _SOC2_TRIGGER_CATEGORIES
-        for event in events
+        for event in impact_evidence(events)
         if event.impact_category
     )
 
@@ -706,6 +675,7 @@ def build_compliance_reasons(
     Returns a list of strings, one per applicable regulation, describing the
     specific obligation and the triggering condition observed.
     """
+    events = impact_evidence(events)
     reasons: list[str] = []
 
     if gdpr:
@@ -719,30 +689,27 @@ def build_compliance_reasons(
         ]
         resource_hint = f" (e.g. '{pii_resources[0]}')" if pii_resources else ""
         reasons.append(
-            f"GDPR Article 33: Personal data may have been accessed{resource_hint}. "
-            "Notify your Data Protection Authority within 72 hours if a breach is confirmed."
+            f"GDPR Articles 32/33: A data-access event refers to a resource whose name may suggest personal data{resource_hint}. "
+            "Review whether personal data is involved and whether notification obligations apply."
         )
 
     if pcidss:
         fin_events = [e for e in events if e.impact_category == "financial_abuse"]
         if fin_events:
             reasons.append(
-                "PCI-DSS Requirement 12.10: Financial abuse events detected in the payment "
-                "card environment. Initiate your incident response plan immediately and "
-                "notify your acquiring bank and card brands."
+                "PCI-DSS Requirement 12: An event was classified as financial activity. "
+                "Review whether the affected environment is in PCI DSS scope and assess incident response obligations."
             )
         else:
             reasons.append(
-                "PCI-DSS Requirement 12.10: Payment-related resources were accessed during "
-                "the exposure window. Review cardholder data access logs and notify your "
-                "acquiring bank if cardholder data was compromised."
+                "PCI-DSS Requirement 12: An event refers to a resource with a payment-related name. "
+                "Review whether cardholder data or an in-scope environment is involved."
             )
 
     if soc2:
         reasons.append(
-            "SOC 2 (CC6 / A1): A security event affecting logical access controls or system "
-            "availability was detected. Document this incident in your SOC 2 evidence records "
-            "and inform your auditor at the next review cycle."
+            "SOC 2 (CC6 / A1): An event was classified as privilege escalation, exfiltration, "
+            "or resource abuse. Review whether it relates to controls in your SOC 2 scope."
         )
 
     return reasons
