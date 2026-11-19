@@ -1,0 +1,15 @@
+{
+  "commit": "7fffd136b8733cfe6e091d3c15caa7f1ff377dff",
+  "offline_fixture": true,
+  "paired_cases": 12,
+  "started_utc": "2026-11-19T12:51:01.438640Z",
+  "ended_utc": "2026-11-19T12:51:01.502192Z",
+  "repeat_byte_identical": true,
+  "sha256": {
+    "reproducibility/paired_reports.py": "954650721a2f0c4ba02f117525fc836d09024234dac75cc85290c0b0d7847456",
+    "results/raw/timeline-decisions.csv": "cff43b2949e462408ad282122dee9595e46ba40eb58ec523efa250f1a81b0f65",
+    "results/raw/paired-reports.json": "37947c6c2d165a5efc20ed3b72003d900d3a68cfd66d66b6761814bd04b0e777",
+    "P0-results.md": "0292e44e2fa8d2ffe2bafceaa1820f245fc28e838e0ffdb19e828fb363c1d911"
+  },
+  "historical_twilio_export_sha256": "5d4c49ce7bd443bdbdf5686e56a7af3ab73f921618dd2d129d60df9d6edaa178"
+}

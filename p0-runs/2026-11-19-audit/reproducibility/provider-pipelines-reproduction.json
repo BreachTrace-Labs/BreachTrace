@@ -1,0 +1,21 @@
+{
+  "results": [
+    {
+      "provider": "azure",
+      "same": true,
+      "different_fields": []
+    },
+    {
+      "provider": "stripe",
+      "same": true,
+      "different_fields": []
+    },
+    {
+      "provider": "twilio",
+      "same": true,
+      "different_fields": []
+    }
+  ],
+  "scope": "fresh process and in-memory SQLite; same checkout and virtualenv; generated incident/event IDs and timeline are excluded",
+  "review": "pending"
+}

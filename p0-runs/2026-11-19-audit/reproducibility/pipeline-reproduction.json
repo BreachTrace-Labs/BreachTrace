@@ -1,0 +1,6 @@
+{
+  "same_semantic_observations": true,
+  "differing_fields": [],
+  "excluded": "generated incident and event identifiers; fresh in-memory SQLite in separate process",
+  "independent_review": "pending"
+}

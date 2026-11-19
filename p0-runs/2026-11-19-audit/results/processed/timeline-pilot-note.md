@@ -1,0 +1,3 @@
+# GCP timeline development cases
+
+Twelve synthetic incidents comprise six related scenarios with roles swapped. The frozen incident detail route, abstention, principal/time and native-field reference arms were exercised on the same fixture evidence; see the decision and count tables. The reference baseline and truth are researcher-created and have not been independently authored or adjudicated. Missing and malformed key fields and missing association remain unknown for the field-aware methods; the principal/time method can assert a target despite missing evidence. The paired fixtures are not independent provider sources. No prevalence, superiority or confidence claim is supported.

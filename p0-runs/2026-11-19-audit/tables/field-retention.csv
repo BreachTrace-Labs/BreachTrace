@@ -1,0 +1,5 @@
+case,source_fields,normalized_retained,persisted_retained,source_absent
+gcp_key,6,6,6,0
+gcp_missing_key,5,5,5,1
+aws_lookup,5,5,5,1
+aws_trail,5,5,5,1

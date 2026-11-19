@@ -1,0 +1,5 @@
+method,target_correct,target_total,sibling_wrong,sibling_total,abstentions
+frozen_identity_function,1,1,0,1,1
+always_abstain,0,1,0,1,3
+principal_time,1,1,1,1,0
+native_key_field,1,1,0,1,1

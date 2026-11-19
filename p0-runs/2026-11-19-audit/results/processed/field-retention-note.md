@@ -1,0 +1,5 @@
+# Cross-provider field-retention development fixture
+
+Four synthetic records passed the frozen mappers and SQLite persistence. GCP key-present, GCP key-absent, AWS lookup and AWS trail modes retained all fields recorded as present in their source fixtures; see the count table. The GCP key-missing record remains missing its key. Both AWS fixtures lack an explicit outcome field, and the mapper populated success=True when no error code was present. This is a derived value, not a retained source field.
+
+These manually constructed source masks have not been independently reviewed. This experiment has no native action ledger or acquisition evidence and cannot estimate real-world field retention, action visibility or acquisition completeness. No confidence interval is warranted. Execution timestamps and the original pre-change script digest were not recorded; the attempt manifest is incomplete. A second process using the same checkout and virtualenv reproduced the saved field table after an output-path-only change.
