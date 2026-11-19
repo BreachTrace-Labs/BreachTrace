@@ -74,6 +74,14 @@ _SEVERITY_TO_INT: dict[str, int] = {
     "low": 1, "medium": 2, "high": 3, "critical": 4,
 }
 
+_IMPORTED_EVIDENCE_NOTE = 'Some records were supplied or referenced in an uploaded CloudTrail file. The uploaded evidence has not been independently verified.\n\n'
+
+
+def _has_imported_evidence(event) -> bool:
+    raw = event.raw_data if isinstance(event.raw_data, dict) else {}
+    source = raw.get('evidence_source')
+    return (isinstance(source, dict) and source.get('method') == 'cloudtrail-import') or bool(raw.get('_aws_imported_evidence'))
+
 
 def _extract_remediation_steps(report_text: str) -> list[str]:
     """
@@ -129,6 +137,8 @@ def _upgrade_report(db: Session, incident_id: str, facts: dict) -> bool:
     incident = db.get(IncidentRecord, incident_id)
     if incident is None:
         return False
+    if incident.platform == 'aws' and any(_has_imported_evidence(event) for event in incident.events):
+        report_text = _IMPORTED_EVIDENCE_NOTE + report_text
     incident.report_text = report_text
     incident.report_source = source
     db.commit()
@@ -224,6 +234,8 @@ def run_collection_pipeline(
                 logger.warning("Incident %s disappeared before collection", incident_id)
                 return
             reader = project_reader(db, incident, platform)
+            if reader is None and platform == 'aws':
+                raise ReaderConfigurationError('Assign this incident to a project with a verified AWS credential wallet connection before collecting activity.')
             if reader is None:
                 collector = collector_cls()
             elif platform == 'stripe':
@@ -279,6 +291,19 @@ def run_collection_pipeline(
                 else:
                     error_message = 'Google Cloud audit log collection failed. Check provider access and backend logs.'
                 logger.warning('GCP collection failed for incident %s (%s)', incident_id, type(exc).__name__)
+            elif platform == 'aws':
+                response = getattr(exc, 'response', None)
+                error = response.get('Error', {}) if isinstance(response, dict) else {}
+                code = error.get('Code', '') if isinstance(error, dict) else ''
+                if code in ('AccessDenied', 'AccessDeniedException', 'UnauthorizedOperation', 'KMS.AccessDeniedException'):
+                    error_message = 'AWS denied access. Check the wallet reader’s CloudTrail, S3 and KMS permissions, then refresh.'
+                elif code in ('InvalidClientTokenId', 'ExpiredToken', 'UnrecognizedClientException', 'SignatureDoesNotMatch'):
+                    error_message = 'AWS rejected the wallet reader credentials. Replace or reverify the reader, then refresh.'
+                elif isinstance(exc, ValueError) and str(exc).startswith(('CloudTrail evidence', 'CloudTrail event', 'CloudTrail management', 'CloudTrail record', 'Decompressed CloudTrail', 'Invalid CloudTrail', 'The AWS log reader', 'An AWS access-key', 'AWS collection')):
+                    error_message = str(exc)
+                else:
+                    error_message = 'AWS CloudTrail collection failed. Check the wallet reader, evidence location and provider access.'
+                logger.warning('AWS collection failed for incident %s (%s)', incident_id, type(exc).__name__)
             elif platform == "azure":
                 status_code = getattr(exc, 'status_code', None)
                 if status_code in (401, 403) or type(exc).__name__ in ('ClientAuthenticationError', 'CredentialUnavailableError'):
@@ -369,7 +394,7 @@ def run_collection_pipeline(
         t0 = time.monotonic()
         try:
             overall_severity = score_incident(exposure_events)
-            if (platform == 'gcp' and exposure_events and not any(
+            if (platform in ('aws', 'gcp') and exposure_events and not any(
                     event.success is True and event.impact_category and event.severity_weight is not None
                     for event in exposure_events)):
                 overall_severity = 'Unknown'
@@ -427,6 +452,8 @@ def run_collection_pipeline(
             # within the 60s target on any machine. A model may upgrade the
             # prose afterwards (see _upgrade_report).
             report_text = render_report(facts, deterministic_sections(facts))
+            if platform == 'aws' and any(_has_imported_evidence(event) for event in classified_events):
+                report_text = _IMPORTED_EVIDENCE_NOTE + report_text
             remediation_steps = _extract_remediation_steps(report_text)
 
             incident_record.report_text = report_text

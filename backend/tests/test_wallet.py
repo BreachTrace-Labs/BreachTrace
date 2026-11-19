@@ -69,6 +69,47 @@ def test_wallet_lifecycle_and_role_boundaries(wallet_client):
     assert client.get(path, headers=admin).json() == []
 
 
+def test_aws_simple_form_preserves_options_for_same_reader(wallet_client):
+    from crypto import decrypt_blob
+    client, factory, _ = wallet_client
+    client.post('/auth/register', json={'org_name': 'Acme', 'slug': 'acme', 'admin_email': 'admin@example.com',
+                'admin_password': 'admin password', 'admin_full_name': 'Admin'})
+    token = client.post('/auth/token', data={'username': 'admin@example.com', 'password': 'admin password'}).json()['access_token']
+    headers = {'Authorization': 'Bearer ' + token}
+    project = client.post('/projects', headers=headers, json={'name': 'App', 'github_repo_url': 'https://github.com/acme/app'}).json()['id']
+    path = f'/projects/{project}/wallet'
+    reader = {'access_key_id': 'AKIAIOSFODNN7EXAMPLE', 'secret_access_key': 'reader-secret', 'region': 'us-east-1'}
+    options = {'regions': 'ap-southeast-2', 'trail_bucket': 'example-trail-bucket', 'trail_prefix': 'AWSLogs/example/'}
+    assert client.post(path, headers=headers, json={'provider': 'aws', 'credentials': {**reader, **options}}).status_code == 202
+    assert client.post(path, headers=headers, json={'provider': 'aws', 'credentials': reader,
+                       'preserve_aws_collection_settings': True}).status_code == 202
+    with factory() as db:
+        entry = db.query(CredentialWalletEntry).filter_by(provider='aws').one()
+        assert decrypt_blob(entry.encrypted_blob, entry.iv) == {**reader, **options}
+    settings_path = f'{path}/aws-collection-settings'
+    assert client.get(settings_path).status_code == 401
+    assert client.get(settings_path, headers=headers).json() == options
+    assert client.put(settings_path, headers=headers, json=options).status_code == 409
+    with factory() as db:
+        entry = db.query(CredentialWalletEntry).filter_by(provider='aws').one()
+        entry.verification_status = 'ok'
+        db.commit()
+    assert client.put(settings_path, headers=headers, json={'trail_bucket': 'example-trail-bucket'}).status_code == 422
+    updated = {'regions': 'eu-west-1', 'trail_bucket': 'example-trail-bucket', 'trail_prefix': 'AWSLogs/other/'}
+    response = client.put(settings_path, headers=headers, json=updated)
+    assert response.status_code == 200 and response.json() == updated
+    assert reader['secret_access_key'] not in response.text
+    with factory() as db:
+        entry = db.query(CredentialWalletEntry).filter_by(provider='aws').one()
+        assert decrypt_blob(entry.encrypted_blob, entry.iv) == {**reader, **updated}
+    replacement = {**reader, 'access_key_id': 'AKIA1234567890ABCDEF'}
+    assert client.post(path, headers=headers, json={'provider': 'aws', 'credentials': replacement,
+                       'preserve_aws_collection_settings': True}).status_code == 202
+    with factory() as db:
+        entry = db.query(CredentialWalletEntry).filter_by(provider='aws').one()
+        assert decrypt_blob(entry.encrypted_blob, entry.iv) == replacement
+
+
 def test_gcp_impersonation_source_is_write_only_and_used_for_verification(wallet_client):
     import json
     import wallet_verify

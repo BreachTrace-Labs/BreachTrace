@@ -65,7 +65,7 @@ Each installation is explicitly limited to one organisation, enforced by the dat
 
 ### 2. Scan the codebase that already exists
 
-**Scope decision:** repository URL scans are current-snapshot reviews. They do not create Monitor incidents or initiate provider collection. Historical Git scanning, inferred first exposure and creating incidents from snapshot findings are separate future capabilities, not automatic consequences of this flow. Users who want monitoring for subsequent pushes can register the project webhook.
+Repository URL scans review the current snapshot. An administrator or security lead can explicitly add a finding to Monitor for the matching project. The record is detection only: its timestamp is when the snapshot was observed, the exposure start is unknown, and no provider collection starts. Masked hints can match different keys, so possible existing incidents must be reviewed. Historical Git scanning and inferred first exposure remain separate capabilities. Users who want monitoring for subsequent pushes can register the project webhook.
 
 On **Connect**, the user pastes a root GitHub URL such as `https://github.com/owner/repo` and chooses **Scan repository**. The backend validates the URL, resolves the default branch to a commit SHA, downloads a bounded archive, and scans regular UTF-8 text files without executing repository code. A private repository needs backend GitHub access through `GITHUB_TOKEN`.
 
@@ -163,11 +163,13 @@ An incident stores its credential family, masked hint, repository, commit hash, 
 
 Snapshot scans, wallet verification, project incident collection, indexing and notification deliveries are queued in the database and processed by backend worker threads. Expired leases are recovered after a restart; retries are bounded, and notification delivery can be duplicated if a process stops after an external service accepts a message but before the result is saved. Optional model upgrades run as part of collection. Experiment-only revocation monitors and startup knowledge-base warming still run in process. Provider access and logging determine available evidence.
 
+Administrators and security leads can enable **Automatic log refresh** independently on each eligible incident, selecting an interval from 15 minutes to seven days. Each schedule is disabled by default, uses the incident's project wallet reader, and skips runs if the reader is unavailable or collection is already queued or running. The incident page reports the last scheduling result, while collection failures appear in the incident. A running backend is required; overdue schedules resume after workers restart. Disabling prevents future scheduling but does not cancel already queued collections. When upgrading, an enabled legacy organisation-wide schedule is converted into independent schedules for existing eligible incidents. Provider retention, permissions, rate limits and logging configuration still limit results.
+
 ## How to interpret common outcomes
 
 | What the operator sees | What it means or what to check |
 | --- | --- |
-| Snapshot result contains a key, but Monitor is empty | Expected: snapshot candidates do not become incidents. Monitor needs a qualifying new push or an explicit test/demo incident. |
+| Snapshot result contains a key, but Monitor is empty | Add the finding explicitly from Connect, or monitor a later signed push. Snapshot additions are detection only and do not establish exposure time. |
 | GitHub reports an invalid webhook signature | The delivered payload does not verify against the backend's `GITHUB_WEBHOOK_SECRET`; check the secret configured on both sides. |
 | Webhook registration says the token cannot access the resource | The GitHub token lacks rights to manage hooks on that repository; manual registration or a suitably authorized token is needed. |
 | Incident exists but no forensic timeline | Check tier, collection status/error, provider permissions and retention, account identity, and the exposure-based time window. Zero events is not a universal assertion of zero account activity. |

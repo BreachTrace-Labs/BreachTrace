@@ -172,7 +172,7 @@ const Connect: React.FC = () => {
 
       <div className="connect-grid"><RepositoryScan repoUrl={repoUrl} onRepoUrlChange={url => {
         setRepoUrl(url); setResult(null); setRegisterError(null)
-      }} trigger={scanTrigger} />
+      }} trigger={scanTrigger} projectId={selected?.id ?? null} />
       <aside className="connect-webhook"><h2>Webhook status</h2>{selected ? <><strong>{selected.name}</strong><p>{selected.github_repo_full_name}</p><p className="connect-status"><span className={selected.webhook_last_verified_at ? 'connect-dot connect-dot--registered' : 'connect-dot'}/>{selected.webhook_last_verified_at ? 'Signed delivery verified' : selected.webhook_registered_at ? 'Registered · awaiting delivery' : 'Awaiting verified delivery'}</p>{selected.webhook_last_verified_at ? <p>Last signed delivery received {new Date(selected.webhook_last_verified_at).toLocaleString()}. Check GitHub for current hook status.</p> : <p>Manual webhooks appear here after a signed ping or push is received. Redeliver a ping from GitHub to verify setup.</p>}<a href="#webhook-settings" onClick={() => { if (webhookDetails.current) webhookDetails.current.open = true }}>Manage webhook →</a><Link to={`/admin/projects/${selected.id}`}>Project settings →</Link></> : <><p>Select or create a project to register a webhook.</p><Link to="/admin">Manage projects →</Link></>}</aside></div>
 
       <details id="webhook-settings" ref={webhookDetails} className="connect-details">

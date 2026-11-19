@@ -143,7 +143,7 @@ def test_classify_events_returns_the_same_list_object():
     assert result is events
 
 
-def test_bulk_data_access_from_same_ip_escalates_to_exfiltration():
+def test_bulk_data_access_from_same_ip_remains_access_with_raised_severity():
     events = [
         _make_event("GetObject", event_source="s3.amazonaws.com", source_ip="9.9.9.9")
         for _ in range(5)
@@ -151,7 +151,7 @@ def test_bulk_data_access_from_same_ip_escalates_to_exfiltration():
 
     classify_events(events)
 
-    assert all(event.impact_category == "exfiltration" for event in events)
+    assert all(event.impact_category == "data_access" for event in events)
     assert all(event.severity_weight == 4 for event in events)
 
 
@@ -288,7 +288,7 @@ def test_classify_all_events_updates_orm_events_and_commits():
     assert incident.events[1].severity_weight == 3
 
 
-def test_classify_all_events_applies_bulk_exfiltration_rule_to_orm_events():
+def test_classify_all_events_applies_bulk_access_rule_to_orm_events():
     incident = _make_incident_with_events(
         [
             _make_orm_event("GetObject", source_ip="9.9.9.9")
@@ -300,7 +300,7 @@ def test_classify_all_events_applies_bulk_exfiltration_rule_to_orm_events():
     classify_all_events(incident.incident_id, db)
 
     assert db.commits == 1
-    assert all(event.impact_category == "exfiltration" for event in incident.events)
+    assert all(event.impact_category == "data_access" for event in incident.events)
     assert all(event.severity_weight == 4 for event in incident.events)
 
 

@@ -7,7 +7,7 @@ from pydantic import BaseModel, EmailStr, Field
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from auth import get_active_user, hash_password, require_admin
+from auth import get_active_user, hash_password, require_admin, require_admin_or_lead
 from audit import public as audit_public, record
 from db.database import get_db
 from db.models import AuditLog, BackgroundJob, Organisation, User
@@ -17,6 +17,56 @@ router = APIRouter(prefix="/org", tags=["organisation"])
 
 class OrgUpdate(BaseModel):
     name: str = Field(min_length=1, max_length=120)
+
+
+class AutoRefreshInput(BaseModel):
+    enabled: bool
+    interval_minutes: int = Field(ge=15, le=10080)
+
+
+def _refresh_settings(job):
+    if job is None:
+        return {'enabled': False, 'interval_minutes': 60, 'next_run_at': None, 'status': 'disabled', 'last_run': None, 'error': None}
+    enabled = bool(job.payload.get('enabled'))
+    return {'enabled': enabled, 'interval_minutes': job.payload.get('interval_minutes', 60),
+            'next_run_at': job.available_at if enabled and job.status == 'queued' else None,
+            'status': job.status if enabled else 'disabled', 'last_run': job.result, 'error': job.last_error}
+
+
+@router.get('/auto-refresh')
+def get_auto_refresh(user: User = Depends(require_admin_or_lead), db: Session = Depends(get_db)):
+    job = db.query(BackgroundJob).filter_by(dedupe_key=f'auto-refresh:{user.organisation_id}').first()
+    return _refresh_settings(job)
+
+
+@router.put('/auto-refresh')
+def set_auto_refresh(body: AutoRefreshInput, request: Request, user: User = Depends(require_admin_or_lead),
+                     db: Session = Depends(get_db)):
+    if body.enabled:
+        raise HTTPException(410, 'Set automatic refresh on each incident instead.')
+    now = datetime.now(timezone.utc)
+    key = f'auto-refresh:{user.organisation_id}'
+    job = db.query(BackgroundJob).filter_by(dedupe_key=key).with_for_update().first()
+    if job is None:
+        job = BackgroundJob(kind='auto_refresh', dedupe_key=key, project_id=None)
+        db.add(job)
+    job.payload = {'organisation_id': user.organisation_id, 'enabled': body.enabled,
+                   'interval_minutes': body.interval_minutes}
+    job.updated_at = now
+    if job.status != 'running':
+        job.status = 'queued' if body.enabled else 'complete'
+        job.attempts = 0
+        job.last_error = None
+        job.available_at = now + timedelta(minutes=body.interval_minutes)
+        job.lease_token = job.lease_until = None
+    record(db, user, 'organisation.auto_refresh_updated', request,
+           detail={'enabled': body.enabled, 'interval_minutes': body.interval_minutes})
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(409, 'Schedule was changed concurrently. Reload and try again.') from None
+    return _refresh_settings(job)
 
 
 class Invite(BaseModel):

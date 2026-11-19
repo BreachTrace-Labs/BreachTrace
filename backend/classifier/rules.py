@@ -275,27 +275,37 @@ def classify_events(events: list[ForensicEvent]) -> list[ForensicEvent]:
                 and len(messages.get(str(getattr(event, "principal_id", "") or ""), set())) >= TWILIO_BULK_THRESHOLD):
             event.severity_weight = 4
 
+    # A likely copy-associated read is still retained as evidence, but should
+    # not be counted as an independently initiated read for this threshold.
+    from aws_correlation import correlate_aws_records
+    aws_by_id = {event.event_id: event for event in events if event.platform == 'aws'}
+    copy_reads = {event_id for group in correlate_aws_records(events)['groups']
+                  for event_id in group['event_ids']
+                  if aws_by_id[event_id].api_action == 'GetObject'}
     counts = Counter(
-        (event.api_action, event.source_ip)
+        (event.platform, event.api_action, event.source_ip)
         for event in events
         if event.source_ip and event.platform != 'gcp'
+        and (event.platform != 'aws' or (event.success is True and event.event_id not in copy_reads))
     )
 
     for event in events:
-        key = (event.api_action, event.source_ip)
+        key = (event.platform, event.api_action, event.source_ip)
         if (
             event.source_ip
             and event.platform != 'gcp'
+            and (event.platform != 'aws' or (event.success is True and event.event_id not in copy_reads))
             and event.impact_category == DATA_ACCESS
             and counts[key] >= _bulk_threshold(event.platform)
         ):
-            event.impact_category = DATA_EXFILTRATION
+            if event.platform != 'aws':
+                event.impact_category = DATA_EXFILTRATION
             event.severity_weight = 4
 
     return events
 
 
-def classify_all_events(incident_id: str, db: Session) -> list[ORMForensicEvent]:
+def classify_all_events(incident_id: str, db: Session, *, commit: bool = True) -> list[ORMForensicEvent]:
     """
     Load one incident's stored events, classify them in place, persist the
     classifier output, and return the updated ORM event rows.
@@ -315,10 +325,13 @@ def classify_all_events(incident_id: str, db: Session) -> list[ORMForensicEvent]
     current_ids = {event.event_id for event in current}
     classify_events([event for event in events if event.event_id not in current_ids])
     classify_events(current)
-    db.commit()
-    # Refresh events so that returned ORM instances are not expired after commit.
-    for event in events:
-        db.refresh(event)
+    if commit:
+        db.commit()
+        # Refresh events so that returned ORM instances are not expired after commit.
+        for event in events:
+            db.refresh(event)
+    else:
+        db.flush()
 
     return events
 

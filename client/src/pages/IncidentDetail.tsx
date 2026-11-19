@@ -20,6 +20,7 @@ import {
 import client, { USE_MOCK } from '@/api/client'
 import { useAuth } from '@/context/AuthContext'
 import IncidentActions from '@/components/IncidentActions'
+import AutoRefreshSettings from '@/components/AutoRefreshSettings'
 import type { IncidentRecord, ReportSource, SearchResult } from '@/types'
 import GCPRecordCorrelation from '@/components/GCPRecordCorrelation'
 import SearchResults from '@/components/SearchResults'
@@ -33,6 +34,8 @@ import FinancialImpactPanel from '@/components/FinancialImpactPanel'
 import BlastRadiusSummary from '@/components/BlastRadiusSummary'
 import { inExposureWindow, initialEvidenceScope } from '@/lib/forensicEvidence'
 import AffectedResources from '@/components/AffectedResources'
+import AWSCloudTrailImport from '@/components/AWSCloudTrailImport'
+import AWSCollectionSettings from '@/components/AWSCollectionSettings'
 import SourceIPs from '@/components/SourceIPs'
 import RelatedCredentials from '@/components/RelatedCredentials'
 import ComplianceReview from '@/components/ComplianceReview'
@@ -438,6 +441,9 @@ const IncidentDetail: React.FC = () => {
       </div>
 
       <IncidentActions incident={incident} canManage={canManage} onChange={setIncident} />
+      {canManage && forensic && !synthetic && !USE_MOCK && <AutoRefreshSettings key={incident.incident_id} incidentId={incident.incident_id} />}
+
+      {canManage && platform === 'aws' && !USE_MOCK && <AWSCloudTrailImport incidentId={incident.incident_id} onImported={async () => { const { data } = await client.get<IncidentRecord>(`/incidents/${incident.incident_id}`); setIncident(data) }} />}
 
       {/* Main Content Grid */}
       <div className="grid grid-cols-1 xl:grid-cols-12 gap-8">
@@ -516,13 +522,13 @@ const IncidentDetail: React.FC = () => {
             {/* Stats Grid */}
             <div className="border-t bg-muted/20 p-4 sm:p-6">
               <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
-                <SummaryTile icon={Clock3} label={synthetic ? "Sample exposure start" : "Estimated exposure start"}>
+                <SummaryTile icon={Clock3} label={incident.unavailable_reason?.startsWith('Snapshot observation:') ? 'Snapshot observed at · exposure start unknown' : synthetic ? "Sample exposure start" : "Estimated exposure start"}>
                   {fmtTime(incident.exposure_start)}
                 </SummaryTile>
                 <SummaryTile icon={Timer} label="Window closure">
                   {synthetic ? 'Demo only' : incident.exposure_end ? fmtTime(incident.exposure_end) : 'Not confirmed'}
                 </SummaryTile>
-                <SummaryTile icon={GitCommitHorizontal} label="Commit">
+                <SummaryTile icon={GitCommitHorizontal} label={incident.unavailable_reason?.startsWith('Snapshot observation:') ? 'Snapshot revision' : 'Commit'}>
                   <span className="font-mono">{synthetic ? 'Demo source' : incident.commit_hash ? incident.commit_hash.slice(0, 7) : '—'}</span>
                 </SummaryTile>
                 <SummaryTile icon={KeyRound} label="Credential Type">
@@ -597,8 +603,10 @@ const IncidentDetail: React.FC = () => {
                 </div>
                 Forensic Timeline
               </h2>
-              <p className="mb-4 text-sm text-muted-foreground">Shows up to 30 days of available provider history. Events before detected exposure are context and are excluded from incident severity, impact and report calculations. Refresh logs to retrieve recent history.</p>
+              <p className="mb-4 text-sm text-muted-foreground">Refresh requests up to 30 days of available provider history{platform === 'aws' ? '; imported AWS files can contain older records' : ''}. Events before detected exposure are context and are excluded from incident severity, impact and report calculations.</p>
               {platform === 'aws' && <p className="mb-4 text-sm text-muted-foreground">CloudTrail is queried by access key ID. Available records depend on logging and retention; related temporary credentials may use different key IDs.</p>}
+              {platform === 'aws' && canManage && incident.project_id && !USE_MOCK && <AWSCollectionSettings projectId={incident.project_id} onSaved={async () => { const { data } = await client.get<IncidentRecord>(`/incidents/${incident.incident_id}`); setIncident(data) }} />}
+              {platform === 'aws' && incident.aws_collection_coverage && <p className="mb-4 text-sm text-muted-foreground">Stored records: {incident.aws_collection_coverage.management_records} management · {incident.aws_collection_coverage.data_records} data · {incident.aws_collection_coverage.unknown_records} unspecified · {incident.aws_collection_coverage.imported_records} imported or referenced in an import. The current wallet’s S3 trail source is {incident.aws_collection_coverage.current_trail_configuration === 'configured' ? 'configured' : incident.aws_collection_coverage.current_trail_configuration === 'unavailable' ? 'unavailable; check the wallet' : 'not configured'}. These counts and settings do not establish complete CloudTrail coverage.</p>}
               {platform === 'gcp' && <p className="mb-4 text-sm text-muted-foreground">Cloud Audit Logs are matched to the service account, not necessarily the individual leaked key. Results depend on enabled logs and permissions.</p>}
               {platform === 'gcp' && incident.gcp_classification_coverage && <p className="mb-4 text-sm text-muted-foreground">Classification coverage across stored history: {incident.gcp_classification_coverage.classified_count} classified · {incident.gcp_classification_coverage.unclassified_count} unclassified. This does not measure whether all provider logs were collected.</p>}
               {platform === 'twilio' && <p className="mb-4 text-sm text-muted-foreground">Messages, calls and Monitor Events describe account activity. The current collector cannot attribute these records to a particular API key.</p>}
@@ -607,7 +615,7 @@ const IncidentDetail: React.FC = () => {
               </div>}
               {(incident.credential_type === 'azure_service_principal' || incident.credential_type === 'azure_client_secret') && <p className="mb-4 text-sm text-muted-foreground">Azure Activity Log events are matched to the application identity. They do not identify which client secret was used, and Activity Log does not include every data-plane action.</p>}
               {incident.status === 'error' && <p role="alert" className="mb-4 text-sm text-destructive">{incident.collection_error || 'Forensic collection failed. Check your provider access and refresh the logs.'}</p>}
-              {platform === 'gcp' && <GCPRecordCorrelation incident={incident} />}
+              {(platform === 'gcp' || platform === 'aws') && <GCPRecordCorrelation incident={incident} provider={platform} />}
               <ForensicTimeline events={incident.events} exposureStart={incident.exposure_start} />
             </div>
           ) : (
