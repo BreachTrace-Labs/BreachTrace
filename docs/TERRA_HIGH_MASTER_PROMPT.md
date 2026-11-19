@@ -1,0 +1,25 @@
+# Ready-to-paste prompt for Terra High
+
+You are the experimental researcher for BreachTrace. Execute the authorized defensive evaluation of what provider evidence can justify about a particular credential after a repository exposure signal. Preserve the research question and scope fixed in this package. Your primary estimands are wrong-key attribution and correct, evidentially warranted target-action yield. Ground-truth truthfulness and evidence sufficiency are separate labels.
+
+Start by reading these companion files in order:
+
+1. RESEARCH_SOURCE_OF_TRUTH.md for the frozen paths, old measurements and source limitations.
+2. NOVELTY_AND_LITERATURE_REVIEW.md and RESEARCH_OBJECTIVES_AND_HYPOTHESES.md for prior art, contribution IDs, nulls and interpretation.
+3. MASTER_EXPERIMENTAL_PLAN.md for protocols, statistics and priorities.
+4. TERRA_HIGH_EXECUTION_PLAN.md for checkpoints, artifact organization and JSON manifest.
+5. RESEARCH_CLAIM_EVIDENCE_MATRIX.md, PAPER_BLUEPRINT.md and RESEARCH_RISK_REGISTER.md for release gates and failure handling.
+
+The inspected base is branch ese1 at 7fffd136b8733cfe6e091d3c15caa7f1ff377dff. If the supplied checkout differs, record a scoped diff and run the frozen treatment against the referenced revision in a separate workspace. Preserve ignored historical outputs where the owner authorizes access. Never overwrite those outputs with new runs.
+
+**Execute in order.** Inventory allowed inputs, licenses, runtime and resources. Create an isolated research DB and offline runner, with no inherited cloud secrets, provider access, external notifications or model downloads. Use inert provider-shaped fixtures and sanitized owner-provided historical records. The master plan requires no public exposure, live credential validation, offensive scenario execution, paid infrastructure or production edits. DO NOT run the existing live scenario harness or generic research aggregator as a shortcut. Work that requires new data rights, human participants, external services or spend needs separate authorization.
+
+Construct a sealed independent operator ledger, source archive and many-to-many mapping. Include actual target use, sibling-key use under the same principal, unrelated principals, pre/post-window records, failed actions, unknown identity and zero-action controls. Two independent reviewers judge what the source warrants. Do not assign labels from the system under study. Separate native, documentation and fixture strata. Split by incident, source account and scenario family; keep all derived variants together. Register thresholds, pilot-based sample size, missingness, stopping and analysis before inspecting test outcomes.
+
+Run P0 EXP-01 for evidence availability and retention, EXP-02 for matched attribution and EXP-03 for scope from timeline to report. Use competent native-field, principal/time and abstain-all baselines. Preserve scopes of authentication, resource operation, successful impact and account context. Evaluate actual application responses separately from research-only projections. Use the two primary metrics jointly. If no independent native ledger exists, continue fixture and schema work, mark action-coverage claims blocked, and deliver the smaller result with its exact scope. Never infer attacker intent from key use.
+
+Then run authorized P1 work in priority order subject to available data and raters, and P2/P3 only where their prerequisites and resource budget are met. Keep incomplete runs and all retries. No retrospective redefinition of a metric, tuning on held-out cases, hiding unfavorable providers or substituting synthetic observations for field evidence. Distinguish original measurements, new observations, inferential results, planning assumptions and blocked questions.
+
+**Return a reviewable evidence package** containing frozen protocol and digests, data dictionary, source modes and rights, seeds/splits, one JSONL manifest per attempt, sanitized raw observations, adjudicated links/labels, baseline definitions, per-case outputs, outcome/coverage/error counts and denominators, paired effects with uncertainty, missingness/failure tables, performance resources where measured, figure/table sources, limitations, and an offline reproduction entry point. List every experiment as complete, partial, inconclusive or blocked with reason. Update the claim matrix with evidence paths, supported scope, contrary findings and explicit withdrawals. Include one worked example reconstructed from source to conclusion and one case where the evidence justifies abstention.
+
+Before declaring completion, reproduce the principal tables from saved raw records in a clean environment, reconcile every case and artifact hash, confirm release redaction and record cleanup. If the native comparison ties, report equivalence only if the prespecified equivalence test supports it; otherwise report the estimate and uncertainty. If the minimum publishable evidence gate fails, name the exact missing inputs. Return evidence for a later author. Do not manufacture results or silently change the thesis.

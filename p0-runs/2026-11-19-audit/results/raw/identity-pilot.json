@@ -1,0 +1,32 @@
+[
+  {
+    "case": "target",
+    "fixture_truth": "target",
+    "methods": {
+      "frozen_identity_function": "target",
+      "always_abstain": "unknown",
+      "principal_time": "target",
+      "native_key_field": "target"
+    }
+  },
+  {
+    "case": "sibling",
+    "fixture_truth": "sibling",
+    "methods": {
+      "frozen_identity_function": "other",
+      "always_abstain": "unknown",
+      "principal_time": "target",
+      "native_key_field": "other"
+    }
+  },
+  {
+    "case": "missing",
+    "fixture_truth": "missing",
+    "methods": {
+      "frozen_identity_function": "unknown",
+      "always_abstain": "unknown",
+      "principal_time": "target",
+      "native_key_field": "unknown"
+    }
+  }
+]

@@ -13,7 +13,7 @@ from sqlalchemy.orm import Session
 
 from access import assert_project_access
 from auth import get_active_user, require_admin_or_lead
-from crypto import encrypt_blob
+from crypto import decrypt_blob, encrypt_blob
 from db.database import get_db
 from db.models import CredentialWalletEntry, User
 from audit import record
@@ -27,6 +27,13 @@ class WalletInput(BaseModel):
     provider: Provider
     label: str | None = Field(default=None, max_length=80)
     credentials: dict[str, str] = Field(max_length=8)
+    preserve_aws_collection_settings: bool = False
+
+
+class AWSCollectionSettings(BaseModel):
+    regions: str = Field(default='', max_length=600)
+    trail_bucket: str = Field(default='', max_length=63)
+    trail_prefix: str = Field(default='', max_length=1024)
 
 
 def validate_credentials(provider: str, values: dict[str, str]) -> dict[str, str]:
@@ -43,7 +50,8 @@ def validate_credentials(provider: str, values: dict[str, str]) -> dict[str, str
             required.add('source_service_account_json')
     if provider == 'twilio' and set(values) == {'account_sid', 'api_key_sid', 'api_key_secret'}:
         required = {'account_sid', 'api_key_sid', 'api_key_secret'}
-    if set(values) != required or any(not v.strip() or len(v) > 50000 for v in values.values()):
+    optional = {'regions', 'trail_bucket', 'trail_prefix'} if provider == 'aws' else set()
+    if not required <= set(values) or set(values) - required - optional or any(not v.strip() or len(v) > 50000 for v in values.values()):
         raise HTTPException(422, 'Provide the required credential fields for the selected provider')
     values = {key: value.strip() for key, value in values.items()}
     if provider == 'stripe' and not re.fullmatch(r'(?:sk|rk)_(test|live)_[A-Za-z0-9]+', values['api_key']):
@@ -55,6 +63,16 @@ def validate_credentials(provider: str, values: dict[str, str]) -> dict[str, str
     if provider == 'aws' and (not re.fullmatch(r'AKIA[A-Z0-9]{16}', values['access_key_id']) or
                               not re.fullmatch(r'[a-z]{2}(?:-[a-z0-9]+)+-\d+', values['region'])):
         raise HTTPException(422, 'Invalid AWS access key ID or region')
+    if provider == 'aws' and 'regions' in values:
+        regions = [r.strip() for r in values['regions'].split(',')]
+        if len(regions) > 20 or any(not re.fullmatch(r'[a-z]{2}(?:-[a-z0-9]+)+-\d+', r) for r in regions):
+            raise HTTPException(422, 'Enter up to 20 valid AWS regions separated by commas')
+        values['regions'] = ','.join(dict.fromkeys(regions))
+    if provider == 'aws':
+        if bool(values.get('trail_bucket')) != bool(values.get('trail_prefix')):
+            raise HTTPException(422, 'Provide both the CloudTrail evidence bucket and prefix')
+        if 'trail_bucket' in values and (not re.fullmatch(r'[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]', values['trail_bucket']) or len(values['trail_prefix']) > 1024):
+            raise HTTPException(422, 'Invalid CloudTrail evidence bucket or prefix')
     if provider == 'azure':
         try:
             for key in ('tenant_id', 'client_id', 'subscription_id'):
@@ -103,6 +121,47 @@ def list_entries(project_id: str, user: User = Depends(get_active_user), db: Ses
     return [public(row) for row in db.query(CredentialWalletEntry).filter_by(project_id=project_id).order_by(CredentialWalletEntry.provider).all()]
 
 
+@router.get('/aws-collection-settings')
+def get_aws_collection_settings(project_id: str, user: User = Depends(require_admin_or_lead), db: Session = Depends(get_db)):
+    assert_project_access(project_id, user, db)
+    entry = db.query(CredentialWalletEntry).filter_by(project_id=project_id, provider='aws').first()
+    if entry is None:
+        raise HTTPException(404, 'Add an AWS reader to the project wallet first.')
+    try:
+        values = decrypt_blob(entry.encrypted_blob, entry.iv)
+        return {key: values.get(key, '') for key in ('regions', 'trail_bucket', 'trail_prefix')}
+    except Exception:
+        raise HTTPException(503, 'AWS wallet settings could not be read.') from None
+
+
+@router.put('/aws-collection-settings')
+def update_aws_collection_settings(project_id: str, body: AWSCollectionSettings, request: Request,
+                                   user: User = Depends(require_admin_or_lead), db: Session = Depends(get_db)):
+    assert_project_access(project_id, user, db)
+    entry = db.query(CredentialWalletEntry).filter_by(project_id=project_id, provider='aws').with_for_update().first()
+    if entry is None:
+        raise HTTPException(404, 'Add an AWS reader to the project wallet first.')
+    if entry.verification_status == 'pending':
+        raise HTTPException(409, 'Wait for AWS reader verification to finish.')
+    try:
+        values = decrypt_blob(entry.encrypted_blob, entry.iv)
+    except Exception:
+        raise HTTPException(503, 'AWS wallet settings could not be read.') from None
+    for key in ('regions', 'trail_bucket', 'trail_prefix'):
+        values.pop(key, None)
+        value = getattr(body, key).strip()
+        if value:
+            values[key] = value
+    values = validate_credentials('aws', values)
+    try:
+        entry.encrypted_blob, entry.iv = encrypt_blob(values)
+    except Exception:
+        raise HTTPException(503, 'AWS wallet settings could not be saved.') from None
+    record(db, user, 'wallet.aws_collection_settings_updated', request, project_id=project_id)
+    db.commit()
+    return {key: values.get(key, '') for key in ('regions', 'trail_bucket', 'trail_prefix')}
+
+
 @router.post('', status_code=202)
 def save_entry(project_id: str, body: WalletInput, request: Request,
                user: User = Depends(get_active_user), db: Session = Depends(get_db)):
@@ -110,20 +169,27 @@ def save_entry(project_id: str, body: WalletInput, request: Request,
     values = validate_credentials(body.provider, body.credentials)
     if body.provider == 'gcp' and values.get('auth_mode') == 'impersonation' and user.role == 'developer':
         raise HTTPException(403, 'Only administrators and security leads can configure GCP impersonation')
+    entry = db.query(CredentialWalletEntry).filter_by(project_id=project_id, provider=body.provider).with_for_update().first()
+    if entry is not None and user.role == 'developer':
+        raise HTTPException(409, 'A connection for this provider already exists. Ask an administrator or security lead to replace it.')
     try:
+        if entry is not None and body.provider == 'aws' and body.preserve_aws_collection_settings:
+            previous = decrypt_blob(entry.encrypted_blob, entry.iv)
+            if previous.get('access_key_id') == values['access_key_id']:
+                for key in ('regions', 'trail_bucket', 'trail_prefix'):
+                    if key not in values and key in previous:
+                        values[key] = previous[key]
         ciphertext, iv = encrypt_blob(values)
     except Exception:
         raise HTTPException(503, 'Wallet encryption is not configured correctly') from None
-    entry = db.query(CredentialWalletEntry).filter_by(project_id=project_id, provider=body.provider).first()
-    if entry is not None and user.role == 'developer':
-        raise HTTPException(409, 'A connection for this provider already exists. Ask an administrator or security lead to replace it.')
     if entry is None:
         entry = CredentialWalletEntry(project_id=project_id, provider=body.provider, created_by=user.id,
                                       encrypted_blob=ciphertext, iv=iv)
         db.add(entry)
     else:
         entry.encrypted_blob, entry.iv, entry.created_by = ciphertext, iv, user.id
-    entry.label = body.label.strip() if body.label else None
+    if body.provider != 'aws' or body.label is not None or entry.label is None:
+        entry.label = body.label.strip() if body.label else None
     entry.verification_status = 'pending'
     entry.verification_error = None
     entry.last_verified_at = None

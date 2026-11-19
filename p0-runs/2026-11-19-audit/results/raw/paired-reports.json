@@ -1,0 +1,458 @@
+[
+  {
+    "case": "target-0",
+    "label": "matched",
+    "record": "933361c12e55e01dc51f85860826ef0119b67e8f396dc743dac1f89068ca8988",
+    "severity": 2,
+    "blast": {
+      "status": "observed",
+      "severity": "MEDIUM",
+      "event_count": 1,
+      "successful_count": 1,
+      "failed_count": 0,
+      "resource_count": 1,
+      "last_observed_at": "2026-01-01T00:00:00Z",
+      "platforms": [
+        {
+          "platform": "gcp",
+          "event_count": 1,
+          "successful_count": 1,
+          "failed_count": 0,
+          "resource_count": 1,
+          "categories": [
+            {
+              "category": "data_access",
+              "count": 1
+            }
+          ],
+          "actions": [
+            {
+              "action": "storage.objects.get",
+              "count": 1
+            }
+          ]
+        }
+      ]
+    },
+    "report": "## Executive Summary\n\nA Google Cloud service account key (fixture) was detected in repository content. The commit timestamp is an estimated exposure start; rotation is not confirmed by this report. Cloud Audit Logs recorded 1 event(s) between 2026-01-01 00:00:00 UTC and 2026-01-01 00:00:00 UTC, the most serious being data access. Overall severity: Medium.\n\n## What Happened\n\n- 2026-01-01 00:00:00 UTC: Get Object (storage.objects.get) on projects/_/buckets/demo/objects/object.\n\n## Business Impact\n\nCloud Audit Logs do not establish billing charges or financial loss. No source IP addresses were available in the collected events. Activity is matched to a service account, not necessarily a particular key. Data Access logs depend on the service and logging configuration.\n\n## Remediation Checklist\n\n1. \u2610 Revoke the exposed credential now: gcloud iam service-accounts keys delete <KEY_ID> --iam-account=<SERVICE_ACCOUNT_EMAIL>\n2. \u2610 Check whether the data that was read (projects/_/buckets/demo/objects/object) contains personal or payment data\n3. \u2610 Review Cloud Audit Logs for any further activity: gcloud logging read 'protoPayload.authenticationInfo.principalEmail=\"<SERVICE_ACCOUNT_EMAIL>\"'\n4. \u2610 Purge the credential from git history (rotation alone leaves it readable in past commits)\n5. \u2610 Enable secret scanning on the repository to catch the next leak before it is pushed\n",
+    "actor_matches_incident": true
+  },
+  {
+    "case": "target-1",
+    "label": "matched",
+    "record": "3a1f3e075cbd8a2ebf5447091c18b2f6d5bc2dd2bdcc9f942aa15e43e836cf48",
+    "severity": 2,
+    "blast": {
+      "status": "observed",
+      "severity": "MEDIUM",
+      "event_count": 1,
+      "successful_count": 1,
+      "failed_count": 0,
+      "resource_count": 1,
+      "last_observed_at": "2026-01-01T00:00:00Z",
+      "platforms": [
+        {
+          "platform": "gcp",
+          "event_count": 1,
+          "successful_count": 1,
+          "failed_count": 0,
+          "resource_count": 1,
+          "categories": [
+            {
+              "category": "data_access",
+              "count": 1
+            }
+          ],
+          "actions": [
+            {
+              "action": "storage.objects.get",
+              "count": 1
+            }
+          ]
+        }
+      ]
+    },
+    "report": "## Executive Summary\n\nA Google Cloud service account key (fixture) was detected in repository content. The commit timestamp is an estimated exposure start; rotation is not confirmed by this report. Cloud Audit Logs recorded 1 event(s) between 2026-01-01 00:00:00 UTC and 2026-01-01 00:00:00 UTC, the most serious being data access. Overall severity: Medium.\n\n## What Happened\n\n- 2026-01-01 00:00:00 UTC: Get Object (storage.objects.get) on projects/_/buckets/demo/objects/object.\n\n## Business Impact\n\nCloud Audit Logs do not establish billing charges or financial loss. No source IP addresses were available in the collected events. Activity is matched to a service account, not necessarily a particular key. Data Access logs depend on the service and logging configuration.\n\n## Remediation Checklist\n\n1. \u2610 Revoke the exposed credential now: gcloud iam service-accounts keys delete <KEY_ID> --iam-account=<SERVICE_ACCOUNT_EMAIL>\n2. \u2610 Check whether the data that was read (projects/_/buckets/demo/objects/object) contains personal or payment data\n3. \u2610 Review Cloud Audit Logs for any further activity: gcloud logging read 'protoPayload.authenticationInfo.principalEmail=\"<SERVICE_ACCOUNT_EMAIL>\"'\n4. \u2610 Purge the credential from git history (rotation alone leaves it readable in past commits)\n5. \u2610 Enable secret scanning on the repository to catch the next leak before it is pushed\n",
+    "actor_matches_incident": true
+  },
+  {
+    "case": "sibling-0",
+    "label": "different_key",
+    "record": "90deb11b388705570e78d503cb1ecb3c342fc8cc21f518448c2412e3e50fee47",
+    "severity": 2,
+    "blast": {
+      "status": "observed",
+      "severity": "MEDIUM",
+      "event_count": 1,
+      "successful_count": 1,
+      "failed_count": 0,
+      "resource_count": 1,
+      "last_observed_at": "2026-01-01T00:00:00Z",
+      "platforms": [
+        {
+          "platform": "gcp",
+          "event_count": 1,
+          "successful_count": 1,
+          "failed_count": 0,
+          "resource_count": 1,
+          "categories": [
+            {
+              "category": "data_access",
+              "count": 1
+            }
+          ],
+          "actions": [
+            {
+              "action": "storage.objects.get",
+              "count": 1
+            }
+          ]
+        }
+      ]
+    },
+    "report": "## Executive Summary\n\nA Google Cloud service account key (fixture) was detected in repository content. The commit timestamp is an estimated exposure start; rotation is not confirmed by this report. Cloud Audit Logs recorded 1 event(s) between 2026-01-01 00:00:00 UTC and 2026-01-01 00:00:00 UTC, the most serious being data access. Overall severity: Medium.\n\n## What Happened\n\n- 2026-01-01 00:00:00 UTC: Get Object (storage.objects.get) on projects/_/buckets/demo/objects/object.\n\n## Business Impact\n\nCloud Audit Logs do not establish billing charges or financial loss. No source IP addresses were available in the collected events. Activity is matched to a service account, not necessarily a particular key. Data Access logs depend on the service and logging configuration.\n\n## Remediation Checklist\n\n1. \u2610 Revoke the exposed credential now: gcloud iam service-accounts keys delete <KEY_ID> --iam-account=<SERVICE_ACCOUNT_EMAIL>\n2. \u2610 Check whether the data that was read (projects/_/buckets/demo/objects/object) contains personal or payment data\n3. \u2610 Review Cloud Audit Logs for any further activity: gcloud logging read 'protoPayload.authenticationInfo.principalEmail=\"<SERVICE_ACCOUNT_EMAIL>\"'\n4. \u2610 Purge the credential from git history (rotation alone leaves it readable in past commits)\n5. \u2610 Enable secret scanning on the repository to catch the next leak before it is pushed\n",
+    "actor_matches_incident": true
+  },
+  {
+    "case": "sibling-1",
+    "label": "different_key",
+    "record": "c85d6d2f0ac09c6da70e34b68b4a9089951b04f2bf506d92547384cc665b819a",
+    "severity": 2,
+    "blast": {
+      "status": "observed",
+      "severity": "MEDIUM",
+      "event_count": 1,
+      "successful_count": 1,
+      "failed_count": 0,
+      "resource_count": 1,
+      "last_observed_at": "2026-01-01T00:00:00Z",
+      "platforms": [
+        {
+          "platform": "gcp",
+          "event_count": 1,
+          "successful_count": 1,
+          "failed_count": 0,
+          "resource_count": 1,
+          "categories": [
+            {
+              "category": "data_access",
+              "count": 1
+            }
+          ],
+          "actions": [
+            {
+              "action": "storage.objects.get",
+              "count": 1
+            }
+          ]
+        }
+      ]
+    },
+    "report": "## Executive Summary\n\nA Google Cloud service account key (fixture) was detected in repository content. The commit timestamp is an estimated exposure start; rotation is not confirmed by this report. Cloud Audit Logs recorded 1 event(s) between 2026-01-01 00:00:00 UTC and 2026-01-01 00:00:00 UTC, the most serious being data access. Overall severity: Medium.\n\n## What Happened\n\n- 2026-01-01 00:00:00 UTC: Get Object (storage.objects.get) on projects/_/buckets/demo/objects/object.\n\n## Business Impact\n\nCloud Audit Logs do not establish billing charges or financial loss. No source IP addresses were available in the collected events. Activity is matched to a service account, not necessarily a particular key. Data Access logs depend on the service and logging configuration.\n\n## Remediation Checklist\n\n1. \u2610 Revoke the exposed credential now: gcloud iam service-accounts keys delete <KEY_ID> --iam-account=<SERVICE_ACCOUNT_EMAIL>\n2. \u2610 Check whether the data that was read (projects/_/buckets/demo/objects/object) contains personal or payment data\n3. \u2610 Review Cloud Audit Logs for any further activity: gcloud logging read 'protoPayload.authenticationInfo.principalEmail=\"<SERVICE_ACCOUNT_EMAIL>\"'\n4. \u2610 Purge the credential from git history (rotation alone leaves it readable in past commits)\n5. \u2610 Enable secret scanning on the repository to catch the next leak before it is pushed\n",
+    "actor_matches_incident": true
+  },
+  {
+    "case": "missing-0",
+    "label": "unavailable",
+    "record": "1d8bcba369123e98e42825eda07cc93321e1a3166d86e9ba84e2540bbfcb3605",
+    "severity": 2,
+    "blast": {
+      "status": "observed",
+      "severity": "MEDIUM",
+      "event_count": 1,
+      "successful_count": 1,
+      "failed_count": 0,
+      "resource_count": 1,
+      "last_observed_at": "2026-01-01T00:00:00Z",
+      "platforms": [
+        {
+          "platform": "gcp",
+          "event_count": 1,
+          "successful_count": 1,
+          "failed_count": 0,
+          "resource_count": 1,
+          "categories": [
+            {
+              "category": "data_access",
+              "count": 1
+            }
+          ],
+          "actions": [
+            {
+              "action": "storage.objects.get",
+              "count": 1
+            }
+          ]
+        }
+      ]
+    },
+    "report": "## Executive Summary\n\nA Google Cloud service account key (fixture) was detected in repository content. The commit timestamp is an estimated exposure start; rotation is not confirmed by this report. Cloud Audit Logs recorded 1 event(s) between 2026-01-01 00:00:00 UTC and 2026-01-01 00:00:00 UTC, the most serious being data access. Overall severity: Medium.\n\n## What Happened\n\n- 2026-01-01 00:00:00 UTC: Get Object (storage.objects.get) on projects/_/buckets/demo/objects/object.\n\n## Business Impact\n\nCloud Audit Logs do not establish billing charges or financial loss. No source IP addresses were available in the collected events. Activity is matched to a service account, not necessarily a particular key. Data Access logs depend on the service and logging configuration.\n\n## Remediation Checklist\n\n1. \u2610 Revoke the exposed credential now: gcloud iam service-accounts keys delete <KEY_ID> --iam-account=<SERVICE_ACCOUNT_EMAIL>\n2. \u2610 Check whether the data that was read (projects/_/buckets/demo/objects/object) contains personal or payment data\n3. \u2610 Review Cloud Audit Logs for any further activity: gcloud logging read 'protoPayload.authenticationInfo.principalEmail=\"<SERVICE_ACCOUNT_EMAIL>\"'\n4. \u2610 Purge the credential from git history (rotation alone leaves it readable in past commits)\n5. \u2610 Enable secret scanning on the repository to catch the next leak before it is pushed\n",
+    "actor_matches_incident": true
+  },
+  {
+    "case": "missing-1",
+    "label": "unavailable",
+    "record": "124dddc3ac7a00aa2ccf4e6f1f8a37425cabd9632bc3a23a319fe07cbbe0d894",
+    "severity": 2,
+    "blast": {
+      "status": "observed",
+      "severity": "MEDIUM",
+      "event_count": 1,
+      "successful_count": 1,
+      "failed_count": 0,
+      "resource_count": 1,
+      "last_observed_at": "2026-01-01T00:00:00Z",
+      "platforms": [
+        {
+          "platform": "gcp",
+          "event_count": 1,
+          "successful_count": 1,
+          "failed_count": 0,
+          "resource_count": 1,
+          "categories": [
+            {
+              "category": "data_access",
+              "count": 1
+            }
+          ],
+          "actions": [
+            {
+              "action": "storage.objects.get",
+              "count": 1
+            }
+          ]
+        }
+      ]
+    },
+    "report": "## Executive Summary\n\nA Google Cloud service account key (fixture) was detected in repository content. The commit timestamp is an estimated exposure start; rotation is not confirmed by this report. Cloud Audit Logs recorded 1 event(s) between 2026-01-01 00:00:00 UTC and 2026-01-01 00:00:00 UTC, the most serious being data access. Overall severity: Medium.\n\n## What Happened\n\n- 2026-01-01 00:00:00 UTC: Get Object (storage.objects.get) on projects/_/buckets/demo/objects/object.\n\n## Business Impact\n\nCloud Audit Logs do not establish billing charges or financial loss. No source IP addresses were available in the collected events. Activity is matched to a service account, not necessarily a particular key. Data Access logs depend on the service and logging configuration.\n\n## Remediation Checklist\n\n1. \u2610 Revoke the exposed credential now: gcloud iam service-accounts keys delete <KEY_ID> --iam-account=<SERVICE_ACCOUNT_EMAIL>\n2. \u2610 Check whether the data that was read (projects/_/buckets/demo/objects/object) contains personal or payment data\n3. \u2610 Review Cloud Audit Logs for any further activity: gcloud logging read 'protoPayload.authenticationInfo.principalEmail=\"<SERVICE_ACCOUNT_EMAIL>\"'\n4. \u2610 Purge the credential from git history (rotation alone leaves it readable in past commits)\n5. \u2610 Enable secret scanning on the repository to catch the next leak before it is pushed\n",
+    "actor_matches_incident": true
+  },
+  {
+    "case": "malformed-0",
+    "label": "unavailable",
+    "record": "63b9e60b4953eb37effee0848087fb80ab24cbc1c4f4ed07a0356713597f1637",
+    "severity": 2,
+    "blast": {
+      "status": "observed",
+      "severity": "MEDIUM",
+      "event_count": 1,
+      "successful_count": 1,
+      "failed_count": 0,
+      "resource_count": 1,
+      "last_observed_at": "2026-01-01T00:00:00Z",
+      "platforms": [
+        {
+          "platform": "gcp",
+          "event_count": 1,
+          "successful_count": 1,
+          "failed_count": 0,
+          "resource_count": 1,
+          "categories": [
+            {
+              "category": "data_access",
+              "count": 1
+            }
+          ],
+          "actions": [
+            {
+              "action": "storage.objects.get",
+              "count": 1
+            }
+          ]
+        }
+      ]
+    },
+    "report": "## Executive Summary\n\nA Google Cloud service account key (fixture) was detected in repository content. The commit timestamp is an estimated exposure start; rotation is not confirmed by this report. Cloud Audit Logs recorded 1 event(s) between 2026-01-01 00:00:00 UTC and 2026-01-01 00:00:00 UTC, the most serious being data access. Overall severity: Medium.\n\n## What Happened\n\n- 2026-01-01 00:00:00 UTC: Get Object (storage.objects.get) on projects/_/buckets/demo/objects/object.\n\n## Business Impact\n\nCloud Audit Logs do not establish billing charges or financial loss. No source IP addresses were available in the collected events. Activity is matched to a service account, not necessarily a particular key. Data Access logs depend on the service and logging configuration.\n\n## Remediation Checklist\n\n1. \u2610 Revoke the exposed credential now: gcloud iam service-accounts keys delete <KEY_ID> --iam-account=<SERVICE_ACCOUNT_EMAIL>\n2. \u2610 Check whether the data that was read (projects/_/buckets/demo/objects/object) contains personal or payment data\n3. \u2610 Review Cloud Audit Logs for any further activity: gcloud logging read 'protoPayload.authenticationInfo.principalEmail=\"<SERVICE_ACCOUNT_EMAIL>\"'\n4. \u2610 Purge the credential from git history (rotation alone leaves it readable in past commits)\n5. \u2610 Enable secret scanning on the repository to catch the next leak before it is pushed\n",
+    "actor_matches_incident": true
+  },
+  {
+    "case": "malformed-1",
+    "label": "unavailable",
+    "record": "0b1f1098c3319eba2d6ea410f92e7b0279c4fc3ccc6c8dd0c9ace13eda6fa78e",
+    "severity": 2,
+    "blast": {
+      "status": "observed",
+      "severity": "MEDIUM",
+      "event_count": 1,
+      "successful_count": 1,
+      "failed_count": 0,
+      "resource_count": 1,
+      "last_observed_at": "2026-01-01T00:00:00Z",
+      "platforms": [
+        {
+          "platform": "gcp",
+          "event_count": 1,
+          "successful_count": 1,
+          "failed_count": 0,
+          "resource_count": 1,
+          "categories": [
+            {
+              "category": "data_access",
+              "count": 1
+            }
+          ],
+          "actions": [
+            {
+              "action": "storage.objects.get",
+              "count": 1
+            }
+          ]
+        }
+      ]
+    },
+    "report": "## Executive Summary\n\nA Google Cloud service account key (fixture) was detected in repository content. The commit timestamp is an estimated exposure start; rotation is not confirmed by this report. Cloud Audit Logs recorded 1 event(s) between 2026-01-01 00:00:00 UTC and 2026-01-01 00:00:00 UTC, the most serious being data access. Overall severity: Medium.\n\n## What Happened\n\n- 2026-01-01 00:00:00 UTC: Get Object (storage.objects.get) on projects/_/buckets/demo/objects/object.\n\n## Business Impact\n\nCloud Audit Logs do not establish billing charges or financial loss. No source IP addresses were available in the collected events. Activity is matched to a service account, not necessarily a particular key. Data Access logs depend on the service and logging configuration.\n\n## Remediation Checklist\n\n1. \u2610 Revoke the exposed credential now: gcloud iam service-accounts keys delete <KEY_ID> --iam-account=<SERVICE_ACCOUNT_EMAIL>\n2. \u2610 Check whether the data that was read (projects/_/buckets/demo/objects/object) contains personal or payment data\n3. \u2610 Review Cloud Audit Logs for any further activity: gcloud logging read 'protoPayload.authenticationInfo.principalEmail=\"<SERVICE_ACCOUNT_EMAIL>\"'\n4. \u2610 Purge the credential from git history (rotation alone leaves it readable in past commits)\n5. \u2610 Enable secret scanning on the repository to catch the next leak before it is pushed\n",
+    "actor_matches_incident": true
+  },
+  {
+    "case": "unrelated-0",
+    "label": "unavailable",
+    "record": "2f03ac417fd819830f3daf46e58297e0e660eec04e2485c69d3dc379fa8dada6",
+    "severity": 2,
+    "blast": {
+      "status": "observed",
+      "severity": "MEDIUM",
+      "event_count": 1,
+      "successful_count": 1,
+      "failed_count": 0,
+      "resource_count": 1,
+      "last_observed_at": "2026-01-01T00:00:00Z",
+      "platforms": [
+        {
+          "platform": "gcp",
+          "event_count": 1,
+          "successful_count": 1,
+          "failed_count": 0,
+          "resource_count": 1,
+          "categories": [
+            {
+              "category": "data_access",
+              "count": 1
+            }
+          ],
+          "actions": [
+            {
+              "action": "storage.objects.get",
+              "count": 1
+            }
+          ]
+        }
+      ]
+    },
+    "report": "## Executive Summary\n\nA Google Cloud service account key (fixture) was detected in repository content. The commit timestamp is an estimated exposure start; rotation is not confirmed by this report. Cloud Audit Logs recorded 1 event(s) between 2026-01-01 00:00:00 UTC and 2026-01-01 00:00:00 UTC, the most serious being data access. Overall severity: Medium.\n\n## What Happened\n\n- 2026-01-01 00:00:00 UTC: Get Object (storage.objects.get) on projects/_/buckets/demo/objects/object.\n\n## Business Impact\n\nCloud Audit Logs do not establish billing charges or financial loss. No source IP addresses were available in the collected events. Activity is matched to a service account, not necessarily a particular key. Data Access logs depend on the service and logging configuration.\n\n## Remediation Checklist\n\n1. \u2610 Revoke the exposed credential now: gcloud iam service-accounts keys delete <KEY_ID> --iam-account=<SERVICE_ACCOUNT_EMAIL>\n2. \u2610 Check whether the data that was read (projects/_/buckets/demo/objects/object) contains personal or payment data\n3. \u2610 Review Cloud Audit Logs for any further activity: gcloud logging read 'protoPayload.authenticationInfo.principalEmail=\"<SERVICE_ACCOUNT_EMAIL>\"'\n4. \u2610 Purge the credential from git history (rotation alone leaves it readable in past commits)\n5. \u2610 Enable secret scanning on the repository to catch the next leak before it is pushed\n",
+    "actor_matches_incident": false
+  },
+  {
+    "case": "unrelated-1",
+    "label": "unavailable",
+    "record": "23fdfda86f7ed3da500f56a6d2d9c20a7b672d8586d33221c99166d83b426947",
+    "severity": 2,
+    "blast": {
+      "status": "observed",
+      "severity": "MEDIUM",
+      "event_count": 1,
+      "successful_count": 1,
+      "failed_count": 0,
+      "resource_count": 1,
+      "last_observed_at": "2026-01-01T00:00:00Z",
+      "platforms": [
+        {
+          "platform": "gcp",
+          "event_count": 1,
+          "successful_count": 1,
+          "failed_count": 0,
+          "resource_count": 1,
+          "categories": [
+            {
+              "category": "data_access",
+              "count": 1
+            }
+          ],
+          "actions": [
+            {
+              "action": "storage.objects.get",
+              "count": 1
+            }
+          ]
+        }
+      ]
+    },
+    "report": "## Executive Summary\n\nA Google Cloud service account key (fixture) was detected in repository content. The commit timestamp is an estimated exposure start; rotation is not confirmed by this report. Cloud Audit Logs recorded 1 event(s) between 2026-01-01 00:00:00 UTC and 2026-01-01 00:00:00 UTC, the most serious being data access. Overall severity: Medium.\n\n## What Happened\n\n- 2026-01-01 00:00:00 UTC: Get Object (storage.objects.get) on projects/_/buckets/demo/objects/object.\n\n## Business Impact\n\nCloud Audit Logs do not establish billing charges or financial loss. No source IP addresses were available in the collected events. Activity is matched to a service account, not necessarily a particular key. Data Access logs depend on the service and logging configuration.\n\n## Remediation Checklist\n\n1. \u2610 Revoke the exposed credential now: gcloud iam service-accounts keys delete <KEY_ID> --iam-account=<SERVICE_ACCOUNT_EMAIL>\n2. \u2610 Check whether the data that was read (projects/_/buckets/demo/objects/object) contains personal or payment data\n3. \u2610 Review Cloud Audit Logs for any further activity: gcloud logging read 'protoPayload.authenticationInfo.principalEmail=\"<SERVICE_ACCOUNT_EMAIL>\"'\n4. \u2610 Purge the credential from git history (rotation alone leaves it readable in past commits)\n5. \u2610 Enable secret scanning on the repository to catch the next leak before it is pushed\n",
+    "actor_matches_incident": false
+  },
+  {
+    "case": "no_association-0",
+    "label": null,
+    "record": "401f3b7ad921e80168aae8f05c628189165eb3e5651eb742b1e7223dc00f0f26",
+    "severity": 2,
+    "blast": {
+      "status": "observed",
+      "severity": "MEDIUM",
+      "event_count": 1,
+      "successful_count": 1,
+      "failed_count": 0,
+      "resource_count": 1,
+      "last_observed_at": "2026-01-01T00:00:00Z",
+      "platforms": [
+        {
+          "platform": "gcp",
+          "event_count": 1,
+          "successful_count": 1,
+          "failed_count": 0,
+          "resource_count": 1,
+          "categories": [
+            {
+              "category": "data_access",
+              "count": 1
+            }
+          ],
+          "actions": [
+            {
+              "action": "storage.objects.get",
+              "count": 1
+            }
+          ]
+        }
+      ]
+    },
+    "report": "## Executive Summary\n\nA Google Cloud service account key (fixture) was detected in repository content. The commit timestamp is an estimated exposure start; rotation is not confirmed by this report. Cloud Audit Logs recorded 1 event(s) between 2026-01-01 00:00:00 UTC and 2026-01-01 00:00:00 UTC, the most serious being data access. Overall severity: Medium.\n\n## What Happened\n\n- 2026-01-01 00:00:00 UTC: Get Object (storage.objects.get) on projects/_/buckets/demo/objects/object.\n\n## Business Impact\n\nCloud Audit Logs do not establish billing charges or financial loss. No source IP addresses were available in the collected events. Activity is matched to a service account, not necessarily a particular key. Data Access logs depend on the service and logging configuration.\n\n## Remediation Checklist\n\n1. \u2610 Revoke the exposed credential now: gcloud iam service-accounts keys delete <KEY_ID> --iam-account=<SERVICE_ACCOUNT_EMAIL>\n2. \u2610 Check whether the data that was read (projects/_/buckets/demo/objects/object) contains personal or payment data\n3. \u2610 Review Cloud Audit Logs for any further activity: gcloud logging read 'protoPayload.authenticationInfo.principalEmail=\"<SERVICE_ACCOUNT_EMAIL>\"'\n4. \u2610 Purge the credential from git history (rotation alone leaves it readable in past commits)\n5. \u2610 Enable secret scanning on the repository to catch the next leak before it is pushed\n",
+    "actor_matches_incident": true
+  },
+  {
+    "case": "no_association-1",
+    "label": null,
+    "record": "17f307e54ee1d9b5d6585225b3f92af6cf31d08d9a34e4464c12b7a8ff158415",
+    "severity": 2,
+    "blast": {
+      "status": "observed",
+      "severity": "MEDIUM",
+      "event_count": 1,
+      "successful_count": 1,
+      "failed_count": 0,
+      "resource_count": 1,
+      "last_observed_at": "2026-01-01T00:00:00Z",
+      "platforms": [
+        {
+          "platform": "gcp",
+          "event_count": 1,
+          "successful_count": 1,
+          "failed_count": 0,
+          "resource_count": 1,
+          "categories": [
+            {
+              "category": "data_access",
+              "count": 1
+            }
+          ],
+          "actions": [
+            {
+              "action": "storage.objects.get",
+              "count": 1
+            }
+          ]
+        }
+      ]
+    },
+    "report": "## Executive Summary\n\nA Google Cloud service account key (fixture) was detected in repository content. The commit timestamp is an estimated exposure start; rotation is not confirmed by this report. Cloud Audit Logs recorded 1 event(s) between 2026-01-01 00:00:00 UTC and 2026-01-01 00:00:00 UTC, the most serious being data access. Overall severity: Medium.\n\n## What Happened\n\n- 2026-01-01 00:00:00 UTC: Get Object (storage.objects.get) on projects/_/buckets/demo/objects/object.\n\n## Business Impact\n\nCloud Audit Logs do not establish billing charges or financial loss. No source IP addresses were available in the collected events. Activity is matched to a service account, not necessarily a particular key. Data Access logs depend on the service and logging configuration.\n\n## Remediation Checklist\n\n1. \u2610 Revoke the exposed credential now: gcloud iam service-accounts keys delete <KEY_ID> --iam-account=<SERVICE_ACCOUNT_EMAIL>\n2. \u2610 Check whether the data that was read (projects/_/buckets/demo/objects/object) contains personal or payment data\n3. \u2610 Review Cloud Audit Logs for any further activity: gcloud logging read 'protoPayload.authenticationInfo.principalEmail=\"<SERVICE_ACCOUNT_EMAIL>\"'\n4. \u2610 Purge the credential from git history (rotation alone leaves it readable in past commits)\n5. \u2610 Enable secret scanning on the repository to catch the next leak before it is pushed\n",
+    "actor_matches_incident": true
+  }
+]

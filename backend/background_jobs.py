@@ -97,12 +97,20 @@ def process_one() -> bool:
     finally:
         done.set()
     with SessionLocal() as db:
-        job = db.query(BackgroundJob).filter_by(id=job_id, status='running', lease_token=token).first()
+        job = db.query(BackgroundJob).filter_by(id=job_id, status='running', lease_token=token).with_for_update().first()
         if job is None:
             return True
         now = datetime.now(timezone.utc)
         job.lease_token, job.lease_until, job.updated_at = None, None, now
-        if error is None:
+        if job.kind in ('auto_refresh', 'incident_auto_refresh') and not job.payload.get('enabled'):
+            job.status, job.last_error = 'complete', None
+            if result is not None:
+                job.result = result
+        elif error is None and job.kind in ('auto_refresh', 'incident_auto_refresh'):
+            job.status, job.result, job.last_error = 'queued', result, None
+            job.attempts = 0
+            job.available_at = now + timedelta(minutes=job.payload['interval_minutes'])
+        elif error is None:
             job.status, job.result, job.last_error = 'complete', result, None
         elif job.attempts < job.max_attempts:
             job.status, job.last_error = 'queued', error
@@ -121,6 +129,12 @@ def process_one() -> bool:
 
 
 def dispatch(kind: str, payload: dict) -> dict:
+    if kind == 'incident_auto_refresh':
+        from auto_refresh import schedule_one_incident
+        return schedule_one_incident(payload['incident_id'])
+    if kind == 'auto_refresh':
+        from auto_refresh import schedule_incidents
+        return schedule_incidents(payload['organisation_id'])
     if kind == 'snapshot':
         from repository_snapshot import scan_github
         from repository_snapshot import repository_name
@@ -213,6 +227,8 @@ def _purge_expired_welcome_secrets() -> None:
 def start_workers() -> None:
     if any(thread.is_alive() for thread in _threads):
         return
+    from auto_refresh import migrate_legacy_schedules
+    migrate_legacy_schedules()
     _stop.clear()
     _threads.clear()
     for index in range(2):

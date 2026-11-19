@@ -97,6 +97,8 @@ export interface IncidentRecord {
   azure_secret_occurrences?: { commit_hash: string; observed_at: string }[]
   gcp_key_association?: { key_hint: string; recorded_by: string | null; recorded_at: string; verification: string } | null
   gcp_record_correlation?: { raw_record_count: number; group_count: number; grouped_record_count: number; ungrouped_record_count: number; groups: { kind: 'provider_operation' | 'client_invocation'; confidence: 'high' | 'medium'; record_count: number; successful_count: number; failed_count: number; first_seen: string; last_seen: string; actions: { action: string; count: number }[]; event_ids: string[] }[] } | null
+  aws_record_correlation?: { raw_record_count: number; group_count: number; grouped_record_count: number; ungrouped_record_count: number; groups: { kind: 'copy_source_read'; confidence: 'medium'; record_count: number; successful_count: number; failed_count: number; first_seen: string; last_seen: string; actions: { action: string; count: number }[]; event_ids: string[] }[] } | null
+  aws_collection_coverage?: { record_count: number; management_records: number; data_records: number; unknown_records: number; imported_records: number; current_trail_configuration: 'configured' | 'not_configured' | 'unavailable' } | null
   gcp_classification_coverage?: { record_count: number; classified_count: number; unclassified_count: number } | null
   dynamic_blast_radius?: DynamicBlastRadius | null
   remediation_steps: string[]

@@ -1,0 +1,5 @@
+# Frozen exploratory fixture pilot
+
+Scope: development-only, inert GCP identity fixtures. No held-out or native cases, no field-frequency inference and no inference to real incidents. Freeze before running.
+
+Three same-principal records: key A, key B, absent key. A is target. Evaluate frozen event_attribution using identical provider-shaped inputs. Baselines: always abstain; principal/time returns target for each record; native exact key field returns target for A, other for B, unknown if absent. The case constructor is the independent fixture truth generator, not a native ledger or independent reviewer. Output label rubric: matched -> target, different_key -> other, unavailable/null -> unknown. Both actions occur inside the same UTC window. Primary counts: correct target yield 1 denominator, wrong-key assertions 1 denominator; unknown excluded from wrong-key denominator and reported separately. This is a three-record mechanism check, not a claim of statistical performance. No threshold tuning or intervals. EXP-01 persistence and native acquisition and EXP-03 surface capture are not completed by this check.

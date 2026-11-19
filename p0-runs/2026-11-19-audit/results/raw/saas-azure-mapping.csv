@@ -1,0 +1,10 @@
+case,provider,mode,explicit_source_status,mapped_success,persisted_success,mapped_operation,principal_present,normalized_source_record_id_present,source_id_in_raw_evidence,exact_key_identifier_in_fixture
+azure_success,azure,activity_log,True,True,True,Microsoft.Example/read,True,False,True,False
+azure_missing_status,azure,activity_log,False,True,True,Microsoft.Example/read,True,False,True,False
+stripe_success,stripe,events,True,True,True,payment_intent.succeeded,True,False,True,False
+stripe_failed,stripe,events,True,False,False,payment_intent.payment_failed,True,False,True,False
+twilio_sent,twilio,messages,True,True,True,message.sent,True,False,True,False
+twilio_missing_status,twilio,messages,False,True,True,message.sent,True,False,True,False
+twilio_call_complete,twilio,calls,True,True,True,call.completed,True,False,True,False
+twilio_call_failed,twilio,calls,True,False,False,call.failed,True,False,True,False
+twilio_monitor,twilio,monitor,False,True,True,fixture.event,True,False,True,False

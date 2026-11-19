@@ -36,6 +36,17 @@ dist/
 
 # ── Data files (SecretBench CSV and experiment outputs) ────────────────────────
 /data/
+/research/dataset/corpus/
+/research/evaluation/results.md
+/research/evaluation/results.csv
+/research/evaluation/results.json
+/research/evaluation/ablation.json
+/research/evaluation/creddata-results.json
+/research/evaluation/creddata-gap.json
+/research/evaluation/snapshot-results.json
+/research/evaluation/snapshot-results.md
+/research/weights/learned_weights.json
+/research/weights/calibration.png
 
 # ── OS ─────────────────────────────────────────────────────────────────────────
 .DS_Store

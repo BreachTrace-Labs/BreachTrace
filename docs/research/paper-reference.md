@@ -34,7 +34,7 @@ Secret detection remains an active measurement problem. A comparison of nine too
 
 BreachTrace has two GitHub-related entry points with different semantics:
 
-1. **Current repository snapshot.** An operator submits a GitHub repository URL. The backend resolves the default branch to a commit, downloads a bounded archive, and scans eligible text files without executing repository code. This produces a snapshot finding in Connect. It does not create a Monitor incident, infer the first exposure time, scan all Git history, or start provider forensics.
+1. **Current repository snapshot.** An operator submits a GitHub repository URL. The backend resolves the default branch to a commit, downloads a bounded archive, and scans eligible text files without executing repository code. This produces a snapshot finding in Connect. An operator may add it to Monitor as a detection-only record. The snapshot does not infer the first exposure time, scan all Git history, or start provider forensics.
 2. **Future push monitoring.** GitHub sends a push delivery to `/webhook/github`. The route remains unauthenticated by JWT; the delivery is verified using the configured HMAC signature. The backend scans added lines from commits in the payload and may create an incident for a qualifying match. Registering a webhook does not backfill old commits.
 
 In the push workflow, the commit timestamp is recorded as the estimated `exposure_start`. It is not verified as the time the key first became accessible to an adversary. It does not reconstruct branch ancestry, public/private visibility transitions, forks, clones, cached copies, or earlier occurrences in history. A private push can trigger an incident even though it does not establish public exposure.
@@ -104,7 +104,7 @@ Twilio requires account context: an `SK` SID identifies an API key, while an `AC
 
 1. An administrator creates the initial organization and user, signs in, creates or selects a project, and assigns project members/roles.
 2. The administrator connects a GitHub repository and registers a push webhook. The webhook secret is project-specific and encrypted at rest. GitHub’s delivery is authenticated through HMAC on the unauthenticated webhook route, not through the user’s JWT.
-3. A future signed push with a matching credential in added content creates an incident. A manual repository scan is a separate snapshot-only workflow and does not create a Monitor incident.
+3. A future signed push with a matching credential in added content creates an incident. A manual repository scan is a separate snapshot workflow; a user can explicitly add a finding as a detection-only Monitor record.
 4. Monitor shows incidents after the webhook pipeline sees qualifying content. Incident detail shows the masked candidate, estimated commit exposure time, collection status, report, timeline and available impact fields. Pre-exposure records are labelled as context; post-exposure evidence drives severity and impact.
 5. Administrators/security leads may refresh supported logs, associate an Azure application ID or Twilio account SID where needed, assign an incident, dismiss it with an audited action, and export a PDF. Association is an operator assertion and is not provider proof of key ownership.
 6. Project email/Slack destinations can receive best-effort incident notices. Organization/incident audit views record selected investigation and administration actions. Notification delivery has no durable retry queue in this branch.

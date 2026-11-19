@@ -108,6 +108,7 @@ AWS_API_TAXONOMY = {
     "s3:GetObjectVersion": {"category": "data_access", "severity": 3, "label": "Read Object Version"},
     "s3:SelectObjectContent": {"category": "data_access", "severity": 3, "label": "Query Object"},
     "s3:GetObjectTagging": {"category": "data_access", "severity": 2, "label": "Object Tags"},
+    "s3:CopyObject": {"category": "data_access", "severity": 3, "label": "Copy Object"},
 
     "dynamodb:GetItem": {"category": "data_access", "severity": 3, "label": "Get Item"},
     "dynamodb:Query": {"category": "data_access", "severity": 3, "label": "Query Table"},
@@ -210,7 +211,6 @@ AWS_API_TAXONOMY = {
     # Single GetObject × N is handled by the bulk-escalation rule in rules.py.
     "dynamodb:ExportTableToPointInTime": {"category": "exfiltration", "severity": 4, "label": "Export Table to S3"},
     "dynamodb:BatchGetItem": {"category": "exfiltration", "severity": 4, "label": "Bulk Get Items"},
-    "s3:CopyObject": {"category": "exfiltration", "severity": 3, "label": "Copy Object"},
     "rds:CopyDBSnapshot": {"category": "exfiltration", "severity": 4, "label": "Copy DB Snapshot"},
     "ec2:CopySnapshot": {"category": "exfiltration", "severity": 3, "label": "Copy Volume Snapshot"},
     "glacier:InitiateJob": {"category": "exfiltration", "severity": 4, "label": "Glacier Archive Retrieval"},

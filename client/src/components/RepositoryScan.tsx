@@ -2,14 +2,14 @@ import { useEffect, useRef, useState } from 'react'
 import { realClient as api } from '@/api/client'
 import { Button } from '@/components/ui/button'
 
-type Scan = { scan_id: string; status: string; error?: string; result?: {
+type Scan = { scan_id: string; status: string; error?: string; possible_matches?: Record<string, string>; project_compatible?: boolean; result?: {
   repo_url: string; branch: string;
   revision: string; files_scanned: number; duration_s: number; finding_count: number;
   complete: boolean; stopped_reason?: string; skipped: Record<string, number>; archive_skipped: Record<string, number>;
   findings: { path: string; line_number: number; line_end?: number; credential_type: string; credential_hint: string; fingerprint: string; detection_method?: string; confidence?: string | null }[];
 } }
 
-export default function RepositoryScan({ repoUrl, onRepoUrlChange, trigger = 0 }: { repoUrl: string; onRepoUrlChange: (url: string) => void; trigger?: number }) {
+export default function RepositoryScan({ repoUrl, onRepoUrlChange, trigger = 0, projectId }: { repoUrl: string; onRepoUrlChange: (url: string) => void; trigger?: number; projectId: string | null }) {
   const [scan, setScan] = useState<Scan | null>(null)
   const [error, setError] = useState('')
   const [starting, setStarting] = useState(false)
@@ -17,6 +17,9 @@ export default function RepositoryScan({ repoUrl, onRepoUrlChange, trigger = 0 }
   const pollTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const alive = useRef(true)
   const busy = useRef(false)
+  const projectRef = useRef(projectId)
+  projectRef.current = projectId
+  const [adding, setAdding] = useState<string | null>(null)
   useEffect(() => { alive.current = true; return () => { alive.current = false; if (pollTimer.current) clearTimeout(pollTimer.current) } }, [])
   useEffect(() => {
     const savedId = localStorage.getItem('bt_last_snapshot_scan')
@@ -41,7 +44,7 @@ export default function RepositoryScan({ repoUrl, onRepoUrlChange, trigger = 0 }
   }
   async function poll(id: string) {
     try {
-      const { data } = await api.get<Scan>(`/repositories/scans/${id}`)
+      const { data } = await api.get<Scan>(`/repositories/scans/${id}`, { params: projectRef.current ? { project_id: projectRef.current } : {} })
       if (!alive.current) return
       setStarting(false); setError('')
       setScan(data)
@@ -63,6 +66,24 @@ export default function RepositoryScan({ repoUrl, onRepoUrlChange, trigger = 0 }
     }
   }
   useEffect(() => {
+    if (scan?.status === 'complete') void poll(scan.scan_id)
+    // Refresh possible matches when the selected project changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [projectId])
+
+  async function addFinding(fingerprint: string) {
+    if (!scan || !projectId || adding) return
+    setAdding(fingerprint); setError('')
+    try {
+      await api.post(`/repositories/scans/${scan.scan_id}/findings/${fingerprint}/incident`, { project_id: projectId })
+      await poll(scan.scan_id)
+    } catch (err) {
+      const detail = (err as { response?: { data?: { detail?: unknown } } }).response?.data?.detail
+      setError(typeof detail === 'string' ? detail : 'Could not add this finding to Monitor.')
+      if ((err as { response?: { status?: number } }).response?.status === 409) await poll(scan.scan_id)
+    } finally { setAdding(null) }
+  }
+  useEffect(() => {
     if (trigger > lastTrigger.current) { lastTrigger.current = trigger; void start() }
     // A trigger represents a successfully connected repository. Editing the URL
     // must not start another download by itself.
@@ -72,7 +93,7 @@ export default function RepositoryScan({ repoUrl, onRepoUrlChange, trigger = 0 }
   return <section className="border rounded-xl bg-card p-6 space-y-4">
     <h2 className="text-lg font-semibold">Scan a repository</h2>
     <p className="text-sm">Paste a GitHub repository URL to check the current default branch for credential candidates. Private repositories require GitHub access configured on the backend.</p>
-    <p className="text-sm text-muted-foreground">Snapshot findings appear here for review. They do not create Monitor incidents or start provider log collection. To monitor future pushes, register the webhook below.</p>
+    <p className="text-sm text-muted-foreground">Review snapshot findings here and add them to Monitor. Adding a finding does not start provider collection because the exposure time is unknown. To monitor future pushes, register the webhook below.</p>
     <form onSubmit={event => { event.preventDefault(); void start() }} className="space-y-2">
       <label htmlFor="scan-repository-url" className="block text-sm font-medium">Repository URL</label>
       <div className="flex flex-col sm:flex-row gap-2">
@@ -95,13 +116,16 @@ export default function RepositoryScan({ repoUrl, onRepoUrlChange, trigger = 0 }
         <p className="break-all">Revision: {scan.result.revision}</p>
         {!scan.result.complete && <p>Partial scan: {scan.result.stopped_reason ?? 'some files or decoding steps could not be completed'}.</p>}
         <p>Skipped: {JSON.stringify({ ...scan.result.skipped, ...scan.result.archive_skipped })}</p>
-        <p>These are snapshot results, not Monitor incidents. Findings are unverified and do not establish when a credential was first exposed. Review the linked files and rotate any real exposed credential.</p>
+        <p>Findings are unverified and do not establish when a credential was first exposed. Added findings are detection-only incidents. Review the linked files and rotate any real exposed credential.</p>
+        {!scan.project_compatible && <p>Select the project connected to this repository to add findings to Monitor.</p>}
         <div className="max-h-96 overflow-auto space-y-2">{scan.result.findings.map(f => <div key={f.fingerprint} className="border-t pt-2 break-all">
           <a className="font-mono underline" target="_blank" rel="noopener noreferrer"
             href={`${scan.result!.repo_url}/blob/${scan.result!.revision}/${f.path.split('/').map(encodeURIComponent).join('/')}#L${f.line_number}`}>
             {f.path}:{f.line_number}
           </a><p>{f.credential_type} · {f.credential_hint}</p>
           {f.detection_method && <p className="text-xs text-[var(--color-muted-foreground)]">{f.detection_method}{f.confidence ? ` · ${f.confidence} confidence` : ''} · validity not verified{f.line_end && f.line_end > f.line_number ? ` · spans lines ${f.line_number}–${f.line_end}` : ''}</p>}
+          {scan.project_compatible && (scan.possible_matches?.[f.fingerprint] ? <a className="text-sm underline" href={`/incidents/${scan.possible_matches[f.fingerprint]}`}>Review possible existing incident</a> : <Button size="sm" variant="outline" disabled={!!adding} onClick={() => void addFinding(f.fingerprint)}>{adding === f.fingerprint ? 'Adding…' : 'Add to Monitor'}</Button>)}
+          {scan.possible_matches?.[f.fingerprint] && <p className="text-xs text-muted-foreground">The masked hint matches; review the incident because hints can match different keys.</p>}
         </div>)}</div>
       </>}
     </div>}

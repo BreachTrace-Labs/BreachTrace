@@ -1,0 +1,151 @@
+{
+  "source_mode": "fixture",
+  "boundary": "GCP mapper; incident route function; report helpers",
+  "independent_review": "pending",
+  "timeline": [
+    {
+      "event_id": "a6fde88b-ac91-427d-8356-7ab30149d944",
+      "source_record_id": "6c14417a639a55cc7607b7326299e4f222b0a0850b0475fea9769649c2637469",
+      "platform": "gcp",
+      "timestamp": "2026-01-01T00:00:00",
+      "api_action": "storage.objects.get",
+      "event_source": "storage.googleapis.com",
+      "source_ip": null,
+      "user_agent": null,
+      "affected_resource": "projects/_/buckets/demo/objects/object",
+      "resource_type": "gcs_bucket",
+      "success": true,
+      "error_code": null,
+      "is_denied": false,
+      "impact_category": null,
+      "severity_weight": null,
+      "principal_id": "worker@demo.iam.gserviceaccount.com",
+      "location": null,
+      "raw_data": {
+        "serviceName": "storage.googleapis.com",
+        "methodName": "storage.objects.get",
+        "resourceName": "projects/_/buckets/demo/objects/object",
+        "authenticationInfo": {
+          "principalEmail": "worker@demo.iam.gserviceaccount.com",
+          "serviceAccountKeyName": "//iam.googleapis.com/projects/demo/serviceAccounts/worker@demo.iam.gserviceaccount.com/keys/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        },
+        "status": {
+          "code": 0
+        },
+        "_gcp_log_entry": {
+          "insert_id": "target",
+          "log_name": "projects/demo/logs/audit",
+          "timestamp_precise": "2026-01-01T00:00:00.000000000Z"
+        }
+      },
+      "gcp_key_attribution": "matched"
+    },
+    {
+      "event_id": "daa426b5-22bb-4d81-97aa-43caff977a5b",
+      "source_record_id": "914c5e611e0cb1b5f5db36103dfc87cbd21142106d80d6f3f96ba5485b16926a",
+      "platform": "gcp",
+      "timestamp": "2026-01-01T00:00:00",
+      "api_action": "storage.objects.get",
+      "event_source": "storage.googleapis.com",
+      "source_ip": null,
+      "user_agent": null,
+      "affected_resource": "projects/_/buckets/demo/objects/object",
+      "resource_type": "gcs_bucket",
+      "success": true,
+      "error_code": null,
+      "is_denied": false,
+      "impact_category": null,
+      "severity_weight": null,
+      "principal_id": "worker@demo.iam.gserviceaccount.com",
+      "location": null,
+      "raw_data": {
+        "serviceName": "storage.googleapis.com",
+        "methodName": "storage.objects.get",
+        "resourceName": "projects/_/buckets/demo/objects/object",
+        "authenticationInfo": {
+          "principalEmail": "worker@demo.iam.gserviceaccount.com",
+          "serviceAccountKeyName": "//iam.googleapis.com/projects/demo/serviceAccounts/worker@demo.iam.gserviceaccount.com/keys/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        },
+        "status": {
+          "code": 0
+        },
+        "_gcp_log_entry": {
+          "insert_id": "sibling",
+          "log_name": "projects/demo/logs/audit",
+          "timestamp_precise": "2026-01-01T00:00:00.000000000Z"
+        }
+      },
+      "gcp_key_attribution": "different_key"
+    }
+  ],
+  "blast_radius": {
+    "status": "observed",
+    "severity": null,
+    "event_count": 2,
+    "successful_count": 2,
+    "failed_count": 0,
+    "resource_count": 1,
+    "last_observed_at": "2026-01-01T00:00:00Z",
+    "platforms": [
+      {
+        "platform": "gcp",
+        "event_count": 2,
+        "successful_count": 2,
+        "failed_count": 0,
+        "resource_count": 1,
+        "categories": [
+          {
+            "category": "unclassified",
+            "count": 2
+          }
+        ],
+        "actions": [
+          {
+            "action": "storage.objects.get",
+            "count": 2
+          }
+        ]
+      }
+    ]
+  },
+  "persisted_severity": "Low",
+  "fact_sheet": {
+    "platform": "gcp",
+    "platform_name": "Google Cloud",
+    "audit_log": "Cloud Audit Logs",
+    "credential_type": "gcp_service_account",
+    "credential_hint": null,
+    "severity": "Low",
+    "exposure_seconds": 0,
+    "exposure_duration": "0 seconds",
+    "event_count": 2,
+    "failed_count": 0,
+    "first_event": "2026-01-01 00:00:00 UTC",
+    "last_event": "2026-01-01 00:00:00 UTC",
+    "categories": {},
+    "actions": [
+      {
+        "action": "storage.objects.get",
+        "label": "Get Object",
+        "category": null,
+        "severity_weight": 0,
+        "count": 2,
+        "failed": 0,
+        "first_seen": "2026-01-01 00:00:00 UTC",
+        "resources": [
+          "projects/_/buckets/demo/objects/object"
+        ]
+      }
+    ],
+    "other_action_count": 0,
+    "resources": [
+      "projects/_/buckets/demo/objects/object"
+    ],
+    "source_ips": [],
+    "financial": [],
+    "financial_limit": "Cloud Audit Logs do not establish billing charges or financial loss.",
+    "compliance": [],
+    "blind_spot": "Activity is matched to a service account, not necessarily a particular key. Data Access logs depend on the service and logging configuration."
+  },
+  "deterministic_report": "## Executive Summary\n\nA Google Cloud service account key was detected in repository content. The commit timestamp is an estimated exposure start; rotation is not confirmed by this report. Cloud Audit Logs recorded 2 event(s) between 2026-01-01 00:00:00 UTC and 2026-01-01 00:00:00 UTC. Overall severity: Low.\n\n## What Happened\n\n- 2026-01-01 00:00:00 UTC: Get Object (storage.objects.get), 2 times on projects/_/buckets/demo/objects/object.\n\n## Business Impact\n\nCloud Audit Logs do not establish billing charges or financial loss. No source IP addresses were available in the collected events. Activity is matched to a service account, not necessarily a particular key. Data Access logs depend on the service and logging configuration.\n\n## Remediation Checklist\n\n1. \u2610 Revoke the exposed credential now: gcloud iam service-accounts keys delete <KEY_ID> --iam-account=<SERVICE_ACCOUNT_EMAIL>\n2. \u2610 Review Cloud Audit Logs for any further activity: gcloud logging read 'protoPayload.authenticationInfo.principalEmail=\"<SERVICE_ACCOUNT_EMAIL>\"'\n3. \u2610 Purge the credential from git history (rotation alone leaves it readable in past commits)\n4. \u2610 Enable secret scanning on the repository to catch the next leak before it is pushed\n"
+}

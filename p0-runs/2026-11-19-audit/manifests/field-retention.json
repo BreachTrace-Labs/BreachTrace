@@ -1,0 +1,45 @@
+{
+  "experiment_id": "EXP-01",
+  "run_id": "field-retention-fixture-001",
+  "attempt": 1,
+  "git_commit": "7fffd136b8733cfe6e091d3c15caa7f1ff377dff",
+  "source_mode": "fixture",
+  "provider": "gcp and aws",
+  "validation": "partial",
+  "start_utc": null,
+  "end_utc": null,
+  "failure_status": "none",
+  "timing_reason": "execution timestamps not captured; cannot reconstruct",
+  "artifacts": [
+    {
+      "path": "protocols/field-retention-v1.md",
+      "sha256": "f414fbfcb56bd35cda6021893079f65cc263cece2aec5f63e292f08068c9e60d",
+      "access": "synthetic"
+    },
+    {
+      "path": "reproducibility/field_retention.py",
+      "sha256": "9f50a18c353e13c6bc254bd87a730e68a2e743cbbed69e68211de9fe8cee421b",
+      "access": "synthetic"
+    },
+    {
+      "path": "results/raw/field-retention.csv",
+      "sha256": "8d5ed2d17575dbeb03f83e4b054c6e2ccbdb5e950aae717522854a096865c3a2",
+      "access": "synthetic"
+    },
+    {
+      "path": "tables/field-retention.csv",
+      "sha256": "4501777a61ea8cc2ceb0a4fcf8bdc187390083703627829a390f9c1df9e181a6",
+      "access": "synthetic"
+    },
+    {
+      "path": "reproducibility/field-retention.json",
+      "sha256": "8645bf5783a5996010b73f84cab91d3d573415f290df9faf87abe6b057a7d7a8",
+      "access": "synthetic"
+    }
+  ],
+  "limitations": [
+    "No native action ledger, acquisition, independent review or source field validation.",
+    "Source outcome absent on AWS fixtures; success derived by mapper.",
+    "The first run script hash was not captured before adding output path option."
+  ]
+}

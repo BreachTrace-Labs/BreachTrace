@@ -97,9 +97,9 @@ CRITICAL_CATEGORIES = {"privilege_escalation", "exfiltration", "code_compromise"
 
 
 def impact_evidence(events):
-    """Failed GCP operations are attempts, not evidence of completed impact."""
+    """Failed AWS and GCP operations are attempts, not completed impact."""
     return [event for event in events
-            if getattr(event, 'platform', None) != 'gcp' or getattr(event, 'success', None) is True]
+            if getattr(event, 'platform', None) not in ('aws', 'gcp') or getattr(event, 'success', None) is True]
 
 
 def score_incident(events: list[ForensicEvent]) -> str:

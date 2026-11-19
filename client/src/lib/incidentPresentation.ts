@@ -4,6 +4,7 @@ type Incident = {
   platform?: string | null; credential_type?: string | null; forensic_tier?: number | null
   repo_url?: string; commit_hash?: string; status?: string
   exposure_start?: string | null; exposure_end?: string | null
+  unavailable_reason?: string | null
 }
 export type IncidentFilter = Platform | 'all' | 'ai' | 'other'
 
@@ -29,6 +30,7 @@ export function completeLabel(incident: Incident): string {
 
 export function exposureLabel(incident: Incident): string {
   if (isSyntheticIncident(incident)) return 'Demo credential'
+  if (incident.unavailable_reason?.startsWith('Snapshot observation:')) return 'Exposure start unknown'
   return incident.exposure_end ? 'Closure recorded' : 'Closure not confirmed'
 }
 

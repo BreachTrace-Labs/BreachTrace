@@ -1,0 +1,3 @@
+# GCP pipeline development replay v1
+
+Register before execution. One inert case includes target A and sibling B under the same principal, same operation, timestamp, outcome, and resource. Stub only provider acquisition and project reader; map two native-shaped fixture records through the existing mapper and feed them into the frozen collection pipeline. Use isolated in-memory SQLite, fixed pipeline clock, no network, model writer or indexing. Capture the pipeline-produced fact sheet, persisted report and severity, and incident-detail route response. No historical or native-source inference; the collector stub ignores pagination and source configuration. Scope assertion adjudication requires independent reviewers. Prior helper replay is preserved separately.

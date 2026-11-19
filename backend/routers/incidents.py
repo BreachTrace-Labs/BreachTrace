@@ -30,7 +30,7 @@ from auth import get_active_user, require_admin_or_lead, require_single_organisa
 from audit import public as audit_public, record
 from db.crud import get_incident, list_incidents
 from db.database import get_db
-from db.models import AuditLog, AzureSecretOccurrence, ExposureObservation, GCPKeyAssociation, CREDENTIAL_TYPE_TO_PLATFORM, ExperimentRun, IncidentRecord, ProjectMember, User, ForensicEvent as StoredEvent
+from db.models import AuditLog, AzureSecretOccurrence, BackgroundJob, ExposureObservation, GCPKeyAssociation, CREDENTIAL_TYPE_TO_PLATFORM, ExperimentRun, IncidentRecord, ProjectMember, User, ForensicEvent as StoredEvent
 from normalizer.time_window import after_exposure, within_exposure
 from routers.settings import local_operator
 from pipeline import run_collection_pipeline
@@ -65,6 +65,7 @@ _SEVERITY_STR_TO_INT: dict[str, int] = {
 
 class ForensicEventOut(BaseModel):
     event_id: str
+    source_record_id: Optional[str] = None
     platform: str
     timestamp: datetime
     api_action: str
@@ -92,7 +93,15 @@ class ForensicEventOut(BaseModel):
     @field_validator("raw_data", mode="before")
     @classmethod
     def redact_raw_data(cls, value):
-        return redact(value or {})
+        import json
+        raw = dict(value or {})
+        embedded = raw.get('CloudTrailEvent')
+        if isinstance(embedded, str):
+            try:
+                raw['CloudTrailEvent'] = json.dumps(redact(json.loads(embedded)))
+            except (ValueError, TypeError):
+                raw['CloudTrailEvent'] = '[Unparseable CloudTrail event]'
+        return redact(raw)
 
     class Config:
         from_attributes = True
@@ -194,6 +203,8 @@ class IncidentDetailOut(IncidentSummaryOut):
     azure_secret_occurrences: list[dict] = []
     gcp_key_association: dict | None = None
     gcp_record_correlation: dict | None = None
+    aws_record_correlation: dict | None = None
+    aws_collection_coverage: dict | None = None
     gcp_classification_coverage: dict | None = None
 
     @field_validator("report_text", "remediation_steps", mode="before")
@@ -210,6 +221,11 @@ class RefreshResponse(BaseModel):
     incident_id: str
     status: str
     message: str
+
+
+class IncidentAutoRefreshInput(BaseModel):
+    enabled: bool
+    interval_minutes: int = Field(ge=15, le=10080)
 
 
 class DismissRequest(BaseModel):
@@ -514,6 +530,39 @@ def get_incident_detail(
         raise HTTPException(status_code=404, detail="Incident not found")
 
     out = IncidentDetailOut.model_validate(incident)
+    if incident.platform == 'aws':
+        import json
+        from aws_correlation import correlate_aws_records
+        from collection_credentials import ReaderConfigurationError, project_reader
+        out.aws_record_correlation = redact(correlate_aws_records(incident.events))
+        categories = Counter()
+        imported_count = 0
+        for event in incident.events:
+            raw = event.raw_data if isinstance(event.raw_data, dict) else {}
+            nested = raw.get('CloudTrailEvent')
+            if isinstance(nested, str):
+                try:
+                    nested = json.loads(nested)
+                except (TypeError, ValueError):
+                    nested = {}
+            if not isinstance(nested, dict):
+                nested = raw
+            category = nested.get('eventCategory')
+            categories[category if category in ('Management', 'Data') else 'Unknown'] += 1
+            source = raw.get('evidence_source')
+            if ((isinstance(source, dict) and source.get('method') == 'cloudtrail-import') or
+                    raw.get('_aws_imported_evidence')):
+                imported_count += 1
+        try:
+            reader = project_reader(db, incident, 'aws')
+            trail_config = 'configured' if reader and reader.get('trail_bucket') and reader.get('trail_prefix') else 'not_configured'
+        except ReaderConfigurationError:
+            trail_config = 'unavailable'
+        out.aws_collection_coverage = {
+            'record_count': len(incident.events), 'management_records': categories['Management'],
+            'data_records': categories['Data'], 'unknown_records': categories['Unknown'],
+            'imported_records': imported_count, 'current_trail_configuration': trail_config,
+        }
     if incident.platform == 'gcp':
         # Legacy persisted estimates inferred prices and sizes from action names.
         out.estimated_financial_impact = None
@@ -571,6 +620,77 @@ def get_incident_detail(
         for line in compute_financial_impact_lines(incident.events)
     ]
     return add_user_names(out, incident, db)
+
+
+@router.post('/{incident_id}/aws-evidence', dependencies=[Depends(require_admin_or_lead)])
+async def import_aws_evidence(request: Request, preview: bool = True,
+                              incident: IncidentRecord = Depends(incident_access),
+                              user: User = Depends(require_admin_or_lead), db: Session = Depends(get_db)):
+    """Preview or import user-supplied CloudTrail Records JSON (optionally gzip)."""
+    from aws_evidence_import import MAX_UPLOAD, parse_evidence
+    if incident.platform != 'aws' or not incident.access_key_id:
+        raise HTTPException(400, 'An AWS incident with an access-key ID is required.')
+    if incident.status in ('collecting', 'classifying', 'scoring', 'reporting'):
+        raise HTTPException(409, 'Wait for the current collection to finish before importing evidence.')
+    content = bytearray()
+    async for chunk in request.stream():
+        if len(content) + len(chunk) > MAX_UPLOAD:
+            raise HTTPException(413, 'Evidence exceeds the 16 MiB upload limit.')
+        content.extend(chunk)
+    try:
+        events, summary = parse_evidence(bytes(content), incident.access_key_id)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from None
+    existing = {row.source_record_id: row for row in db.query(StoredEvent).filter(
+        StoredEvent.incident_id == incident.incident_id, StoredEvent.source_record_id.isnot(None)).all()}
+    summary['already_present'] = sum(event.source_record_id in existing for event in events)
+    if preview:
+        return summary
+    if not events:
+        raise HTTPException(422, 'No records matched this incident’s access key.')
+    # Preserve the provider-collected record and mark that an uploaded file also
+    # referenced it, rather than replacing its original evidence with upload data.
+    for event in events:
+        previous = existing.get(event.source_record_id)
+        if previous is not None:
+            previous.raw_data = {**(previous.raw_data or {}),
+                                 '_aws_imported_evidence': {'sha256': summary['sha256']}}
+    from db.crud import save_forensic_events
+    added = save_forensic_events(db, incident.incident_id, events, commit=False)
+    from classifier.rules import classify_all_events
+    from reporter.compose import deterministic_sections, render_report
+    from reporter.facts import build_fact_sheet
+    from pipeline import _extract_remediation_steps, _SEVERITY_TO_INT, _IMPORTED_EVIDENCE_NOTE, _index_incident_safely
+    from scorer.severity import score_incident, compute_financial_impact
+    db.expire(incident, ['events'])
+    classified = classify_all_events(incident.incident_id, db, commit=False)
+    exposure_events = after_exposure(classified, incident.exposure_start)
+    severity = score_incident(exposure_events)
+    if exposure_events and not any(event.success is True and event.impact_category and event.severity_weight is not None for event in exposure_events):
+        severity = 'Unknown'
+    start = incident.exposure_start
+    end = incident.exposure_end or datetime.now(timezone.utc)
+    if start.tzinfo is None:
+        start = start.replace(tzinfo=timezone.utc)
+    if end.tzinfo is None:
+        end = end.replace(tzinfo=timezone.utc)
+    facts = build_fact_sheet(exposure_events, platform='aws', overall_severity=severity,
+                             exposure_duration_seconds=max(0, int((end - start).total_seconds())),
+                             credential_type=incident.credential_type, credential_hint=incident.credential_hint)
+    report_text = render_report(facts, deterministic_sections(facts))
+    incident.report_text = _IMPORTED_EVIDENCE_NOTE + report_text
+    incident.report_source = 'deterministic'
+    incident.remediation_steps = _extract_remediation_steps(report_text)
+    incident.overall_severity = _SEVERITY_TO_INT.get(severity)
+    incident.financial_impact = compute_financial_impact(exposure_events)
+    incident.gdpr_flag = check_gdpr_flag(exposure_events)
+    incident.status = 'complete'
+    record(db, user, 'incident.aws_evidence_imported', request, project_id=incident.project_id,
+           incident_id=incident.incident_id, detail={'sha256': summary['sha256'], 'added': len(added)})
+    db.commit()
+    _index_incident_safely(db, incident.incident_id)
+    summary['added_records'] = len(added)
+    return summary
 
 
 class RelatedCredentialOut(BaseModel):
@@ -691,6 +811,45 @@ def incident_audit(incident_id: str, incident: IncidentRecord = Depends(incident
 # Manual CloudTrail refresh endpoint
 # ---------------------------------------------------------------------------
 
+@router.get('/{incident_id}/auto-refresh', dependencies=[Depends(require_admin_or_lead)])
+def get_incident_auto_refresh(incident: IncidentRecord = Depends(incident_access), db: Session = Depends(get_db)):
+    from routers.org import _refresh_settings
+    job = db.query(BackgroundJob).filter_by(dedupe_key=f'incident-auto:{incident.incident_id}').first()
+    return _refresh_settings(job)
+
+
+@router.put('/{incident_id}/auto-refresh', dependencies=[Depends(require_admin_or_lead)])
+def set_incident_auto_refresh(body: IncidentAutoRefreshInput, request: Request,
+                              incident: IncidentRecord = Depends(incident_access),
+                              user: User = Depends(require_admin_or_lead), db: Session = Depends(get_db)):
+    from routers.org import _refresh_settings
+    from sqlalchemy.exc import IntegrityError
+    incident = db.query(IncidentRecord).filter_by(incident_id=incident.incident_id).with_for_update().one()
+    if body.enabled and not incident.is_forensic_tier:
+        raise HTTPException(422, 'Automatic log refresh is unavailable for detection-only incidents.')
+    now = datetime.now(timezone.utc)
+    key = f'incident-auto:{incident.incident_id}'
+    job = db.query(BackgroundJob).filter_by(dedupe_key=key).with_for_update().first()
+    if job is None:
+        job = BackgroundJob(kind='incident_auto_refresh', dedupe_key=key, project_id=incident.project_id)
+        db.add(job)
+    job.payload = {'incident_id': incident.incident_id, 'enabled': body.enabled, 'interval_minutes': body.interval_minutes}
+    job.updated_at = now
+    if job.status != 'running':
+        job.status = 'queued' if body.enabled else 'complete'
+        job.attempts = 0
+        job.last_error = None
+        job.available_at = now + timedelta(minutes=body.interval_minutes)
+        job.lease_token = job.lease_until = None
+    record(db, user, 'incident.auto_refresh_updated', request, project_id=incident.project_id,
+           incident_id=incident.incident_id, detail={'enabled': body.enabled, 'interval_minutes': body.interval_minutes})
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(409, 'Schedule was changed concurrently. Reload and try again.') from None
+    return _refresh_settings(job)
+
 def _derive_platform(incident) -> str:
     """
     Platform for an incident.
@@ -712,9 +871,15 @@ def _queue_incident_refresh(
     user: User | None = None,
     request: Request | None = None,
 ) -> RefreshResponse:
-    incident = get_incident(db, incident_id)
+    incident = db.query(IncidentRecord).filter_by(incident_id=incident_id).with_for_update().first()
     if incident is None:
         raise HTTPException(status_code=404, detail="Incident not found")
+
+    active = db.query(BackgroundJob.id).filter(
+        BackgroundJob.kind == 'incident_collect', BackgroundJob.status.in_(['queued', 'running']),
+        BackgroundJob.payload['incident_id'].as_string() == incident_id).first()
+    if active:
+        raise HTTPException(status_code=409, detail='A refresh or collection is already queued or running for this incident.')
 
     platform = _derive_platform(incident)
 

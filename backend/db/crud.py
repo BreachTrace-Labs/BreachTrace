@@ -112,6 +112,10 @@ def reset_incident_for_refresh(db: Session, incident_id: str, *, commit: bool = 
         ORMForensicEvent.incident_id == incident_id,
         or_(ORMForensicEvent.event_source.is_(None),
             ORMForensicEvent.event_source != "stripe-cli-request-log"),
+        or_(ORMForensicEvent.raw_data['evidence_source']['method'].as_string().is_(None),
+            ORMForensicEvent.raw_data['evidence_source']['method'].as_string() != 'cloudtrail-import'),
+        or_(ORMForensicEvent.raw_data['_aws_imported_evidence']['sha256'].as_string().is_(None),
+            ORMForensicEvent.raw_data['_aws_imported_evidence']['sha256'].as_string() == ''),
     ).delete(synchronize_session=False)
 
     incident.status = "collecting"
@@ -136,6 +140,7 @@ def save_forensic_events(
     db: Session,
     incident_id: str,
     events: list[PydanticForensicEvent],
+    *, commit: bool = True,
 ) -> list[ORMForensicEvent]:
     """
     Persist a list of Pydantic ForensicEvent objects into the forensic_events table.
@@ -146,7 +151,7 @@ def save_forensic_events(
                         .filter(ORMForensicEvent.incident_id == incident_id,
                                 ORMForensicEvent.source_record_id.isnot(None)).all()}
     for event in events:
-        source_record_id = event.source_record_id if event.platform == 'gcp' else None
+        source_record_id = event.source_record_id if event.platform in ('gcp', 'aws') else None
         if source_record_id and source_record_id in existing_sources:
             continue
         if source_record_id:
@@ -188,9 +193,12 @@ def save_forensic_events(
         db.add(orm_event)
         orm_events.append(orm_event)
 
-    db.commit()
-    for orm_event in orm_events:
-        db.refresh(orm_event)
+    if commit:
+        db.commit()
+        for orm_event in orm_events:
+            db.refresh(orm_event)
+    else:
+        db.flush()
     return orm_events
 
 

@@ -1,0 +1,6 @@
+{
+  "matches": true,
+  "scope": "fresh process and in-memory SQLite; same source checkout and virtualenv",
+  "source_change": "output path parameter added between first and second run; original script digest was not recorded",
+  "independent_review": "pending"
+}

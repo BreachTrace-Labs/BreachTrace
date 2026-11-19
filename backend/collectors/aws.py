@@ -1,11 +1,13 @@
 import json
 import logging
-from datetime import datetime, timedelta
+import gzip
+import hashlib
+import io
+from datetime import datetime, timedelta, timezone
 
 import boto3
 from tenacity import retry, stop_after_attempt, wait_exponential
 
-import config
 from collectors.base import BaseCollector
 from normalizer.schema import ForensicEvent
 
@@ -13,6 +15,28 @@ logger = logging.getLogger(__name__)
 
 # CloudTrail has up to 15-minute delivery delay — add a buffer when querying.
 _CLOUDTRAIL_END_BUFFER_MINUTES = 20
+_MAX_TRAIL_OBJECTS = 1000
+_MAX_COMPRESSED_BYTES = 16 * 1024 * 1024
+_MAX_DECOMPRESSED_BYTES = 64 * 1024 * 1024
+_MAX_EVENTS = 100_000
+_MAX_PAGES = 2_000
+
+
+def _map_trail_record(record: dict, bucket: str, key: str, digest: str) -> ForensicEvent:
+    """Adapt an S3-delivered CloudTrail record to the existing event mapper."""
+    when = datetime.fromisoformat(record['eventTime'].replace('Z', '+00:00'))
+    if when.tzinfo is None:
+        raise ValueError('CloudTrail event time has no timezone')
+    event = _map_cloudtrail_event({
+        'EventId': record.get('eventID'), 'EventTime': when,
+        'EventName': record['eventName'], 'EventSource': record.get('eventSource'),
+        'CloudTrailEvent': json.dumps(record),
+    })
+    event.raw_data['evidence_source'] = {'method': 'cloudtrail-s3', 'bucket': bucket,
+                                         'object_key': key, 'sha256_compressed': digest}
+    event.principal_id = (record.get('userIdentity') or {}).get('arn')
+    event.location = record.get('awsRegion')
+    return event
 
 
 def _json_safe_raw_event(raw_event: dict) -> dict:
@@ -206,6 +230,7 @@ def _map_cloudtrail_event(raw_event: dict) -> ForensicEvent:
             resource_type = resource_type or fallback_type
 
     return ForensicEvent(
+        source_record_id=raw_event.get('EventId') or nested_event.get('eventID'),
         platform="aws",
         timestamp=raw_event["EventTime"],
         api_action=raw_event["EventName"],
@@ -224,17 +249,18 @@ class AWSCloudTrailCollector(BaseCollector):
     """
     Collects AWS CloudTrail events for a given access key ID during an exposure window.
 
-    Uses the admin AWS credentials (from config) to query CloudTrail — the leaked
+    Uses the project wallet's independent reader to query CloudTrail — the leaked
     key's ID is passed as a lookup attribute, not used for authentication.
     """
 
     platform = "aws"
 
     def __init__(self, reader: dict | None = None) -> None:
-        reader = reader if reader is not None else {
-            'region': config.AWS_REGION, 'access_key_id': config.AWS_ACCESS_KEY_ID,
-            'secret_access_key': config.AWS_SECRET_ACCESS_KEY,
-        }
+        if reader is None:
+            raise ValueError('Configure an AWS reader in the project credential wallet.')
+        self._reader = reader
+        self._regions = list(dict.fromkeys([reader['region'], *reader.get('regions', '').split(',')]))
+        self._regions = [region for region in self._regions if region]
         self._client = boto3.client(
             "cloudtrail",
             region_name=reader['region'],
@@ -274,6 +300,54 @@ class AWSCloudTrailCollector(BaseCollector):
 
         return self._client.lookup_events(**params)
 
+    def _collect_trail_files(self, credential: str, start_time: datetime, end_time: datetime) -> list[ForensicEvent]:
+        """Read a bounded set of CloudTrail gzip files using the wallet reader."""
+        bucket, prefix = self._reader['trail_bucket'], self._reader['trail_prefix']
+        s3 = boto3.client('s3', region_name=self._reader['region'],
+                          aws_access_key_id=self._reader['access_key_id'],
+                          aws_secret_access_key=self._reader['secret_access_key'])
+        output = []
+        count = 0
+        pages = 0
+        for page in s3.get_paginator('list_objects_v2').paginate(Bucket=bucket, Prefix=prefix):
+            pages += 1
+            if pages > _MAX_PAGES:
+                raise ValueError('CloudTrail evidence pagination limit exceeded; narrow the wallet prefix.')
+            for item in page.get('Contents', []):
+                key = item['Key']
+                if not key.endswith('.json.gz'):
+                    continue
+                count += 1
+                if count > _MAX_TRAIL_OBJECTS or item.get('Size', 0) > _MAX_COMPRESSED_BYTES:
+                    raise ValueError('CloudTrail evidence exceeds the collection limits; narrow the wallet prefix.')
+                body = s3.get_object(Bucket=bucket, Key=key)['Body']
+                try:
+                    compressed = body.read(_MAX_COMPRESSED_BYTES + 1)
+                finally:
+                    body.close()
+                if len(compressed) > _MAX_COMPRESSED_BYTES:
+                    raise ValueError('CloudTrail evidence object is too large.')
+                with gzip.GzipFile(fileobj=io.BytesIO(compressed)) as stream:
+                    decoded = stream.read(_MAX_DECOMPRESSED_BYTES + 1)
+                if len(decoded) > _MAX_DECOMPRESSED_BYTES:
+                    raise ValueError('Decompressed CloudTrail evidence is too large.')
+                data = json.loads(decoded)
+                if not isinstance(data, dict) or not isinstance(data.get('Records'), list):
+                    raise ValueError('Invalid CloudTrail evidence file.')
+                digest = hashlib.sha256(compressed).hexdigest()
+                for record in data['Records']:
+                    if not isinstance(record, dict):
+                        raise ValueError('Invalid CloudTrail record.')
+                    identity = record.get('userIdentity') or {}
+                    if not isinstance(identity, dict) or identity.get('accessKeyId') != credential:
+                        continue
+                    event = _map_trail_record(record, bucket, key, digest)
+                    if start_time <= event.timestamp.astimezone(timezone.utc) <= end_time:
+                        output.append(event)
+                        if len(output) > _MAX_EVENTS:
+                            raise ValueError('CloudTrail event collection limit exceeded; narrow the wallet prefix.')
+        return output
+
     # ------------------------------------------------------------------
     # Public interface
     # ------------------------------------------------------------------
@@ -290,6 +364,19 @@ class AWSCloudTrailCollector(BaseCollector):
         Adds a 20-minute buffer to *end_time* to account for CloudTrail's delivery delay.
         Paginates automatically until all events are retrieved.
         """
+        if not isinstance(credential, str) or not credential.strip():
+            raise ValueError('An AWS access-key ID is required for collection.')
+        if credential == self._reader['access_key_id']:
+            raise ValueError('The AWS log reader must be separate from the exposed access key.')
+        if start_time.tzinfo is None:
+            start_time = start_time.replace(tzinfo=timezone.utc)
+        if end_time.tzinfo is None:
+            end_time = end_time.replace(tzinfo=timezone.utc)
+        start_time, end_time = start_time.astimezone(timezone.utc), end_time.astimezone(timezone.utc)
+        if end_time < start_time:
+            raise ValueError('AWS collection end must not precede its start.')
+        if end_time - start_time > timedelta(days=90):
+            raise ValueError('AWS collection window exceeds the 90-day limit.')
         adjusted_end = end_time + timedelta(minutes=_CLOUDTRAIL_END_BUFFER_MINUTES)
         logger.info(
             "CloudTrail lookup: window=%s → %s (buffered to %s)",
@@ -299,21 +386,49 @@ class AWSCloudTrailCollector(BaseCollector):
         )
 
         events: list[ForensicEvent] = []
-        next_token: str | None = None
+        seen = set()
+        total_records = 0
+        for index, region in enumerate(self._regions):
+            if index:
+                self._client = boto3.client('cloudtrail', region_name=region,
+                    aws_access_key_id=self._reader['access_key_id'],
+                    aws_secret_access_key=self._reader['secret_access_key'])
+            next_token = None
+            tokens = set()
+            pages = 0
+            while True:
+                pages += 1
+                if pages > _MAX_PAGES:
+                    raise ValueError('CloudTrail management pagination limit exceeded; narrow the collection window.')
+                response = self._lookup_page(credential, start_time, adjusted_end, next_token)
+                for raw_event in response.get("Events", []):
+                    total_records += 1
+                    if total_records > _MAX_EVENTS:
+                        raise ValueError('CloudTrail event collection limit exceeded; narrow the collection window.')
+                    try:
+                        forensic_event = _map_cloudtrail_event(raw_event)
+                        if forensic_event.source_record_id and forensic_event.source_record_id in seen:
+                            continue
+                        if forensic_event.source_record_id:
+                            seen.add(forensic_event.source_record_id)
+                        events.append(forensic_event)
+                    except Exception:
+                        raise ValueError('Invalid CloudTrail management event; collection was not completed.') from None
+                next_token = response.get("NextToken")
+                if not next_token:
+                    break
+                if next_token in tokens:
+                    raise ValueError('CloudTrail management pagination repeated a token; collection was not completed.')
+                tokens.add(next_token)
 
-        while True:
-            response = self._lookup_page(credential, start_time, adjusted_end, next_token)
-
-            for raw_event in response.get("Events", []):
-                try:
-                    forensic_event = _map_cloudtrail_event(raw_event)
-                    events.append(forensic_event)
-                except Exception:
-                    logger.exception("Failed to map CloudTrail event: %s", raw_event.get("EventId"))
-
-            next_token = response.get("NextToken")
-            if not next_token:
-                break
-
+        if self._reader.get('trail_bucket') and self._reader.get('trail_prefix'):
+            for event in self._collect_trail_files(credential, start_time, end_time):
+                if event.source_record_id and event.source_record_id in seen:
+                    continue
+                if event.source_record_id:
+                    seen.add(event.source_record_id)
+                events.append(event)
+                if len(events) > _MAX_EVENTS:
+                    raise ValueError('CloudTrail event collection limit exceeded; narrow the wallet prefix.')
         logger.info("CloudTrail returned %d events", len(events))
         return events
